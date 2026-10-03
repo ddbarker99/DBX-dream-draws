@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block canonical %}{{ config.SITE_URL }}/{% endblock %}
 {% block content %}
+<div class="hero-banner">
+  <picture>
+    <source media="(max-width:700px)" srcset="{{ url_for('static', filename='brand/banner-900.webp') }}?v={{ asset_v }}" type="image/webp">
+    <source srcset="{{ url_for('static', filename='brand/banner.webp') }}?v={{ asset_v }}" type="image/webp">
+    <img src="{{ url_for('static', filename='brand/banner.jpg') }}" alt="{{ config.SITE_NAME }}" width="1800" height="669" fetchpriority="high">
+  </picture>
+</div>
+
 {% if me %}
 <section class="myhome" aria-labelledby="me-h">
   <div class="row"><h1 id="me-h" style="margin:0">Welcome back, {{ user.name.split()[0] }}</h1><a class="btn ghost small" href="{{ url_for('public.account') }}">My account</a></div>
@@ -17,14 +25,6 @@
   {% if me.recent %}<p class="small" style="margin:var(--s3) 0 0">Recent results: {% for e in me.recent %}<a href="{{ url_for('public.competition', slug=e.slug) }}">{{ e.title }}</a> — {{ 'you won! 🏆' if e.won else 'winning ticket #' ~ e.winning_number }}{{ ' · ' if not loop.last }}{% endfor %} · <a href="{{ url_for('public.results', mine=1) }}">all my results</a></p>{% endif %}
 </section>
 {% else %}
-<div class="hero-banner">
-  <picture>
-    <source media="(max-width:700px)" srcset="{{ url_for('static', filename='brand/banner-900.webp') }}?v={{ asset_v }}" type="image/webp">
-    <source srcset="{{ url_for('static', filename='brand/banner.webp') }}?v={{ asset_v }}" type="image/webp">
-    <img src="{{ url_for('static', filename='brand/banner.jpg') }}" alt="{{ config.SITE_NAME }}" width="1800" height="669" fetchpriority="high">
-  </picture>
-</div>
-
 <section class="intro">
   <div>
     <h1>Win big from <span class="nocase">{{ 10|pp }}</span></h1>

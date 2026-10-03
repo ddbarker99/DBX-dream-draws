@@ -2958,7 +2958,7 @@ class Phase6CustomerTests(AutoDrawBase):
         home = self.p.get("/").get_data(as_text=True)
         self.assertIn("Welcome back, Pat", home)
         self.assertIn("Your next draws", home)
-        self.assertNotIn("hero-banner", home)                                   # no generic banner for returning customers
+        self.assertIn("hero-banner", home)                                      # banner stays for returning customers too
         self.assertIn("hero-banner", self.app.test_client().get("/").get_data(as_text=True))
         cal = self.p.get("/draws").get_data(as_text=True)
         self.assertIn("Test Prize", cal)
