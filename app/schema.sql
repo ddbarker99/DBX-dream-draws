@@ -470,3 +470,39 @@ CREATE TABLE IF NOT EXISTS releases (
     check_ok       INTEGER,
     check_summary  TEXT
 );
+
+-- Quick customer feedback after a purchase or a support case (one per thing), plus general feedback.
+CREATE TABLE IF NOT EXISTS feedback (
+    id         INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    user_id    INTEGER,
+    context    TEXT NOT NULL,                     -- checkout | case | general
+    ref        INTEGER,                           -- checkout id / case id
+    rating     INTEGER CHECK (rating BETWEEN 1 AND 5),
+    comment    TEXT,
+    status     TEXT NOT NULL DEFAULT 'new',       -- new | reviewed
+    backlog_id INTEGER,
+    UNIQUE (user_id, context, ref)
+);
+
+-- Internal development backlog: recurring problems turned into structured tickets, with the evidence attached.
+CREATE TABLE IF NOT EXISTS backlog (
+    id          INTEGER PRIMARY KEY,
+    kind        TEXT NOT NULL DEFAULT 'improvement',  -- bug | improvement | feature
+    title       TEXT NOT NULL,
+    detail      TEXT,
+    status      TEXT NOT NULL DEFAULT 'open',          -- open | planned | done | wont_do
+    created_by  INTEGER,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS backlog_evidence (
+    id         INTEGER PRIMARY KEY,
+    backlog_id INTEGER NOT NULL REFERENCES backlog(id),
+    source     TEXT NOT NULL,                    -- case | feedback | error
+    source_id  INTEGER NOT NULL,
+    note       TEXT,
+    added_by   INTEGER,
+    created_at TEXT NOT NULL,
+    UNIQUE (backlog_id, source, source_id)
+);

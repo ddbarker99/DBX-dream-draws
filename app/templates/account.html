@@ -248,14 +248,20 @@
       <td><span class="pill {{ d.status }}">{{ {'paid':'Added','pending':'Waiting for payment','credit_refused':'Refunded — credit card','needs_refund':'Refund due','refunded':'Refunded'}.get(d.status, d.status) }}</span></td></tr>{% endfor %}
   </tbody></table></div>{% endif %}
   </section>
-  <p class="small"><a href="{{ url_for('public.account', tab='transactions') }}">See all wallet activity →</a></p>
+  <p class="small"><a href="{{ url_for('public.account', tab='transactions') }}">See all wallet activity →</a> · <a href="{{ url_for('public.account_export', kind='transactions') }}">Download (CSV)</a></p>
 
 {% elif tab == 'points' %}
   <div class="two">
     <section class="panel" aria-labelledby="pts-h">
       <h2 id="pts-h" style="font-size:20px">Your points</h2>
       <span class="tierbadge tier-{{ tier.name }}">{{ tier.name }}</span>
-      <p style="margin:var(--s3) 0 0"><b style="font-size:28px">{{ '{:,}'.format(u.points) }}</b> points to spend · {{ '{:,}'.format(u.points_lifetime) }} earned in total</p>
+      <p style="margin:var(--s3) 0 0"><b style="font-size:28px">{{ '{:,}'.format(u.points) }}</b> points <span class="muted">= <b>{{ psum.worth|gbp }}</b> of site credit you can redeem now</span></p>
+      <dl class="facts" style="margin-top:var(--s3)">
+        <div><dt>Earned</dt><dd>{{ '{:,}'.format(psum.earned) }}</dd></div>
+        <div><dt>Redeemed</dt><dd>{{ '{:,}'.format(psum.redeemed) }} (= {{ (psum.redeemed // redeem_block * 100)|gbp }})</dd></div>
+        {% if psum.reversed %}<div><dt>Reversed (refunded orders)</dt><dd>{{ '{:,}'.format(psum.reversed) }}</dd></div>{% endif %}
+        <div><dt>Next £1</dt><dd>{{ psum.next_block }} more points</dd></div>
+      </dl>
       {% if tier.next %}<div class="tierbar" role="img" aria-label="{{ tier.pct }}% of the way to {{ tier.next }}"><i style="width:{{ tier.pct }}%"></i></div>
       <p class="small muted" style="margin:0">{{ tier.to_next }} more points to reach <b>{{ tier.next }}</b>.</p>
       {% else %}<p class="small muted">You're at the top tier.</p>{% endif %}
@@ -277,6 +283,10 @@
       <p class="small muted" style="margin:var(--s3) 0 0">Friends who joined with your link: <b>{{ referred }}</b></p>
     </section>{% endif %}
   </div>
+  <section class="section" aria-labelledby="ms-h"><h2 id="ms-h">Milestones</h2>
+  <p class="small muted">Little moments worth marking — none of them need you to spend anything.</p>
+  <ul class="milestones">{% for icon, name, what, done in milestones %}<li class="{{ 'done' if done }}"><span aria-hidden="true">{{ icon }}</span><b>{{ name }}</b><small>{{ what }}{% if not done %} · not yet{% endif %}</small></li>{% endfor %}</ul>
+  </section>
   <section class="section" aria-labelledby="ph-h"><h2 id="ph-h">Points history</h2>
   {% if points_rows %}
   <div class="panel table-scroll" tabindex="0"><table>
@@ -365,9 +375,15 @@
       {% if d.sid != this_sid %}<form method="post" action="{{ url_for('public.revoke_session') }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="sid" value="{{ d.sid }}"><button class="btn ghost small">Sign out</button></form>{% endif %}</li>{% endfor %}</ul>
     {% if sessions|length > 1 %}<form method="post" action="{{ url_for('public.revoke_session') }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="sid" value="others"><button class="btn ghost small">Sign out of all other devices</button></form>{% endif %}
   </section>
+  <section class="panel" style="max-width:640px;margin-top:var(--s4)" aria-labelledby="sec-h">
+    <h2 id="sec-h" style="font-size:20px">Recent security activity</h2>
+    <ul class="timeline">{% for at, what in security_events %}<li><time class="tiny muted">{{ at|uktime('%d %b %Y, %H:%M') }}</time> {{ what }}</li>{% else %}<li class="muted">Nothing yet.</li>{% endfor %}</ul>
+    <p class="small" style="margin:var(--s3) 0 0"><b>Don't recognise something?</b> <a href="#profile">Change your password</a> — that signs out every other device straight away — then <a href="{{ url_for('public.support_centre') }}">tell us</a>.</p>
+  </section>
   <section class="panel" style="max-width:640px;margin-top:var(--s4)">
     <h2 style="font-size:20px">Your data</h2>
-    <p class="small muted" style="margin:0">To get a copy of your data or close your account, <a href="{{ url_for('public.contact') }}">contact us</a>. We'll pay out any cash balance first. Some records (entries, draws and payments) are kept as long as the law requires — see our <a href="{{ url_for('public.page', page='privacy') }}">privacy policy</a>.</p>
+    <p class="small" style="margin:0 0 var(--s2)">Download your records: <a href="{{ url_for('public.account_export', kind='orders') }}">orders</a> · <a href="{{ url_for('public.account_export', kind='entries') }}">entries &amp; tickets</a> · <a href="{{ url_for('public.account_export', kind='transactions') }}">wallet transactions</a> (CSV, opens in Excel or Google Sheets).</p>
+    <p class="small muted" style="margin:0">For a full copy of your data or to close your account, <a href="{{ url_for('public.contact') }}">contact us</a>. We'll pay out any cash balance first. Some records (entries, draws and payments) are kept as long as the law requires — see our <a href="{{ url_for('public.page', page='privacy') }}">privacy policy</a>.</p>
   </section>
   <form method="post" action="{{ url_for('public.logout') }}" style="margin-top:var(--s5)"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn ghost">Log out</button></form>
 {% endif %}

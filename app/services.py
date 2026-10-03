@@ -1356,6 +1356,39 @@ def refund_order(order_id, staff, reason, to_card=False):
         return cur.lastrowid
 
 
+def points_summary(db, user_id):
+    r = db.execute("SELECT COALESCE(SUM(CASE WHEN points>0 THEN points END),0) earned, "
+                   "COALESCE(-SUM(CASE WHEN points<0 AND reason LIKE 'Redeemed%' THEN points END),0) redeemed, "
+                   "COALESCE(-SUM(CASE WHEN points<0 AND reason NOT LIKE 'Redeemed%' THEN points END),0) reversed, "
+                   "COALESCE(SUM(points),0) balance FROM points_ledger WHERE user_id=?", (user_id,)).fetchone()
+    return {"earned": r["earned"], "redeemed": r["redeemed"], "reversed": r["reversed"], "balance": r["balance"],
+            "worth": r["balance"] // REDEEM_BLOCK * 100, "next_block": REDEEM_BLOCK - r["balance"] % REDEEM_BLOCK}
+
+
+def milestones(db, user):
+    """Recognition for things that aren't spending: being part of DBX, keeping your account safe and in control,
+    bringing friends, using the free route. Never 'buy more to unlock'."""
+    uid = user["id"]
+    days = (utcnow() - parse_iso(user["created_at"])).days
+    referrals = db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=? AND status='rewarded'", (uid,)).fetchone()[0]
+    from flask import current_app
+    limits = bool(user["daily_limit"] or user["weekly_limit"]
+                  or (user["monthly_limit"] and user["monthly_limit"] < current_app.config.get("MAX_MONTHLY_LIMIT", 25000)))
+    return [
+        ("🎟️", "Welcome aboard", "Joined DBX", True),
+        ("✉️", "Verified", "Confirmed your email address", bool(user["email_verified"])),
+        ("🛡️", "In control", "Set your own spending limit", limits),
+        ("🎂", "One year with us", "Account anniversary", days >= 365),
+        ("🎉", "Two years with us", "Second anniversary", days >= 730),
+        ("🤝", "Friend of DBX", "A friend you referred joined", referrals >= 1),
+        ("🌟", "Community champion", "Three friends you referred joined", referrals >= 3),
+        ("📮", "Free entrant", "Entered a draw by free post", bool(db.execute(
+            "SELECT 1 FROM postal_entries WHERE user_id=? AND status='accepted' LIMIT 1", (uid,)).fetchone())),
+        ("🔔", "Never miss a draw", "Saved a competition to follow", bool(db.execute(
+            "SELECT 1 FROM watchlist WHERE user_id=? LIMIT 1", (uid,)).fetchone())),
+    ]
+
+
 def goodwill_credit(user_id, amount, reason, staff, case_id=None):
     """Compensation after a service problem: site credit only, reason required, capped per customer per 30 days
     (higher needs an Administrator). Recorded as a normal ledger line and audited."""

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Backlog #{{ b.id }} · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('control.backlog') }}">Backlog</a> › <span aria-current="page">#{{ b.id }}</span></nav>
+<h1>{{ b.title }}</h1>
+<p class="muted">{{ kinds[b.kind] }} · opened {{ b.created_at|uktime('%d %b %Y') }} by {{ b.email or 'staff' }} · <b>{{ ev|length }}</b> piece{{ 's' if ev|length != 1 }} of evidence</p>
+{% if b.detail %}<div class="panel"><p style="white-space:pre-wrap;margin:0">{{ b.detail }}</p></div>{% endif %}
+<form method="post" action="{{ url_for('control.backlog') }}" class="inline-form" style="margin:var(--s4) 0"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="bid" value="{{ b.id }}">
+  <label for="st">Status</label><select id="st" name="status">{% for k, label in statuses %}<option value="{{ k }}" {{ 'selected' if b.status == k }}>{{ label }}</option>{% endfor %}</select><button class="btn ghost small">Save</button></form>
+<section aria-labelledby="ev-h"><h2 id="ev-h">Evidence</h2>
+<ul class="timeline">{% for e, title, text, link in ev %}<li><a href="{{ link }}"><b>{{ title }}</b></a> <span class="tiny muted">{{ e.created_at|uktime('%d %b') }}</span>{% if text %}<div class="small">{{ text }}</div>{% endif %}{% if e.note %}<div class="small muted">{{ e.note }}</div>{% endif %}</li>{% else %}<li class="muted">No evidence attached yet.</li>{% endfor %}</ul></section>
+{% endblock %}

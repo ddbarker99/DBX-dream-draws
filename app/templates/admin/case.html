@@ -35,6 +35,16 @@
     <label class="check"><input type="checkbox" name="assign" value="me"> Assign to me</label>
     <button class="btn block" style="margin-top:var(--s4)" {{ 'disabled' if holder }}>Save</button>
   </form>
+  {% if linked %}<p class="small">In the backlog: {% for b in linked %}<a href="{{ url_for('control.backlog_item', bid=b.id) }}">#{{ b.id }} {{ b.title }}</a> ({{ b.status }}){{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+  <details class="panel"><summary><b>Add to the development backlog</b></summary>
+  <p class="small muted">If this keeps happening, record it once with the evidence attached.</p>
+  <form method="post" action="{{ url_for('control.backlog') }}" class="stack"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="source" value="case"><input type="hidden" name="source_id" value="{{ k.id }}">
+    <label for="bl-ex-{{ k.id }}">Add to an existing item</label><select id="bl-ex-{{ k.id }}" name="bid"><option value="">— new item —</option>{% for it in backlog_items %}<option value="{{ it.id }}">#{{ it.id }} {{ it.title }}</option>{% endfor %}</select>
+    <label for="bl-t-{{ k.id }}">…or a new item: title</label><input id="bl-t-{{ k.id }}" name="title" placeholder="Customers can't find their ticket numbers after paying">
+    <label for="bl-k-{{ k.id }}">Type</label><select id="bl-k-{{ k.id }}" name="kind">{% for k, label in kinds %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select>
+    <label for="bl-d-{{ k.id }}">What happens / what's needed</label><textarea id="bl-d-{{ k.id }}" name="detail" rows="2"></textarea>
+    <button class="btn ghost small" style="align-self:flex-start">Add</button></form></details>
   {% if history %}<section class="panel" aria-labelledby="hist-h"><h2 id="hist-h" style="font-size:20px">Customer history</h2>
     <dl class="facts">
       <div><dt>Account</dt><dd>#{{ customer.id }} · joined {{ customer.created_at|uktime('%d %b %Y') }}{% if not customer.email_verified %} · email not confirmed{% endif %}</dd></div>

@@ -3,7 +3,7 @@
 {% block robots %}<meta name="robots" content="noindex">{% endblock %}
 {% block content %}
 {% include "admin/_bar.html" %}
-<div class="row" style="flex-wrap:wrap"><h1 style="margin:0">Support cases</h1><a class="btn ghost small" href="{{ url_for('control.support_insights') }}">Support insights →</a></div>
+<div class="row" style="flex-wrap:wrap"><h1 style="margin:0">Support cases</h1><span><a class="btn ghost small" href="{{ url_for('control.support_insights') }}">Support insights</a> <a class="btn ghost small" href="{{ url_for('control.feedback_admin') }}">Feedback</a> <a class="btn ghost small" href="{{ url_for('control.backlog') }}">Backlog</a></span></div>
 <p class="muted">Highest priority first, then whoever has waited longest. "Handling now" shows who has a case open, so two people don't answer the same customer. Every contact-form message opens a case. Link it to the customer, order or competition, reply from here (it's emailed), and keep internal notes.</p>
 <nav class="chips">{% for k, label in (('open','Open'),('waiting','Waiting on customer'),('resolved','Resolved')) %}<a class="chip" href="{{ url_for('control.cases', show=k) }}"{% if show == k %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</nav>
 <div class="panel table-scroll" tabindex="0"><table>

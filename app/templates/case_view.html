@@ -10,5 +10,6 @@
 <form class="panel" method="post" style="margin-top:var(--s4)"><input type="hidden" name="csrf" value="{{ csrf_token }}">
   <label for="body">{{ 'Reopen with a reply' if k.status == 'resolved' else 'Reply' }}</label><textarea id="body" name="body" rows="3" required></textarea>
   <button class="btn" style="margin-top:var(--s3)">Send</button></form>
+{% if k.status != 'open' %}{% include "_feedback.html" %}{% endif %}
 </div>
 {% endblock %}

@@ -15,7 +15,9 @@
   <section class="section" aria-labelledby="s-{{ key }}"><h2 id="s-{{ key }}">{{ label }}</h2>
     <div class="grid">{% for it in found[key] %}{% if it.game %}{% include "_gamecard.html" %}{% else %}{% include "_card.html" %}{% endif %}{% endfor %}</div></section>
   {% endfor %}
-  {% if not n %}<div class="empty"><p>Nothing matches “{{ q }}”.</p><div class="actions" style="justify-content:center"><a class="btn" href="{{ url_for('public.competitions') }}">All competitions</a><a class="btn ghost" href="{{ url_for('public.instant_wins') }}">Instant Wins</a><a class="btn ghost" href="{{ url_for('public.results') }}">Results</a></div></div>{% endif %}
+  {% if found.winners %}<section class="section" aria-labelledby="s-win"><h2 id="s-win">Winners</h2>
+    <div class="panel table-scroll" tabindex="0" role="region" aria-labelledby="s-win"><table><tbody>{% for w in found.winners %}<tr><td><b>{{ w.name }}</b> won <a href="{{ url_for('public.competition', slug=w.c.slug) }}">{{ w.c.title }}</a></td><td class="small muted">ticket #{{ w.number }} · {{ w.c.drawn_at|uktime('%d %b %Y') }}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
+  {% if not n %}<div class="empty"><p>Nothing matches “{{ q }}”.{% if suggestion %} Did you mean <a href="{{ url_for('public.search', q=suggestion) }}">{{ suggestion }}</a>?{% endif %}</p><div class="actions" style="justify-content:center"><a class="btn" href="{{ url_for('public.competitions') }}">All competitions</a><a class="btn ghost" href="{{ url_for('public.instant_wins') }}">Instant Wins</a><a class="btn ghost" href="{{ url_for('public.results') }}">Results</a></div></div>{% endif %}
 {% else %}
   <div class="actions"><a class="btn ghost" href="{{ url_for('public.competitions', tab='ending') }}">Ending soon</a><a class="btn ghost" href="{{ url_for('public.competitions', tab='new') }}">New</a><a class="btn ghost" href="{{ url_for('public.instant_wins') }}">Instant Wins</a><a class="btn ghost" href="{{ url_for('public.results') }}">Past results</a></div>
 {% endif %}

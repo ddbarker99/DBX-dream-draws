@@ -1,0 +1,13 @@
+{# Quick feedback. Needs: fb_context, fb_ref, fb_prompt, fb_done #}
+{% if not fb_done %}
+<form class="panel feedback" method="post" action="{{ url_for('public.feedback') }}" style="margin-top:var(--s4)">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="context" value="{{ fb_context }}">
+  <input type="hidden" name="ref" value="{{ fb_ref }}"><input type="hidden" name="next" value="{{ request.path }}">
+  <fieldset><legend><b>{{ fb_prompt }}</b> <span class="small muted">(optional)</span></legend>
+    <div class="rating">{% for n in range(1, 6) %}<label><input type="radio" name="rating" value="{{ n }}"><span>{{ n }}</span><span class="sr-only"> out of 5</span></label>{% endfor %}</div>
+    <div class="small muted rating-ends"><span>1 = hard</span><span>5 = easy</span></div></fieldset>
+  <label for="fb-c" class="small">Anything we should fix? <span class="muted">Don't include card or bank details.</span></label>
+  <textarea id="fb-c" name="comment" rows="2" maxlength="1000"></textarea>
+  <button class="btn ghost small" style="margin-top:var(--s2)">Send feedback</button>
+</form>
+{% else %}<p class="small muted" style="margin-top:var(--s4)">Thanks for your feedback.</p>{% endif %}

@@ -62,7 +62,7 @@
   <div class="two"><div><label for="w-photo">Photo</label><input id="w-photo" type="file" name="winner_photo" accept="image/*"></div>
   <div><label for="w-quote">Their comment</label><input id="w-quote" name="winner_quote" value="{{ c.winner_quote or '' }}" maxlength="500"></div></div>
   <label class="check" style="margin-top:12px"><input type="checkbox" name="consent" value="1" {{ 'checked' if c.winner_consent_at }}> The winner has agreed to their photo and comment being shown publicly</label>
-  {% if c.winner_consent_at %}<p class="small muted">Permission recorded {{ c.winner_consent_at|uktime }}.</p>{% endif %}
+  {% if c.winner_consent_at %}<p class="small muted">Permission recorded {{ c.winner_consent_at|uktime }}. <a href="{{ url_for('public.winner_card', slug=c.slug) }}" target="_blank" rel="noopener">Open the winner share card</a> — ready to post; it's also the preview image when the competition link is shared.</p>{% endif %}
   <button class="btn small" style="margin-top:12px">Save story</button>
 </form>
 {% endif %}

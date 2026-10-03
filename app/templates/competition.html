@@ -10,7 +10,7 @@
 <meta property="og:type" content="website">
 <meta property="og:title" content="{% if c.free_daily %}Free daily game{% else %}Win {{ c.title }} for {{ c.ticket_price|pp }}{% endif %}">
 <meta property="og:description" content="{{ self.desc() }}">
-<meta property="og:image" content="{{ config.SITE_URL }}{% if c.image %}{{ url_for('public.uploads', name=c.image) }}{% else %}{{ url_for('static', filename='brand/banner.jpg') }}{% endif %}">
+<meta property="og:image" content="{{ config.SITE_URL }}{% if c.status == 'drawn' and c.winner_consent_at %}{{ url_for('public.winner_card', slug=c.slug) }}{% elif c.image %}{{ url_for('public.uploads', name=c.image) }}{% else %}{{ url_for('static', filename='brand/banner.jpg') }}{% endif %}">
 <meta property="og:url" content="{{ config.SITE_URL }}{{ url_for('public.competition', slug=c.slug) }}">
 <meta name="twitter:card" content="summary_large_image">
 {% endblock %}

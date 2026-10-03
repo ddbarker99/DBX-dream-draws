@@ -175,6 +175,92 @@ def centre():
                            health=health_checks(db))
 
 
+# ---------------- feedback & development backlog ----------------
+
+BACKLOG_KINDS = (("bug", "Bug"), ("improvement", "Improvement"), ("feature", "New feature"))
+BACKLOG_STATUSES = (("open", "Open"), ("planned", "Planned"), ("done", "Done"), ("wont_do", "Won't do"))
+
+
+def add_evidence(db, backlog_id, source, source_id, note=None):
+    db.execute("INSERT OR IGNORE INTO backlog_evidence (backlog_id, source, source_id, note, added_by, created_at) VALUES (?,?,?,?,?,?)",
+               (backlog_id, source, source_id, (note or "")[:300] or None, g.user["id"], iso(utcnow())))
+    if source == "feedback":
+        db.execute("UPDATE feedback SET status='reviewed', backlog_id=? WHERE id=?", (backlog_id, source_id))
+
+
+@bp.route("/backlog", methods=["GET", "POST"])
+@require("cases")
+def backlog():
+    """Support turns recurring customer problems into one structured ticket with the evidence attached, instead of
+    sending developers scattered messages. Sorted by how much evidence each has."""
+    db = get_db()
+    if request.method == "POST":
+        f = request.form
+        source, sid = f.get("source"), int(f["source_id"]) if f.get("source_id", "").isdigit() else None
+        if f.get("status") and f.get("bid", "").isdigit():
+            if f["status"] in dict(BACKLOG_STATUSES):
+                db.execute("UPDATE backlog SET status=?, updated_at=? WHERE id=?", (f["status"], iso(utcnow()), int(f["bid"])))
+                audit(db, "backlog.status", f"backlog:{f['bid']}", f["status"])
+            return redirect(url_for("control.backlog_item", bid=int(f["bid"])))
+        if f.get("bid", "").isdigit():                       # attach evidence to an existing item
+            bid = int(f["bid"])
+        else:
+            title = " ".join(f.get("title", "").split())[:150]
+            if len(title) < 5:
+                flash("Give the problem a short, clear title.", "error")
+                return redirect(request.referrer or url_for("control.backlog"))
+            now = iso(utcnow())
+            bid = db.execute("INSERT INTO backlog (kind, title, detail, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+                             (f.get("kind") if f.get("kind") in dict(BACKLOG_KINDS) else "improvement", title,
+                              f.get("detail", "").strip()[:4000] or None, g.user["id"], now, now)).lastrowid
+            audit(db, "backlog.create", f"backlog:{bid}", title)
+        if source in ("case", "feedback", "error") and sid:
+            add_evidence(db, bid, source, sid, f.get("note"))
+        flash("Added to the backlog.")
+        return redirect(url_for("control.backlog_item", bid=bid))
+    show = request.args.get("show", "open")
+    rows = db.execute("SELECT b.*, (SELECT COUNT(*) FROM backlog_evidence e WHERE e.backlog_id=b.id) AS evidence FROM backlog b "
+                      "WHERE b.status=? ORDER BY evidence DESC, b.updated_at DESC", (show,)).fetchall()
+    return render_template("admin/backlog.html", rows=rows, show=show, kinds=BACKLOG_KINDS, statuses=BACKLOG_STATUSES)
+
+
+@bp.route("/backlog/<int:bid>")
+@require("cases")
+def backlog_item(bid):
+    db = get_db()
+    b = db.execute("SELECT b.*, u.email FROM backlog b LEFT JOIN users u ON u.id=b.created_by WHERE b.id=?", (bid,)).fetchone()
+    if b is None:
+        abort(404)
+    ev = []
+    for e in db.execute("SELECT * FROM backlog_evidence WHERE backlog_id=? ORDER BY id DESC", (bid,)):
+        if e["source"] == "case":
+            k = db.execute("SELECT topic, reason, created_at FROM cases WHERE id=?", (e["source_id"],)).fetchone()
+            first = db.execute("SELECT body FROM case_notes WHERE case_id=? ORDER BY id LIMIT 1", (e["source_id"],)).fetchone()
+            ev.append((e, f"Case #{e['source_id']}: {k['topic'] if k else ''}", (first["body"][:300] if first else ""),
+                       url_for("control.case_detail", case_id=e["source_id"])))
+        elif e["source"] == "feedback":
+            fb = db.execute("SELECT * FROM feedback WHERE id=?", (e["source_id"],)).fetchone()
+            ev.append((e, f"Feedback ({fb['context']}, {fb['rating'] or '–'}/5)" if fb else "Feedback", (fb["comment"] or "") if fb else "",
+                       url_for("control.feedback_admin")))
+        else:
+            er = db.execute("SELECT error, count FROM error_log WHERE id=?", (e["source_id"],)).fetchone()
+            ev.append((e, f"Server error ×{er['count']}" if er else "Server error", er["error"] if er else "", url_for("control.targets") + "#errors"))
+    return render_template("admin/backlog_item.html", b=b, ev=ev, kinds=dict(BACKLOG_KINDS), statuses=BACKLOG_STATUSES)
+
+
+@bp.route("/feedback")
+@require("cases")
+def feedback_admin():
+    db = get_db()
+    since = iso(utcnow() - timedelta(days=30))
+    summary = db.execute("SELECT context, COUNT(*) n, ROUND(AVG(rating), 1) avg, SUM(rating<=2) low FROM feedback WHERE created_at>=? "
+                         "GROUP BY context", (since,)).fetchall()
+    rows = db.execute("SELECT f.*, u.email FROM feedback f LEFT JOIN users u ON u.id=f.user_id ORDER BY f.status='new' DESC, "
+                      "f.rating IS NULL, f.rating, f.id DESC LIMIT 200").fetchall()
+    items = db.execute("SELECT id, title FROM backlog WHERE status IN ('open','planned') ORDER BY id DESC LIMIT 100").fetchall()
+    return render_template("admin/feedback.html", summary=summary, rows=rows, items=items, kinds=BACKLOG_KINDS)
+
+
 # ---------------- universal admin search ----------------
 
 @bp.route("/search")
@@ -749,8 +835,12 @@ def case_detail(case_id):
                                (uid,)).fetchone()[0],
             "on_break": bool(customer["excluded_until"] and customer["excluded_until"] > iso(utcnow())),
         }
+    backlog_items = db.execute("SELECT id, title FROM backlog WHERE status IN ('open','planned') ORDER BY id DESC LIMIT 100").fetchall()
+    linked = db.execute("SELECT b.id, b.title, b.status FROM backlog b JOIN backlog_evidence e ON e.backlog_id=b.id "
+                        "WHERE e.source='case' AND e.source_id=?", (case_id,)).fetchall()
     return render_template("admin/case.html", k=k, notes=notes, customer=customer, orders=orders, comp=comp,
-                           holder=holder, history=history, lock_minutes=LOCK_MINUTES, reasons=CASE_REASONS)
+                           holder=holder, history=history, lock_minutes=LOCK_MINUTES, reasons=CASE_REASONS,
+                           backlog_items=backlog_items, linked=linked, kinds=BACKLOG_KINDS)
 
 
 @bp.route("/support-insights")

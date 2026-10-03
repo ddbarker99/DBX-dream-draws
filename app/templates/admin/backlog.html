@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Backlog · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Development backlog</h1>
+<p class="muted" style="max-width:760px">Problems customers keep running into, each with the cases, feedback and errors that prove it. Most evidence first. Add items from a support case, the feedback page or the error log — or here.</p>
+<nav class="chips">{% for k, label in statuses %}<a class="chip" href="{{ url_for('control.backlog', show=k) }}"{% if show == k %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</nav>
+<div class="panel table-scroll" tabindex="0" role="region" aria-label="Backlog"><table>
+  <thead><tr><th scope="col">#</th><th scope="col">Item</th><th scope="col">Type</th><th scope="col" class="num">Evidence</th><th scope="col">Updated</th></tr></thead><tbody>
+  {% for b in rows %}<tr><td>{{ b.id }}</td><td><a href="{{ url_for('control.backlog_item', bid=b.id) }}">{{ b.title }}</a></td><td>{{ dict(kinds)[b.kind] }}</td><td class="num"><b>{{ b.evidence }}</b></td><td class="small muted">{{ b.updated_at|ago }}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Nothing here.</td></tr>{% endfor %}</tbody></table></div>
+<details class="panel" style="margin-top:var(--s4);max-width:720px"><summary><b>New item</b></summary>
+  <form method="post" class="stack"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label for="nt">Title</label><input id="nt" name="title" required minlength="5">
+    <label for="nk">Type</label><select id="nk" name="kind">{% for k, label in kinds %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select>
+    <label for="nd">Detail</label><textarea id="nd" name="detail" rows="3"></textarea>
+    <button class="btn small" style="align-self:flex-start">Create</button></form></details>
+{% endblock %}

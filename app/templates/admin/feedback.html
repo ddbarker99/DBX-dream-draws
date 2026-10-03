@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Customer feedback · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Customer feedback</h1>
+<p class="muted" style="max-width:760px">Ratings customers give after entering and after a support case. Low ratings and comments first — if the same complaint repeats, add it to the <a href="{{ url_for('control.backlog') }}">backlog</a>.</p>
+<div class="statstrip">{% for s in summary %}<div><b>{{ s.avg or '—' }}/5</b><span>{{ {'checkout':'Entering','case':'Support','general':'General'}[s.context] }} · {{ s.n }} ratings · {{ s.low or 0 }} low (last 30 days)</span></div>{% else %}<div><b>—</b><span>No feedback yet</span></div>{% endfor %}</div>
+<div class="panel table-scroll" style="margin-top:var(--s4)" tabindex="0" role="region" aria-label="Feedback"><table>
+  <thead><tr><th scope="col">When</th><th scope="col">About</th><th scope="col">Rating</th><th scope="col">Comment</th><th scope="col"><span class="sr-only">Action</span></th></tr></thead><tbody>
+  {% for f in rows %}<tr><td class="small">{{ f.created_at|uktime('%d %b %H:%M') }}</td>
+    <td class="small">{{ {'checkout':'Order','case':'Case','general':'General'}[f.context] }}{% if f.ref %} #{{ f.ref }}{% endif %}{% if f.email %}<div class="tiny muted">{{ f.email }}</div>{% endif %}</td>
+    <td>{% if f.rating %}<b class="{{ 'bad-t' if f.rating <= 2 else ('ok-t' if f.rating >= 4 else '') }}">{{ f.rating }}/5</b>{% else %}—{% endif %}</td>
+    <td class="small">{{ f.comment or '' }}</td>
+    <td>{% if f.backlog_id %}<a class="small" href="{{ url_for('control.backlog_item', bid=f.backlog_id) }}">Backlog #{{ f.backlog_id }}</a>{% elif f.comment %}
+      <form method="post" action="{{ url_for('control.backlog') }}" class="inline-form"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="source" value="feedback"><input type="hidden" name="source_id" value="{{ f.id }}">
+        <label class="sr-only" for="fb-{{ f.id }}">Backlog item</label><select id="fb-{{ f.id }}" name="bid"><option value="">New item…</option>{% for it in items %}<option value="{{ it.id }}">#{{ it.id }} {{ it.title[:40] }}</option>{% endfor %}</select>
+        <input name="title" placeholder="Title for a new item" aria-label="Title for a new item" style="max-width:180px"><button class="btn ghost small">Add</button></form>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">No feedback yet.</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

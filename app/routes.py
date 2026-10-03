@@ -192,9 +192,9 @@ def competitions():
     elif tab != "all":
         return redirect(url_for("public.competitions", q=q or None), code=301)
     if q:
-        ql = q.lower()
-        cards = [x for x in cards if ql in x["c"]["title"].lower() or ql in (x["c"]["description"] or "").lower()]
-    present = {c["category"] for c in rows}
+        cards = [x for x in cards if fuzzy_match(q, x["c"]["title"], x["c"]["description"])]
+    enterable = [card_data(db, c) for c in rows]
+    present = {x["c"]["category"] for x in enterable if x["state"] == "live"}      # only categories you can enter right now
     filters = FILTERS + [(k, n) for k, n in CATEGORIES if k in present]
     return render_template("competitions.html", cards=cards, tab=tab, q=q, filters=filters,
                            tab_name=dict(filters).get(tab, "All"))
@@ -312,6 +312,21 @@ def winners():
     return render_template("winners.html", **ctx)
 
 
+@bp.route("/winners/<slug>/card.png")
+def winner_card(slug):
+    """Share card for a winner who agreed to be featured. 404 otherwise."""
+    from .cards import winner_card as make_card
+    from . import UK
+    db = get_db()
+    c = db.execute("SELECT * FROM competitions WHERE slug=? AND status='drawn' AND winner_consent_at IS NOT NULL", (slug,)).fetchone()
+    w = winner_details(db, c) if c else None
+    if not w:
+        abort(404)
+    path = make_card(current_app.config["UPLOAD_DIR"], c, public_name(w["name"]), w["number"],
+                     parse_iso(c["drawn_at"]).astimezone(UK).strftime("%d %B %Y"), current_app.config["SITE_NAME"])
+    return send_from_directory(os.path.dirname(path), os.path.basename(path), max_age=86400, mimetype="image/png")
+
+
 @bp.route("/draws")
 def draw_calendar():
     """Public calendar of upcoming draws. Logged-in customers see the ones they've entered highlighted."""
@@ -376,22 +391,55 @@ def results():
                            pages=max(1, -(-total // 30)), total=total)
 
 
+def _words(text):
+    return [w for w in "".join(ch.lower() if ch.isalnum() else " " for ch in (text or "")).split() if len(w) > 1]
+
+
+def fuzzy_match(query, *texts, cutoff=0.8):
+    """True if every word of the query appears in the texts, allowing small spelling mistakes (ps5 ~ PS5, iphne ~ iPhone,
+    machester ~ Manchester). Plain substring matches always count."""
+    from difflib import SequenceMatcher
+    hay = " ".join(t or "" for t in texts).lower()
+    words = _words(hay)
+    for q in _words(query):
+        if q in hay:
+            continue
+        if not any(SequenceMatcher(None, q, w).ratio() >= cutoff or (len(q) >= 4 and w.startswith(q[:4]) and
+                                                                   SequenceMatcher(None, q, w[:len(q) + 1]).ratio() >= cutoff)
+                   for w in words):
+            return False
+    return True
+
+
 @bp.route("/search")
 def search():
     require_feature("search")
+    from difflib import get_close_matches
     db = get_db()
     q = " ".join(request.args.get("q", "").split())[:60]
-    found = {"live": [], "games": [], "results": []}
+    found = {"live": [], "games": [], "results": [], "winners": []}
+    suggestion = None
     if q:
-        like = f"%{q}%"
-        for c in db.execute("SELECT * FROM competitions WHERE status='live' AND free_daily=0 AND (title LIKE ? OR description LIKE ?) "
-                            "ORDER BY ends_at LIMIT 40", (like, like)).fetchall():
-            d = card_data(db, c)
-            if d["state"] in ("live", "soldout"):
-                found["games" if c["game_type"] else "live"].append(d)
-        found["results"] = [card_data(db, c) for c in db.execute(
-            "SELECT * FROM competitions WHERE status='drawn' AND game_type='' AND title LIKE ? ORDER BY drawn_at DESC LIMIT 12", (like,))]
-    return render_template("search.html", q=q, found=found, n=sum(len(v) for v in found.values()))
+        for c in db.execute("SELECT * FROM competitions WHERE status='live' AND free_daily=0 ORDER BY ends_at LIMIT 300").fetchall():
+            if fuzzy_match(q, c["title"], c["description"], CATEGORY_NAMES.get(c["category"], ""),
+                           GAME_NAMES.get(c["game_type"], "") if c["game_type"] else ""):
+                d = card_data(db, c)
+                if d["state"] in ("live", "soldout"):
+                    found["games" if c["game_type"] else "live"].append(d)
+        for c in db.execute("SELECT * FROM competitions WHERE status='drawn' AND game_type='' ORDER BY drawn_at DESC LIMIT 500").fetchall():
+            w = winner_details(db, c)
+            name = public_name(w["name"]) if w else ""
+            if fuzzy_match(q, c["title"], CATEGORY_NAMES.get(c["category"], "")):
+                found["results"].append(card_data(db, c))
+            elif name and fuzzy_match(q, name, cutoff=0.85):
+                found["winners"].append({"c": c, "name": name, "number": w["number"]})
+        found["results"] = found["results"][:12]
+        found["winners"] = found["winners"][:12]
+        if not any(found.values()):
+            vocab = {w for (t,) in db.execute("SELECT title FROM competitions WHERE status IN ('live','drawn')") for w in _words(t)}
+            fixed = [(get_close_matches(w, vocab, n=1, cutoff=0.6) or [w])[0] for w in _words(q)]
+            suggestion = " ".join(fixed) if fixed and fixed != _words(q) else None
+    return render_template("search.html", q=q, found=found, n=sum(len(v) for v in found.values()), suggestion=suggestion)
 
 
 @bp.route("/watch/<slug>", methods=["POST"])
@@ -815,7 +863,9 @@ def checkout_done(cid):
     if c["status"] == "paid" and len(lines) == 1 and lines[0]["game"]:
         return redirect(url_for("public.play", slug=lines[0]["slug"]))   # straight into the game
     wins = [t for s in lines for t in s["tickets"] if t["win"]]
-    return render_template("checkout_done.html", c=c, lines=lines, wins=wins)
+    fb_done = get_db().execute("SELECT 1 FROM feedback WHERE user_id=? AND context='checkout' AND ref=?", (g.user["id"], cid)).fetchone()
+    return render_template("checkout_done.html", c=c, lines=lines, wins=wins, fb_done=fb_done, fb_context="checkout", fb_ref=cid,
+                           fb_prompt="How easy was entering today?")
 
 
 @bp.route("/checkout/<int:cid>/cancel")
@@ -1183,7 +1233,9 @@ def case_view(case_id):
         return redirect(url_for("public.case_view", case_id=case_id))
     notes = db.execute("SELECT kind, body, created_at FROM case_notes WHERE case_id=? AND kind!='internal' ORDER BY id",
                        (case_id,)).fetchall()       # internal staff notes are never shown to customers
-    return render_template("case_view.html", k=k, notes=notes)
+    fb_done = db.execute("SELECT 1 FROM feedback WHERE user_id=? AND context='case' AND ref=?", (g.user["id"], case_id)).fetchone()
+    return render_template("case_view.html", k=k, notes=notes, fb_done=fb_done, fb_context="case", fb_ref=case_id,
+                           fb_prompt="Did we sort it out? How easy was it to get help?")
 
 
 CONTACT_TOPICS = ["My entries or tickets", "A payment", "Withdrawing winnings", "Claiming a prize", "My account",
@@ -1584,7 +1636,8 @@ def account():
                    withdrawals=db.execute("SELECT * FROM withdrawals WHERE user_id=? ORDER BY id DESC LIMIT 20", (uid,)).fetchall(),
                    min_withdrawal=MIN_WITHDRAWAL)
     if tab == "points":
-        ctx.update(tiers=TIERS, redeem_block=REDEEM_BLOCK,
+        from .services import milestones, points_summary
+        ctx.update(tiers=TIERS, redeem_block=REDEEM_BLOCK, psum=points_summary(db, uid), milestones=milestones(db, user),
                    referred=db.execute("SELECT COUNT(*) FROM users WHERE referred_by=?", (uid,)).fetchone()[0],
                    points_rows=db.execute("SELECT * FROM points_ledger WHERE user_id=? ORDER BY id DESC LIMIT 100", (uid,)).fetchall(),
                    referrals=db.execute("SELECT r.*, u.name FROM referrals r JOIN users u ON u.id=r.referred_id WHERE r.referrer_id=? "
@@ -1599,6 +1652,16 @@ def account():
                                      (uid,)).fetchall()
         ctx["this_sid"] = session.get("sid")
         ctx["device_name"] = device_name
+        events = [(r["created_at"], f"Signed in on {device_name(r['agent'])}" + (" (since signed out)" if r["revoked_at"] else ""))
+                  for r in db.execute("SELECT created_at, agent, revoked_at FROM user_sessions WHERE user_id=? ORDER BY created_at DESC "
+                                      "LIMIT 15", (uid,))]
+        labels = {"account.password_changed": "Password changed", "account.password_reset": "Password reset by email link",
+                  "safer.limits": "Spending limits changed", "safer.break": "Break started", "account.sessions_revoked": "Signed out of other devices",
+                  "account.email_verified": "Email confirmed"}
+        events += [(r["created_at"], labels.get(r["action"], r["action"])) for r in db.execute(
+            f"SELECT created_at, action FROM audit_log WHERE target=? AND action IN ({','.join('?' * len(labels))}) ORDER BY id DESC LIMIT 15",
+            (f"user:{uid}", *labels))]
+        ctx["security_events"] = sorted(events, reverse=True)[:15]
     if tab == "safer":
         ctx.update(limits=effective_limits(user), spent=spend_summary(db, uid))
         user = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()   # limits may have just come into force
@@ -1774,6 +1837,43 @@ def prize_claim(claim_id):
                            names={"selected": "You won", "verification": "Details checked", "chosen": "Prize chosen",
                                   "fulfilment": "On its way", "delivered": "Received"}, events=events,
                            can_change=c["status"] not in ("fulfilment", "delivered", "forfeited"))
+
+
+@bp.route("/account/export/<kind>.csv")
+@login_required
+def account_export(kind):
+    """Customers download their own records — orders, entries (tickets) or wallet transactions — as a spreadsheet."""
+    import csv
+    import io
+    db, uid = get_db(), g.user["id"]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    if kind == "orders":
+        w.writerow(["order", "date (UTC)", "status", "competitions", "entries", "paid by card (£)", "from wallet (£)", "promo discount (£)"])
+        for k in db.execute("SELECT k.*, (SELECT GROUP_CONCAT(c.title, '; ') FROM orders o JOIN competitions c ON c.id=o.competition_id "
+                            "WHERE o.checkout_id=k.id) AS titles, (SELECT SUM(quantity) FROM orders o WHERE o.checkout_id=k.id) AS n "
+                            "FROM checkouts k WHERE k.user_id=? AND k.status!='pending' ORDER BY k.id", (uid,)):
+            w.writerow([k["id"], k["paid_at"] or k["created_at"], k["status"], k["titles"], k["n"], f"{k['cash_due'] / 100:.2f}",
+                        f"{(k['credit_used'] + k['cash_used'] + k['deposit_used']) / 100:.2f}", f"{k['promo_discount'] / 100:.2f}"])
+    elif kind == "entries":
+        w.writerow(["competition", "ticket number", "how entered", "order", "entered (UTC)", "draw (UTC)", "result"])
+        for t in db.execute("SELECT t.number, t.created_at, t.postal_entry_id, o.checkout_id, c.title, c.ends_at, c.status, c.winner_ticket_id, t.id "
+                            "FROM tickets t JOIN competitions c ON c.id=t.competition_id LEFT JOIN orders o ON o.id=t.order_id "
+                            "WHERE t.user_id=? AND t.status='issued' ORDER BY c.ends_at, t.number", (uid,)):
+            result = "won" if t["winner_ticket_id"] == t["id"] else ("not won" if t["status"] == "drawn" else
+                                                                     ("cancelled — refunded" if t["status"] == "cancelled" else "draw pending"))
+            w.writerow([t["title"], t["number"], "free postal entry" if t["postal_entry_id"] else "paid", t["checkout_id"] or "",
+                        t["created_at"], t["ends_at"], result])
+    elif kind == "transactions":
+        w.writerow(["date (UTC)", "what", "balance", "amount (£)", "reference"])
+        for l in db.execute("SELECT * FROM credit_ledger WHERE user_id=? ORDER BY id", (uid,)):
+            w.writerow([l["created_at"], l["reason"], {"cash": "cash", "credit": "site credit", "deposit": "deposited funds"}.get(l["kind"], l["kind"]),
+                        f"{l['amount'] / 100:.2f}", l["ref"] or ""])
+    else:
+        abort(404)
+    audit(db, "account.export", f"user:{uid}", f"Downloaded {kind}.csv", actor=g.user)
+    return Response(buf.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=dbx-{kind}-{utcnow():%Y%m%d}.csv", "Cache-Control": "no-store"})
 
 
 @bp.route("/account/tickets/<int:tid>")
@@ -1957,6 +2057,34 @@ def journey_select(cid):
     if get_db().execute("SELECT 1 FROM competitions WHERE id=? AND status='live'", (cid,)).fetchone():
         track("select", cid)
     return "", 204
+
+
+@bp.route("/feedback", methods=["POST"])
+def feedback():
+    """One-tap rating (1–5) with an optional comment, after a purchase or a resolved support case."""
+    f = request.form
+    context = f.get("context") if f.get("context") in ("checkout", "case", "general") else "general"
+    ref = int(f["ref"]) if f.get("ref", "").isdigit() else None
+    rating = int(f["rating"]) if f.get("rating", "").isdigit() and 1 <= int(f["rating"]) <= 5 else None
+    comment = " ".join(f.get("comment", "").split())[:1000] or None
+    back = safe_next(f.get("next"), url_for("public.home"))
+    if rating is None and not comment:
+        flash("Choose a rating or write a comment.", "error")
+        return redirect(back)
+    db = get_db()
+    if g.user and ref is not None:            # only rate your own order or case
+        table = {"checkout": "checkouts", "case": "cases"}.get(context)
+        if table and not db.execute(f"SELECT 1 FROM {table} WHERE id=? AND user_id=?", (ref, g.user["id"])).fetchone():
+            abort(404)
+    if _too_many("fb:" + (request.remote_addr or "?"), limit=10, window=3600):
+        return redirect(back)
+    _fail("fb:" + (request.remote_addr or "?"))
+    db.execute("INSERT INTO feedback (created_at, user_id, context, ref, rating, comment) VALUES (?,?,?,?,?,?) "
+               "ON CONFLICT(user_id, context, ref) DO UPDATE SET rating=COALESCE(excluded.rating, rating), "
+               "comment=COALESCE(excluded.comment, comment), created_at=excluded.created_at",
+               (iso(utcnow()), g.user["id"] if g.user else None, context, ref, rating, comment))
+    flash("Thanks for the feedback — we read every comment.")
+    return redirect(back)
 
 
 @bp.route("/healthz/deep")
