@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{% if tab == 'all' and not q %}Prize competitions — enter today{% else %}{{ tab_name }} competitions{% endif %} · {{ config.SITE_NAME }}{% endblock %}
-{% block desc %}{% if tab == 'ending' %}Prize draws closing soon — last chance to enter.{% elif tab == 'instant' %}Prize draws with instant prizes on matching ticket numbers.{% else %}Every live {{ config.SITE_NAME }} prize draw: tech, cars, cash and more. Clear odds, closing dates and a free entry route.{% endif %}{% endblock %}
+{% block desc %}{% if tab == 'ending' %}Prize draws closing soon — last chance to enter.{% elif tab == 'new' %}Prize draws launched in the last 48 hours.{% elif tab == 'instant' %}Prize draws with instant prizes on matching ticket numbers.{% else %}Every live {{ config.SITE_NAME }} prize draw: tech, cars, cash and more. Clear odds, closing dates and a free entry route.{% endif %}{% endblock %}
 {% block canonical %}{{ config.SITE_URL }}{{ url_for('public.competitions', tab=tab if tab != 'all' else None) }}{% endblock %}
 {% block robots %}{% if q %}<meta name="robots" content="noindex">{% else %}{{ super() }}{% endif %}{% endblock %}
 {% block content %}
@@ -22,8 +22,16 @@
 
 {% if q %}<p class="muted" role="status">{{ cards|length }} result{{ 's' if cards|length != 1 }} for “{{ q }}” · <a href="{{ url_for('public.competitions', tab=tab if tab != 'all' else None) }}">Clear search</a></p>{% endif %}
 
+{% set open_cards = cards|rejectattr('state', 'equalto', 'ended')|list %}
+{% set closed_cards = cards|selectattr('state', 'equalto', 'ended')|list %}
 {% if cards %}
-<div class="grid">{% for it in cards %}{% include "_card.html" %}{% endfor %}</div>
+{% if open_cards %}<div class="grid">{% for it in open_cards %}{% include "_card.html" %}{% endfor %}</div>{% endif %}
+{% if closed_cards %}
+<section class="section" aria-labelledby="closed-h">
+  <div class="section-head"><div><h2 id="closed-h">Closed — draw due</h2><p>Entries have closed. The result appears on each page at the draw time.</p></div></div>
+  <div class="grid">{% for it in closed_cards %}{% include "_card.html" %}{% endfor %}</div>
+</section>
+{% endif %}
 {% else %}
 <div class="empty">
   <p>{% if q %}Nothing matches “{{ q }}”.{% else %}No competitions in this list right now.{% endif %}</p>

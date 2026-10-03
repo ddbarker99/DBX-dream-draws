@@ -1,5 +1,12 @@
 {%- set ep = request.endpoint or '' -%}
 {%- set nm = config.SITE_NAME.split(' ', 1) -%}
+{%- set main_nav = [
+  (url_for('public.home'), 'Home', ep == 'public.home'),
+  (url_for('public.competitions'), 'Competitions', ep in ('public.competitions', 'public.competition', 'public.entry_list')),
+  (url_for('public.instant_wins'), 'Instant Wins', ep in ('public.instant_wins', 'public.play')),
+  (url_for('public.winners'), 'Winners', ep == 'public.winners'),
+  (url_for('public.how_it_works'), 'How It Works', ep == 'public.how_it_works' or (request.view_args or {}).get('page') == 'fair-draws'),
+  (url_for('public.page', page='free-entry'), 'Free Entry', (request.view_args or {}).get('page') == 'free-entry')] -%}
 <!doctype html>
 <html lang="en-GB">
 <head>
@@ -39,22 +46,14 @@
       <span class="b-full"><span class="b1">{{ nm[0] }}</span>{% if nm|length == 2 %} <span class="b2">{{ nm[1] }}</span>{% endif %}</span>
     </a>
     <nav class="nav" aria-label="Main">
-      {% for e, label, match in [('public.competitions', 'Competitions', ('public.competitions', 'public.competition', 'public.entry_list')),
-                                  ('public.instant_wins', 'Instant Wins', ('public.instant_wins', 'public.play')),
-                                  ('public.winners', 'Winners', ('public.winners',)),
-                                  ('public.how_it_works', 'How it works', ('public.how_it_works',))] %}
-      <a href="{{ url_for(e) }}"{% if ep in match %} aria-current="page"{% endif %}>{{ label }}</a>
-      {% endfor %}
+      {% for href, label, on in main_nav %}<a href="{{ href }}"{% if on %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
     </nav>
     <div class="header-right">
       {% if user %}
         {% if user.is_admin %}<a class="iconbtn hide-md" href="{{ url_for('admin.dashboard') }}">Admin</a>{% endif %}
-        {% if wallet %}<a class="iconbtn walletpill hide-sm" href="{{ url_for('public.account', tab='wallet') }}" aria-label="Wallet: {{ wallet.total|gbp }} (cash {{ wallet.cash|gbp }}, credit {{ wallet.credit|gbp }})">{{ wallet.total|gbp }}</a>{% endif %}
+        {% if wallet %}<a class="iconbtn walletpill hide-sm" href="{{ url_for('public.account', tab='wallet') }}" aria-label="Cash balance {{ wallet.cash|gbp }}, site credit {{ wallet.credit|gbp }}, deposited funds {{ wallet.deposit|gbp }}"><small aria-hidden="true">Cash</small> {{ wallet.cash|gbp }}</a>{% endif %}
         <a class="iconbtn" href="{{ url_for('public.account') }}" aria-label="My account"{% if ep.startswith('public.account') %} aria-current="page"{% endif %}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><span class="hide-md">Account</span></a>
-        <form method="post" action="{{ url_for('public.logout') }}" class="hide-sm" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <button class="iconbtn logoutbtn" type="submit" aria-label="Log out">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5"/><path d="M5 12h11"/></svg><span class="hide-md">Log out</span></button></form>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><span class="hide-md">My account</span></a>
       {% else %}
         <a class="iconbtn hide-sm" href="{{ url_for('public.login') }}">Log in</a>
         <a class="btn small" href="{{ url_for('public.signup') }}">Join</a>
@@ -68,14 +67,12 @@
   </div>
   <div class="drawer" id="drawer">
     <nav aria-label="Mobile">
-      <a href="{{ url_for('public.home') }}">Home</a>
-      <a href="{{ url_for('public.competitions') }}">Competitions</a>
-      <a href="{{ url_for('public.instant_wins') }}">Instant Wins</a>
-      <a href="{{ url_for('public.winners') }}">Winners &amp; results</a>
-      <a href="{{ url_for('public.how_it_works') }}">How it works</a>
+      {% for href, label, on in main_nav %}<a href="{{ href }}"{% if on %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
       <span class="group">Your account</span>
       {% if user %}
-        <a href="{{ url_for('public.account') }}">My account{% if wallet %} · {{ wallet.total|gbp }}{% endif %}</a>
+        <a href="{{ url_for('public.account') }}">My account</a>
+        <a href="{{ url_for('public.account', tab='entries') }}">My entries</a>
+        <a href="{{ url_for('public.account', tab='wallet') }}">Wallet{% if wallet %} · cash {{ wallet.cash|gbp }}{% endif %}</a>
         {% if user.is_admin %}<a href="{{ url_for('admin.dashboard') }}">Admin</a>{% endif %}
         <form method="post" action="{{ url_for('public.logout') }}" style="margin-top:var(--s3)"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit" class="btn ghost block drawer-logout">Log out</button></form>
       {% else %}
@@ -84,6 +81,7 @@
       {% endif %}
       <span class="group">Help</span>
       <a href="{{ url_for('public.page', page='faq') }}">FAQs</a>
+      <a href="{{ url_for('public.page', page='responsible-play') }}">Responsible play</a>
       <a href="{{ url_for('public.contact') }}">Contact us</a>
     </nav>
   </div>
@@ -113,19 +111,18 @@
         {% if socials or config.TRUSTPILOT_URL %}<div class="social">{% for k, v in socials %}<a href="{{ v }}" target="_blank" rel="noopener">{{ k|capitalize }}</a>{% endfor %}
           {% if config.TRUSTPILOT_URL %}<a href="{{ config.TRUSTPILOT_URL }}" target="_blank" rel="noopener">Trustpilot</a>{% endif %}</div>{% endif %}
       </div>
-      <div><h2>Play</h2><ul>
-        <li><a href="{{ url_for('public.competitions') }}">All competitions</a></li>
-        <li><a href="{{ url_for('public.competitions', tab='ending') }}">Ending soon</a></li>
+      <div><h2>Enter</h2><ul>
+        <li><a href="{{ url_for('public.competitions') }}">Competitions</a></li>
         <li><a href="{{ url_for('public.instant_wins') }}">Instant Wins</a></li>
+        <li><a href="{{ url_for('public.page', page='free-entry') }}">Free entry</a></li>
         <li><a href="{{ url_for('public.winners') }}">Winners</a></li>
         <li><a href="{{ url_for('public.winners', tab='results') }}">Draw results</a></li>
       </ul></div>
       <div><h2>Help</h2><ul>
-        <li><a href="{{ url_for('public.page', page='about') }}">About us</a></li>
         <li><a href="{{ url_for('public.how_it_works') }}">How it works</a></li>
-        <li><a href="{{ url_for('public.page', page='faq') }}">FAQs</a></li>
-        <li><a href="{{ url_for('public.page', page='free-entry') }}">Free postal entry</a></li>
         <li><a href="{{ url_for('public.page', page='fair-draws') }}">Fair draws</a></li>
+        <li><a href="{{ url_for('public.page', page='faq') }}">FAQs</a></li>
+        <li><a href="{{ url_for('public.page', page='about') }}">About us</a></li>
         <li><a href="{{ url_for('public.contact') }}">Contact us</a></li>
       </ul></div>
       <div><h2>Legal &amp; safety</h2><ul>

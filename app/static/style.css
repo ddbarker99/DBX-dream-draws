@@ -242,6 +242,7 @@ ol.steps{padding:0;margin:var(--s5) 0 0}
 .site-header .wrap{display:flex;align-items:center;gap:var(--s5);height:var(--header)}
 .brand{display:flex;align-items:center;gap:10px;text-decoration:none;font:400 20px/1 var(--display);text-transform:uppercase;white-space:nowrap;color:#fff}
 .brand img{width:42px;height:42px}
+.brand picture{flex:none}
 .brand .b1{background:linear-gradient(180deg,#fff,#e4e6ea 40%,#8d929c 55%,#e8eaee);-webkit-background-clip:text;background-clip:text;color:transparent}
 .brand .b2{color:var(--red)}
 .nav{display:flex;gap:var(--s1);align-items:center}
@@ -249,7 +250,7 @@ ol.steps{padding:0;margin:var(--s5) 0 0}
 .nav a:hover{color:#fff;background:var(--surface-2)}
 .nav a[aria-current="page"]{color:#fff;box-shadow:inset 0 -3px 0 var(--red)}
 .header-right{margin-left:auto;display:flex;gap:var(--s2);align-items:center}
-.iconbtn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:44px;height:44px;padding:0 12px;border-radius:var(--r);
+.iconbtn{position:relative;display:inline-flex;white-space:nowrap;flex:none;align-items:center;justify-content:center;gap:6px;min-width:44px;height:44px;padding:0 12px;border-radius:var(--r);
   background:var(--surface-2);border:1px solid var(--line-2);color:var(--text);text-decoration:none;font-weight:600;font-size:var(--fs-sm);cursor:pointer}
 .iconbtn:hover{border-color:var(--red);color:#fff}
 .iconbtn svg{width:20px;height:20px}
@@ -257,6 +258,7 @@ ol.steps{padding:0;margin:var(--s5) 0 0}
 .logoutbtn,.btn.logoutbtn{border-color:#7a1622;color:#ffb1b8}.logoutbtn:hover,.btn.logoutbtn:hover{background:#2c0c10;border-color:var(--red);color:#fff}
 .drawer .drawer-logout{justify-content:center;min-height:48px;border:1px solid #7a1622;border-radius:var(--r);color:#ffb1b8;background:#2c0c10;font-weight:700}
 .walletpill{color:#8af5c1;border-color:var(--green-line);background:var(--green-bg)}
+.walletpill small{font-size:11px;font-weight:600;opacity:.8;margin-right:2px}
 .menu-toggle{display:none}
 .drawer{display:none;border-bottom:1px solid var(--line-2);background:var(--bg-2)}
 .drawer.open{display:block}
@@ -551,10 +553,21 @@ dl.facts>dt,dl.facts>dd{margin:0}
 dl.facts>dd{padding-bottom:10px;border-bottom:1px solid var(--line);color:var(--text)}
 dl.facts>dt{padding-top:10px;color:var(--text-2);font-size:var(--fs-sm)}
 
+/* ---------- 12c. Home ---------- */
+.textlink{font-weight:700;text-decoration:none;align-self:center}
+.textlink:hover{text-decoration:underline}
+.safeplay{display:flex;gap:var(--s5);align-items:center;justify-content:space-between;flex-wrap:wrap}
+.safeplay h2{margin-bottom:var(--s2)}
+.safeplay>div{flex:1 1 320px}
+
 /* ---------- 13. Responsive ---------- */
-@media (max-width:1080px){
+@media (max-width:1480px){
   .nav a{padding:0 9px}
   .brand .b-full{display:none}
+}
+@media (max-width:1140px){
+  .nav,.header-right .hide-md{display:none}
+  .menu-toggle{display:inline-flex}
 }
 @media (max-width:960px){
   .nav,.header-right .hide-md{display:none}

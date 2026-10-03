@@ -148,7 +148,7 @@ def home():
                            public_name=public_name)
 
 
-FILTERS = [("all", "All"), ("ending", "Ending soon"), ("instant", "With instant prizes")]
+FILTERS = [("all", "All live"), ("ending", "Ending soon"), ("new", "New"), ("instant", "With instant prizes")]
 
 
 @bp.route("/competitions")
@@ -163,6 +163,8 @@ def competitions():
         cards = [x for x in cards if x["instant"]]
     elif tab == "ending":
         cards = sorted([x for x in cards if x["state"] == "live"], key=lambda x: x["hours_left"])
+    elif tab == "new":
+        cards = [x for x in cards if x["state"] == "live" and is_new(x["c"])]
     elif tab in CATEGORY_NAMES:
         cards = [x for x in cards if x["c"]["category"] == tab]
     elif tab != "all":

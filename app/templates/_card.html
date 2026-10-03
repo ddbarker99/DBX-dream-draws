@@ -14,6 +14,7 @@
       <div class="bar" role="img" aria-label="{{ it.pct|round|int }}% of tickets sold"><i style="width:{{ it.pct }}%"></i></div>
       <div class="progress-meta tiny"><span>{{ it.pct|round|int }}% sold</span><span>{{ '{:,}'.format(it.c.max_tickets - it.sold) }} left</span></div>
     </div>
-    <div class="foot"><span class="price">{{ it.c.ticket_price|pp }}<small> /ticket</small></span><span class="cta">{{ 'Enter now' if st == 'live' else 'View' }}</span></div>
+    <span class="tiny muted">{% if st == 'drawn' %}Drawn {{ it.c.drawn_at|uktime('%d %b %Y') }}{% else %}Draw {{ it.c.ends_at|uktime('%a %d %b, %H:%M') }}{% endif %}</span>
+    <div class="foot"><span class="price">{{ it.c.ticket_price|pp }}<small> /ticket</small></span><span class="cta">{{ 'Enter now' if st == 'live' else ('See result' if st == 'drawn' else 'View details') }}</span></div>
   </div>
 </a>

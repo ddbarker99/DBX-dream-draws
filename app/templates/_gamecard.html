@@ -12,6 +12,6 @@
       <div class="bar" role="img" aria-label="{{ it.pct|round|int }}% of plays sold"><i style="width:{{ it.pct }}%"></i></div>
       <div class="progress-meta tiny"><span>{{ it.game.left }} prizes left</span><span>{{ it.pct|round|int }}% played</span></div>
     </div>
-    <div class="foot">{% if it.c.free_daily %}<span class="price">Free<small> daily</small></span><span class="cta">Play free</span>{% else %}<span class="price">{{ it.c.ticket_price|pp }}<small> /play</small></span><span class="cta">Play</span>{% endif %}</div>
+    <div class="foot">{% if it.c.free_daily %}<span class="price">Free<small> daily</small></span><span class="cta">Play free</span>{% else %}<span class="price">{{ it.c.ticket_price|pp }}<small> /play</small></span><span class="cta">Play now</span>{% endif %}</div>
   </div>
 </a>
