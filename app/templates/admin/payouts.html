@@ -7,24 +7,24 @@
 {% if dep_refunds %}
 <h2>⚠️ Deposit refunds needed</h2>
 <p class="small muted">These deposits were paid after they had expired, or were paid by credit card and the automatic refund failed. Refund them in Stripe (search the payment ID), then mark done.</p>
-<div class="panel table-scroll"><table><tr><th>Deposit</th><th>User</th><th class="num">Amount</th><th>Stripe payment</th><th></th></tr>
+<div class="panel table-scroll" tabindex="0"><table><tr><th>Deposit</th><th>User</th><th class="num">Amount</th><th>Stripe payment</th><th></th></tr>
   {% for r in dep_refunds %}<tr><td>#{{ r.id }}</td><td>{{ r.name }} · {{ r.email }}</td><td class="num">{{ r.amount|gbp }}</td><td class="tiny">{{ r.payment_intent or r.stripe_session_id }}</td>
   <td><form method="post" action="{{ url_for('admin.deposit_refund_done', did=r.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn small">Refunded</button></form></td></tr>{% endfor %}</table></div>
 {% endif %}
 {% if refunds %}
 <h2>⚠️ Refunds needed</h2>
 <p class="small muted">These people paid after their checkout had already expired (a very late payment confirmation). Refund them in Stripe, then mark done.</p>
-<div class="panel table-scroll"><table><tr><th>Checkout</th><th>User</th><th class="num">Card amount</th><th>Stripe session</th><th></th></tr>
+<div class="panel table-scroll" tabindex="0"><table><tr><th>Checkout</th><th>User</th><th class="num">Card amount</th><th>Stripe session</th><th></th></tr>
   {% for r in refunds %}<tr><td>#{{ r.id }}</td><td>{{ r.name }} · {{ r.email }}</td><td class="num">{{ r.cash_due|gbp }}</td><td class="tiny">{{ r.stripe_session_id }}</td>
   <td><form method="post" action="{{ url_for('admin.refund_done', cid=r.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn small">Refunded</button></form></td></tr>{% endfor %}</table></div>
 {% endif %}
 <h2>Instant prizes to send</h2>
-<div class="panel table-scroll"><table><tr><th>Prize</th><th>Competition</th><th>Ticket</th><th>Winner</th><th>Won</th><th></th></tr>
+<div class="panel table-scroll" tabindex="0"><table><tr><th>Prize</th><th>Competition</th><th>Ticket</th><th>Winner</th><th>Won</th><th></th></tr>
   {% for p in prizes %}<tr><td><b>{{ p.title }}</b><div class="tiny muted">{{ p.value|gbp }}</div></td><td>{{ p.comp }}</td><td>#{{ p.won_number }}</td><td>{{ p.winner }}<div class="tiny muted">{{ p.email }}{% if p.address %} · {{ p.address }}{% endif %}</div></td><td>{{ p.won_at|ago }}</td>
   <td><form method="post" action="{{ url_for('admin.instant_fulfilled', pid=p.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="back" value="{{ url_for('admin.payouts') }}"><button class="btn small good">Mark sent</button></form></td></tr>
   {% else %}<tr><td colspan="6" class="muted">Nothing to send.</td></tr>{% endfor %}</table></div>
 <div class="row"><h2>Withdrawal requests</h2><a class="btn ghost small" href="{{ url_for('admin.payouts_csv') }}">Export pending (CSV)</a></div>
-<div class="panel table-scroll"><table><tr><th>Date</th><th>User</th><th class="num">Amount</th><th>Status</th><th></th></tr>
+<div class="panel table-scroll" tabindex="0"><table><tr><th>Date</th><th>User</th><th class="num">Amount</th><th>Status</th><th></th></tr>
   {% for w in withdrawals %}<tr><td>{{ w.created_at|uktime('%d %b %Y') }}</td><td>{{ w.name }}<div class="tiny muted">{{ w.email }}</div>
     <div class="tiny">{% if w.method == 'paypal' %}PayPal: <b>{{ w.paypal_email }}</b>{% elif w.method == 'bank' %}{{ w.account_name }} · <b>{{ w.sort_code }}</b> · <b>{{ w.account_number }}</b>{% endif %}</div></td><td class="num"><b>{{ w.amount|gbp }}</b></td><td><span class="pill {{ w.status }}">{{ w.status }}</span>{% if w.note %}<div class="tiny muted">{{ w.note }}</div>{% endif %}</td>
   <td>{% if w.status in ('requested', 'processing') %}<form class="actions" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="wid" value="{{ w.id }}">

@@ -12,7 +12,7 @@
   <section class="panel" aria-label="Items">
     {% for ln in lines %}{% set unit = 'play' if ln.c.game_type else 'ticket' %}
     <div class="bline">
-      <div class="thumb">{% if ln.c.image %}<img src="{{ url_for('public.uploads', name=ln.c.image) }}" alt="" width="84" height="84">{% else %}<span aria-hidden="true">{{ '⚡' if ln.c.game_type else '🏆' }}</span>{% endif %}</div>
+      <div class="thumb">{% if ln.c.image %}<img src="{{ ln.c.image|thumb }}" alt="" width="84" height="84">{% else %}<span aria-hidden="true">{{ '⚡' if ln.c.game_type else '🏆' }}</span>{% endif %}</div>
       <div>
         <h3><a href="{{ url_for('public.competition', slug=ln.c.slug) }}">{{ ln.c.title }}</a></h3>
         <div class="small muted">{{ ln.qty }} × {{ ln.c.ticket_price|pp }} per {{ unit }}{% if ln.pct %} · <span class="pill deal">{{ ln.pct }}% multi-buy discount</span>{% endif %}</div>

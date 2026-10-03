@@ -164,6 +164,9 @@ def _save_image(file):
     img.thumbnail((1600, 1600))
     name = secrets.token_hex(8) + ".webp"
     img.save(os.path.join(current_app.config["UPLOAD_DIR"], name), "WEBP", quality=84, method=4)
+    small = img.copy()
+    small.thumbnail((640, 640))       # cards, basket and lists use this — a fraction of the download
+    small.save(os.path.join(current_app.config["UPLOAD_DIR"], name.replace(".webp", "-sm.webp")), "WEBP", quality=80, method=4)
     return name
 
 
@@ -386,6 +389,7 @@ def set_status(cid):
 
 
 def _remove_images(names):
+    names = list(names) + [n.replace(".webp", "-sm.webp") for n in names if n.endswith(".webp")]
     for n in names:
         try:
             os.remove(os.path.join(current_app.config["UPLOAD_DIR"], os.path.basename(n)))

@@ -6,7 +6,7 @@
 <h1>Audit log</h1>
 <p class="muted">Every sensitive action — draws, cancellations, refunds, wallet adjustments, withdrawals, postal entries, limit changes and admin access — is recorded here permanently. Rows can't be edited or deleted.</p>
 {% if target %}<p class="small">Showing <b>{{ target }}</b> only. <a href="{{ url_for('admin.audit_log') }}">Show everything</a></p>{% endif %}
-<div class="panel table-scroll">
+<div class="panel table-scroll" tabindex="0">
   {% if rows %}
   <table>
     <tr><th>When</th><th>Who</th><th>Action</th><th>About</th><th>Detail</th></tr>

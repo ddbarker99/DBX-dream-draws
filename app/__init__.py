@@ -11,7 +11,7 @@ from . import db as dbmod
 from .db import parse_iso, utcnow
 
 UK = ZoneInfo("Europe/London")
-ASSET_V = "17"   # bump when style.css or images change, so browsers fetch the new copy
+ASSET_V = "18"   # bump when style.css or images change, so browsers fetch the new copy
 _PLACEHOLDERS = ("example street", "example.com", "yourdomain", "ab1 2cd")
 
 
@@ -177,6 +177,15 @@ def create_app(test_config=None):
         sign = "-" if pence < 0 else ""
         pence = abs(pence)
         return f"{sign}£{pence/100:,.2f}" if pence % 100 else f"{sign}£{pence//100:,}"
+
+    @app.template_filter("thumb")
+    def thumb(name):
+        """URL of the small copy of an uploaded image (made on upload), or the original for older uploads."""
+        from flask import url_for
+        small = name.replace(".webp", "-sm.webp") if name and name.endswith(".webp") else None
+        if small and os.path.exists(os.path.join(app.config["UPLOAD_DIR"], small)):
+            return url_for("public.uploads", name=small)
+        return url_for("public.uploads", name=name)
 
     @app.template_filter("pp")
     def pp(pence):

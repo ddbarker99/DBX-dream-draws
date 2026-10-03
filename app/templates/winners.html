@@ -27,7 +27,7 @@
   <div class="grid">
   {% for it in items %}
     <a class="card" href="{{ url_for('public.competition', slug=it.c.slug) }}">
-      <div class="thumb">{% if it.c.winner_photo and it.c.winner_consent_at %}<img src="{{ url_for('public.uploads', name=it.c.winner_photo) }}" alt="{{ it.name }} with their prize" loading="lazy">{% elif it.c.image %}<img src="{{ url_for('public.uploads', name=it.c.image) }}" alt="" loading="lazy">{% else %}<span aria-hidden="true">🏆</span>{% endif %}
+      <div class="thumb">{% if it.c.winner_photo and it.c.winner_consent_at %}<img src="{{ url_for('public.uploads', name=it.c.winner_photo) }}" alt="{{ it.name }} with their prize" loading="lazy">{% elif it.c.image %}<img src="{{ it.c.image|thumb }}" alt="" loading="lazy">{% else %}<span aria-hidden="true">🏆</span>{% endif %}
         <div class="badges"><span class="pill drawn">Drawn {{ it.c.drawn_at|uktime('%d %b %Y') }}</span></div></div>
       <div class="body">
         <h3>{{ it.c.title }}</h3>
@@ -42,7 +42,7 @@
 
 <section class="section" aria-labelledby="iw-h">
   <h2 id="iw-h">Latest instant wins</h2>
-  <div class="panel table-scroll"><table>
+  <div class="panel table-scroll" tabindex="0"><table>
     <caption class="sr-only">Latest instant wins</caption>
     <thead><tr><th scope="col">Winner</th><th scope="col">Prize</th><th scope="col">Competition or game</th><th scope="col">Ticket</th><th scope="col">When</th></tr></thead>
     <tbody>
@@ -56,7 +56,7 @@
 <section aria-labelledby="res-h">
   <h2 id="res-h" class="sr-only">Draw results</h2>
   <p class="muted">Finished and closing draws, newest first. Open a competition to see the revealed seed and check the result.</p>
-  <div class="panel table-scroll"><table>
+  <div class="panel table-scroll" tabindex="0"><table>
     <thead><tr><th scope="col">Competition</th><th scope="col">Status</th><th scope="col" class="num">Entries</th><th scope="col">Winning ticket</th><th scope="col">Winner</th><th scope="col"><span class="sr-only">Links</span></th></tr></thead>
     <tbody>
     {% for it in items %}<tr>

@@ -1385,7 +1385,7 @@ def redeem():
 @bp.route("/robots.txt")
 def robots():
     return Response("User-agent: *\nDisallow: /admin/\nDisallow: /account\nDisallow: /basket\nDisallow: /checkout/\n"
-                    "Disallow: /play/\nDisallow: /*/entries\n"
+                    "Disallow: /play/\nDisallow: /*/entries\nDisallow: /forgot\nDisallow: /reset/\nDisallow: /verify/\nDisallow: /r/\n"
                     f"Sitemap: {current_app.config['SITE_URL']}/sitemap.xml\n", mimetype="text/plain")
 
 

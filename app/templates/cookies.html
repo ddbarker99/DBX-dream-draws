@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Cookie policy · {{ config.SITE_NAME }}{% endblock %}
-{% block desc %}How {{ config.SITE_NAME }} uses cookies: one strictly necessary session cookie and no advertising or tracking cookies.{% endblock %}
+{% block desc %}How {{ config.SITE_NAME }} uses cookies: one strictly necessary session cookie and no advertising, analytics or tracking cookies.{% endblock %}
 {% set S = config.SITE_NAME %}
 {% block content %}
 <div class="prose legal-doc">
@@ -12,7 +12,7 @@
 <p>We keep cookies to the minimum needed to run the website securely and provide the services you ask for. We do not use advertising, analytics or behavioural-tracking cookies, so there is nothing to accept or reject.</p>
 
 <h2>Strictly necessary cookie</h2>
-<div class="panel table-scroll" style="margin:var(--s3) 0 var(--s4)"><table>
+<div class="panel table-scroll" style="margin:var(--s3) 0 var(--s4)" tabindex="0"><table>
   <thead><tr><th scope="col">Name</th><th scope="col">Purpose</th><th scope="col">Duration</th></tr></thead>
   <tbody><tr><td><code>session</code></td><td>Keeps you logged in, remembers your basket and protects website forms and account functions against misuse.</td><td>Up to 30 days, or until you log out or clear it</td></tr></tbody>
 </table></div>
@@ -25,7 +25,7 @@
 <p>When you pay, you are taken to Stripe's secure payment page. Stripe may use its own cookies or similar technologies for payment processing, authentication, security and fraud prevention. Stripe's own <a href="https://stripe.com/gb/privacy" target="_blank" rel="noopener">privacy and cookie information</a> applies there.</p>
 
 <h2>External resources</h2>
-<p>Our pages load fonts from Google Fonts. Google Fonts does not set cookies, but — like any website request — your browser sends technical information such as your IP address to Google when the fonts are downloaded. Our <a href="{{ url_for('public.page', page='privacy') }}">Privacy Policy</a> explains more generally how service providers may process personal information.</p>
+<p>We host our own fonts and images, so browsing {{ S }} doesn't send requests to other companies. The only third party your browser contacts is Stripe, and only when you choose to pay.</p>
 
 <h2>Non-essential cookies</h2>
 <p>If we ever introduce analytics, advertising or other non-essential cookies that require consent, we will update this policy and ask for your consent before they are used.</p>

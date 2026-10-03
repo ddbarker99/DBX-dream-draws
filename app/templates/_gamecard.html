@@ -1,6 +1,6 @@
 <a class="card gamecard g-{{ it.c.game_type }}" href="{{ url_for('public.competition', slug=it.c.slug) }}">
   <div class="thumb">
-    {% if it.c.image %}<img src="{{ url_for('public.uploads', name=it.c.image) }}" alt="" loading="lazy" width="400" height="300">{% else %}
+    {% if it.c.image %}<img src="{{ it.c.image|thumb }}" alt="" loading="lazy" width="400" height="300">{% else %}
     <div class="gameart" aria-hidden="true"><span class="gicon">{{ it.game.icon }}</span><span class="gname">{{ it.game.name }}</span></div>{% endif %}
     <span class="pricetag">{{ 'Free' if it.c.free_daily else it.c.ticket_price|pp }}</span>
     {% if it.state == 'live' %}<span class="timer"><span class="sr-only">Closes in </span><span data-ends="{{ it.c.ends_at|epoch }}">{{ it.c.ends_at|uktime('%d %b') }}</span></span>{% endif %}

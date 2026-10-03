@@ -13,7 +13,7 @@
 {% endmacro %}
 {% macro entry_row(e) %}
 <div class="entry">
-  <div class="thumb">{% if e.image %}<img src="{{ url_for('public.uploads', name=e.image) }}" alt="" width="64" height="64" loading="lazy">{% else %}<span aria-hidden="true">{{ '⚡' if e.game else '🏆' }}</span>{% endif %}</div>
+  <div class="thumb">{% if e.image %}<img src="{{ e.image|thumb }}" alt="" width="64" height="64" loading="lazy">{% else %}<span aria-hidden="true">{{ '⚡' if e.game else '🏆' }}</span>{% endif %}</div>
   <div>
     <h3><a href="{{ url_for('public.competition', slug=e.slug) }}">{{ e.title }}</a></h3>
     <p class="tiny muted" style="margin:2px 0 6px">{{ e.tickets|length }} {{ 'play' if e.game else 'ticket' }}{{ 's' if e.tickets|length != 1 }} ·
@@ -65,7 +65,7 @@
   <section class="section" aria-labelledby="rt-h">
     <div class="section-head"><h2 id="rt-h">Recent transactions</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='transactions') }}">All transactions</a></div>
     {% if orders or ledger %}
-    <div class="panel table-scroll"><table>
+    <div class="panel table-scroll" tabindex="0"><table>
       <thead><tr><th scope="col">Date</th><th scope="col">Details</th><th scope="col">Paid with</th><th scope="col" class="num">Amount</th></tr></thead><tbody>
       {% for o in orders %}<tr><td class="muted">{{ (o.paid_at or o.created_at)|uktime('%d %b %Y') }}</td><td><a href="{{ url_for('public.order_detail', cid=o.id) }}">Order #{{ o.id }}</a> — {{ o.titles }}</td><td><span class="kind">Card</span></td><td class="num neg">−{{ o.cash_due|gbp }}</td></tr>{% endfor %}
       {{ ledger_rows(ledger) }}
@@ -93,11 +93,11 @@
     <div><b>{{ bal.cash|gbp }}</b><span>Cash to withdraw</span></div>
   </div>
   {% if draws_won %}<section class="section" aria-labelledby="dw-h"><h2 id="dw-h">Main draws</h2>
-  <div class="panel table-scroll"><table><thead><tr><th scope="col">Prize</th><th scope="col">Winning ticket</th><th scope="col">Drawn</th><th scope="col">Next step</th></tr></thead><tbody>
+  <div class="panel table-scroll" tabindex="0"><table><thead><tr><th scope="col">Prize</th><th scope="col">Winning ticket</th><th scope="col">Drawn</th><th scope="col">Next step</th></tr></thead><tbody>
     {% for d in draws_won %}<tr><td><a href="{{ url_for('public.competition', slug=d.slug) }}">{{ d.title }}</a>{% if d.cash_alternative %}<div class="tiny muted">Cash alternative: {{ d.cash_alternative }}</div>{% endif %}</td><td>#{{ d.number }}</td><td>{{ d.drawn_at|uktime('%d %b %Y') }}</td><td class="small">We'll contact you by email and phone to arrange it. We'll never ask you to pay to claim a prize.</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
   <section class="section" aria-labelledby="iwn-h"><h2 id="iwn-h">Instant wins</h2>
   {% if wins %}
-  <div class="panel table-scroll"><table><thead><tr><th scope="col">Prize</th><th scope="col">Competition or game</th><th scope="col">Ticket</th><th scope="col">Status</th><th scope="col">When</th></tr></thead><tbody>
+  <div class="panel table-scroll" tabindex="0"><table><thead><tr><th scope="col">Prize</th><th scope="col">Competition or game</th><th scope="col">Ticket</th><th scope="col">Status</th><th scope="col">When</th></tr></thead><tbody>
     {% for w in wins %}{% set k = w.prize_type or ('credit' if w.credit_amount else 'physical') %}
     <tr><td><b>{{ w.title }}</b> {{ win_kind(w) }}</td>
       <td><a href="{{ url_for('public.competition', slug=w.slug) }}">{{ w.comp }}</a></td><td>#{{ w.number }}</td>
@@ -110,7 +110,7 @@
 {% elif tab == 'transactions' %}
   <section class="section" aria-labelledby="ord-h" style="margin-top:0"><h2 id="ord-h">Orders</h2>
   {% if orders %}
-  <div class="panel table-scroll"><table>
+  <div class="panel table-scroll" tabindex="0"><table>
     <thead><tr><th scope="col">Order</th><th scope="col">Date</th><th scope="col">Entries</th><th scope="col">Status</th><th scope="col" class="num">Paid by card</th><th scope="col" class="num">From balance</th></tr></thead><tbody>
     {% for o in orders %}<tr><td><a href="{{ url_for('public.order_detail', cid=o.id) }}">#{{ o.id }}</a></td><td>{{ (o.paid_at or o.created_at)|uktime('%d %b %Y') }}</td><td>{{ o.entries }} · {{ o.titles }}</td>
       <td><span class="pill {{ o.status }}">{{ {'paid':'Confirmed','credit_refused':'Refunded','needs_refund':'Refund due'}.get(o.status, o.status) }}</span></td>
@@ -120,7 +120,7 @@
   </section>
   <section class="section" aria-labelledby="tx-h"><h2 id="tx-h">Wallet activity</h2>
   {% if ledger %}
-  <div class="panel table-scroll"><table>
+  <div class="panel table-scroll" tabindex="0"><table>
     <thead><tr><th scope="col">Date</th><th scope="col">Details</th><th scope="col">Balance</th><th scope="col" class="num">Amount</th></tr></thead><tbody>
     {{ ledger_rows(ledger) }}
   </tbody></table></div>
@@ -162,7 +162,7 @@
     <button class="btn block" style="margin-top:var(--s4)">Continue — check details</button>
   </form>
   {% endif %}
-  {% if withdrawals %}<div class="panel table-scroll" style="margin-top:var(--s4)"><table>
+  {% if withdrawals %}<div class="panel table-scroll" style="margin-top:var(--s4)" tabindex="0"><table>
     <thead><tr><th scope="col">Requested</th><th scope="col">To</th><th scope="col" class="num">Amount</th><th scope="col">Status</th></tr></thead><tbody>
     {% for w in withdrawals %}<tr><td><a href="{{ url_for('public.withdrawal_detail', wid=w.id) }}">{{ w.created_at|uktime('%d %b %Y') }}</a></td><td>{{ 'PayPal' if w.method == 'paypal' else ('Bank ••' ~ (w.account_number or '')[-4:] if w.account_number else 'Bank') }}</td><td class="num">{{ w.amount|gbp }}</td><td><span class="pill {{ w.status }}">{{ {'requested':'Requested','processing':'Processing','paid':'Paid','rejected':'Returned to balance'}.get(w.status, w.status) }}</span></td></tr>{% endfor %}
   </tbody></table></div>{% endif %}
@@ -194,7 +194,7 @@
     <button class="btn ghost small">Refund to my card</button>
   </form>
   {% endif %}
-  {% if deposits %}<div class="panel table-scroll" style="margin-top:var(--s4)"><table>
+  {% if deposits %}<div class="panel table-scroll" style="margin-top:var(--s4)" tabindex="0"><table>
     <thead><tr><th scope="col">Date</th><th scope="col">Deposit</th><th scope="col" class="num">Amount</th><th scope="col">Status</th></tr></thead><tbody>
     {% for d in deposits %}<tr><td>{{ (d.paid_at or d.created_at)|uktime('%d %b %Y') }}</td><td>#{{ d.id }}</td><td class="num">{{ d.amount|gbp }}{% if d.refunded %}<div class="tiny muted">{{ d.refunded|gbp }} refunded</div>{% endif %}</td>
       <td><span class="pill {{ d.status }}">{{ {'paid':'Added','pending':'Waiting for payment','credit_refused':'Refunded — credit card','needs_refund':'Refund due'}.get(d.status, d.status) }}</span></td></tr>{% endfor %}
@@ -230,7 +230,7 @@
     </section>
   </div>
   <section class="section" aria-labelledby="tiers-h"><h2 id="tiers-h">How points work</h2>
-  <div class="panel table-scroll"><table><thead><tr><th scope="col">Tier</th><th scope="col">Reached at</th><th scope="col">Points per £1 paid by card</th></tr></thead><tbody>
+  <div class="panel table-scroll" tabindex="0"><table><thead><tr><th scope="col">Tier</th><th scope="col">Reached at</th><th scope="col">Points per £1 paid by card</th></tr></thead><tbody>
     {% for name, at, mult in tiers %}<tr><td><b class="tier-{{ name }}">{{ name }}</b>{% if name == tier.name %} <span class="pill">Your tier</span>{% endif %}</td><td>{{ at }} lifetime points</td><td>{{ mult }}×</td></tr>{% endfor %}</tbody></table>
     <p class="hint">You earn points on money paid by card or from deposited funds. Points have no cash value.</p></div></section>
 

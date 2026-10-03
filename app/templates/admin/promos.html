@@ -16,7 +16,7 @@
   </div>
   <button class="btn" style="margin-top:14px">Create code</button>
 </form>
-<div class="panel table-scroll" style="margin-top:16px"><table>
+<div class="panel table-scroll" style="margin-top:16px" tabindex="0"><table>
   <tr><th>Code</th><th>Discount</th><th>Min spend</th><th class="num">Used</th><th>Expires</th><th>Status</th><th></th></tr>
   {% for p in rows %}<tr><td><b>{{ p.code }}</b></td><td>{% if p.percent %}{{ p.percent }}%{% endif %}{% if p.percent and p.fixed %} + {% endif %}{% if p.fixed %}{{ p.fixed|gbp }}{% endif %}</td>
     <td>{{ p.min_spend|gbp }}</td><td class="num">{{ p.uses }}{% if p.max_uses %} / {{ p.max_uses }}{% endif %}</td><td>{{ p.expires_at|uktime('%d %b %Y %H:%M') if p.expires_at else '—' }}</td>

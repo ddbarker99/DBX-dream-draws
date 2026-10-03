@@ -63,7 +63,7 @@
 <input type="hidden" name="csrf" value="{{ csrf_token }}">
 <div class="row" style="margin:18px 0 8px;flex-wrap:wrap"><h2 style="margin:0">Competitions &amp; games</h2>
   <div class="actions"><button class="btn danger small" type="submit">Delete ticked</button><a class="btn ghost small" href="{{ url_for('admin.reset') }}">Start fresh…</a></div></div>
-<div class="panel table-scroll" id="comps"><table>
+<div class="panel table-scroll" id="comps" tabindex="0"><table>
   <tr><th><input type="checkbox" aria-label="Tick all" onclick="document.querySelectorAll('#bulk input[name=cid]').forEach(function(b){b.checked=this.checked}.bind(this))"></th><th>Competition</th><th>Status</th><th class="num">Sold</th><th class="num">Revenue</th><th>Ends (UK)</th><th></th></tr>
   {% for it in comps %}
   <tr>

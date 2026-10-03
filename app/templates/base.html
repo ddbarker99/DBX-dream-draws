@@ -17,8 +17,8 @@
 <link rel="canonical" href="{% block canonical %}{{ config.SITE_URL }}{{ request.path }}{% endblock %}">
 {% block robots %}{% if user %}<meta name="robots" content="noindex">{% endif %}{% endblock %}
 <meta name="theme-color" content="#070506">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Russo+One&display=swap" rel="stylesheet">
+<link rel="preload" href="{{ url_for('static', filename='fonts/inter-latin-400-normal.woff2') }}" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{{ url_for('static', filename='fonts/russo-one-latin-400-normal.woff2') }}" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_v }}">
 <link rel="manifest" href="{{ url_for('public.manifest') }}">
 <link rel="icon" href="{{ url_for('static', filename='icon-192.png') }}">

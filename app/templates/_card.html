@@ -1,6 +1,6 @@
 {%- set st = it.state -%}
 <a class="card" href="{{ url_for('public.competition', slug=it.c.slug) }}">
-  <div class="thumb">{% if it.c.image %}<img src="{{ url_for('public.uploads', name=it.c.image) }}" alt="" loading="lazy" width="400" height="300">{% else %}<span aria-hidden="true">🏆</span>{% endif %}
+  <div class="thumb">{% if it.c.image %}<img src="{{ it.c.image|thumb }}" alt="" loading="lazy" width="400" height="300">{% else %}<span aria-hidden="true">🏆</span>{% endif %}
     <div class="badges">
       {% if st == 'soldout' %}<span class="pill soldout">Sold out</span>{% elif st == 'ended' %}<span class="pill ended">Closed · draw soon</span>{% elif st == 'drawn' %}<span class="pill drawn">Drawn</span>{% endif %}
       {% for kind, text in it.badges[:2] %}<span class="pill {{ kind }}">{{ text }}</span>{% endfor %}

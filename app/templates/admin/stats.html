@@ -21,10 +21,10 @@
   <div class="row tiny muted" style="margin-top:6px"><span>{{ days[0].label }}</span><span>Hover a bar for details</span><span>{{ days[-1].label }}</span></div>
 </div>
 <h2>Top competitions</h2>
-<div class="panel table-scroll"><table><tr><th>Competition</th><th class="num">Sold</th><th class="num">Revenue</th></tr>
+<div class="panel table-scroll" tabindex="0"><table><tr><th>Competition</th><th class="num">Sold</th><th class="num">Revenue</th></tr>
   {% for t in top %}<tr><td><a href="{{ url_for('admin.entries', cid=t.id) }}">{{ t.title }}</a>{% if t.game_type %} <span class="pill instant">game</span>{% endif %}</td><td class="num">{{ t.sold }}</td><td class="num">{{ t.revenue|gbp }}</td></tr>{% endfor %}</table></div>
 <h2>Games — actual payout so far</h2>
-<div class="panel table-scroll"><table><tr><th>Game</th><th class="num">Plays sold</th><th class="num">Sales</th><th class="num">Prizes won</th><th class="num">Paid back</th></tr>
+<div class="panel table-scroll" tabindex="0"><table><tr><th>Game</th><th class="num">Plays sold</th><th class="num">Sales</th><th class="num">Prizes won</th><th class="num">Paid back</th></tr>
   {% for g in games %}<tr><td><a href="{{ url_for('admin.entries', cid=g.c.id) }}">{{ g.c.title }}</a></td><td class="num">{{ g.plays }}</td><td class="num">{{ g.sales|gbp }}</td><td class="num">{{ g.paid|gbp }}</td>
     <td class="num">{% if g.rtp is not none %}<b class="{{ 'neg' if g.rtp > 100 else '' }}">{{ g.rtp }}%</b>{% else %}—{% endif %}</td></tr>
   {% else %}<tr><td colspan="5" class="muted">No games yet.</td></tr>{% endfor %}</table>
