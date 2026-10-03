@@ -281,3 +281,6 @@ These weren't something code could settle on its own:
 
 # Phase 4 (production hardening)
 Full audit: `docs/PRODUCTION-AUDIT.md`. New URLs: `/healthz/deep`, `/api/competitions`, `/j/select/<id>` (anonymous journey count), `/admin/mfa/confirm` (step-up), `/admin/support-insights`, `/admin/errors/<id>/resolve`. New commands: `flask release-check`. New tests: `MoneyJourneyTests`, `HardeningTests`, `AdminHardeningTests`, `MonitoringTests`, `EvidenceTests`, `tests/stress_concurrency.py`, `tests/synthetic_check.py`.
+
+# Phase 6 (customer experience & growth)
+New customer URLs: `/draws`, `/account/prizes/<id>`, `/account/export/<orders|entries|transactions>.csv`, `/results?mine=1`, `/winners/<slug>/card.png`, `/feedback`, `/legal/<slug>/versions`, `/legal/<slug>/v/<n>`, `/c/<slug>/conditions/<n>`, `/j/select/<id>`. New admin URLs: `/admin/search`, `/admin/orders/<id>`, `/admin/announcements`, `/admin/content`, `/admin/content/<slug>`, `/admin/releases`, `/admin/checkout-diagnostics`, `/admin/segments`, `/admin/experiments`, `/admin/feedback`, `/admin/backlog`, `/admin/backlog/<id>`. Command: `flask demo-lifecycle`. Brief items 1–40 are mapped in `docs/SIMPLICITY-REVIEW.md`.

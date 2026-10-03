@@ -122,7 +122,7 @@ def mfa_required(user):
 # or ("not", {...}) for every action except those.
 SENSITIVE = {
     "admin.user_detail": {"credit", "admin", "goodwill"},
-    "admin.order_detail": None, "admin.announcements": None,
+    "admin.order_detail": None, "admin.announcements": None, "admin.content_edit": {"publish"},
     "admin.payouts": ("not", {"processing"}),
     "admin.refund_done": None, "admin.deposit_refund_done": None,
     "admin.set_status": {"cancel"},

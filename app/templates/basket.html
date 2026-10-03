@@ -68,7 +68,7 @@
       <form method="post" action="{{ url_for('public.checkout') }}" style="margin-top:var(--s4)" data-once>
         <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="idem" value="{{ idem }}">
         {% if t.bal.total > 0 %}<label class="check"><input type="checkbox" name="use_credit" value="1" checked> Use my balance ({{ t.bal.total|gbp }} available)</label>{% endif %}
-        <button class="btn block lg" style="margin-top:var(--s4)" {{ 'disabled' if closed or clash }} data-busy="{{ 'Confirming…' if t.card == 0 else 'Taking you to payment…' }}">{% if t.card == 0 %}Confirm entries{% else %}Pay {{ t.card|gbp }} securely{% endif %}</button>
+        <button class="btn block lg" style="margin-top:var(--s4)" {{ 'disabled' if closed or clash }} data-busy="{{ 'Confirming…' if t.card == 0 else 'Taking you to payment…' }}">{% if t.card == 0 %}Confirm entries{% elif variant('basket_button') == 'b' %}Continue to secure payment ({{ t.card|gbp }}){% else %}Pay {{ t.card|gbp }} securely{% endif %}</button>
         {% if closed %}<p class="hint">Remove closed competitions to continue.</p>{% elif clash %}<p class="hint">Remove the line with taken numbers to continue.</p>{% endif %}
       </form>
       {% else %}

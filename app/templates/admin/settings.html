@@ -3,7 +3,7 @@
 {% block content %}
 {% include "admin/_bar.html" %}
 <h1>Site settings</h1>
-<p><a class="btn ghost small" href="{{ url_for('admin.features') }}">Features on / off / staff only →</a> <a class="btn ghost small" href="{{ url_for('admin.announcements') }}">Scheduled announcements →</a></p>
+<p><a class="btn ghost small" href="{{ url_for('admin.features') }}">Features on / off / staff only →</a> <a class="btn ghost small" href="{{ url_for('admin.announcements') }}">Scheduled announcements →</a> <a class="btn ghost small" href="{{ url_for('admin.content_list') }}">Content &amp; legal pages →</a></p>
 <form class="panel" method="post" style="max-width:720px;margin-bottom:var(--s4)">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <h2 style="margin-top:0;font-size:20px">Site status</h2>
@@ -17,9 +17,8 @@
 </form>
 <form class="panel" method="post" style="max-width:720px">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
-  <label>Announcement bar <span class="muted">(shown at the top of every page — leave blank to hide)</span></label>
-  <input name="announcement" value="{{ s.announcement }}" placeholder="🔥 20% off everything this weekend with code WEEKEND20">
-  <h3 style="margin-top:24px">Going live</h3>
+  <p class="small muted" style="margin-top:0">Site-wide notices now live in <a href="{{ url_for('admin.announcements') }}">Announcements</a> (with start and end times).</p>
+  <h3 style="margin-top:12px">Going live</h3>
   <p class="small muted">Paste your stream link to show a red "We're LIVE" bar across the site. Clear it when you finish.</p>
   <label>Live stream link</label><input name="live_now_url" value="{{ s.live_now_url }}" placeholder="https://youtube.com/live/...">
   <label>Live title</label><input name="live_now_title" value="{{ s.live_now_title }}" placeholder="Live draw: PS5 Pro Bundle">

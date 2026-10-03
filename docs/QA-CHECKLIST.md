@@ -192,6 +192,29 @@ Trigger each and check subject, wording, links and that it renders on a phone: e
 | Reports page figures for a test day match a hand count (and Stripe for card totals) | Auto + manual | |
 | Targets page: a forced error appears in the error log and on System health | Auto | |
 
+## 13c. Phase 6 (customer experience & operations)
+
+| Check | Type | Result |
+|---|---|---|
+| Logged-in homepage shows "Welcome back", next draws, balances; guests see the banner | Auto + manual | |
+| My tickets groups draws Today/Tonight/Tomorrow/This week/Later; results show "You entered/You won" | Auto | |
+| Winner page: choose prize or cash, give delivery details, see progress; staff updates notify the winner | Auto + manual (email) | |
+| Draw calendar highlights entered draws | Auto | |
+| Control Centre queues show real items with links; admin search finds customer, order #, ticket, Stripe ref | Auto | |
+| Refund one order line (wallet and card); refused once the competition has closed | Auto + manual (Stripe test) | |
+| Goodwill credit capped per customer; Support can give it, can't adjust cash | Auto | |
+| Promo scheduling, category/competition restriction, first-order-only | Auto | |
+| Scheduled announcement appears and ends on time | Auto + manual | |
+| Daily summary arrives at 7am; weekly report Monday 8am | Manual (needs SMTP) | |
+| Releases page shows the running version and release-check result | Manual | |
+| Search tolerates typos and finds winners | Auto | |
+| Points dashboard shows earned/redeemed/worth; milestones never mention spending | Auto | |
+| CSV downloads of orders, entries, transactions | Auto | |
+| Winner card only with consent; used as link preview | Auto | |
+| Feedback after checkout and resolved case; backlog collects evidence | Auto | |
+| Content editor: legal page versions kept and listed; competition conditions versioned per entry | Auto | |
+| `flask demo-lifecycle` on staging completes to "delivered" | Auto + manual on staging | |
+
 ## 14. Production smoke test (after every deploy)
 
 Click every link in the header, footer and mobile menu, and every button on: home, one competition, one game, basket, checkout (Stripe test mode on a staging copy), account (every tab), free entry, terms. Confirm `DEMO_PAYMENTS=0`, Stripe live keys, webhook secret and SMTP are set (the admin dashboard's setup checklist shows any that are missing).

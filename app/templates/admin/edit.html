@@ -26,6 +26,9 @@
   <h2 class="formh">The prize</h2>
   <div class="field"><label for="title">Title</label><input id="title" name="title" value="{{ form.get('title','') }}" required placeholder="PS5 Pro + 2 controllers"></div>
   <div class="field"><label for="description">Description</label><textarea id="description" name="description" placeholder="What's included, condition, delivery…">{{ form.get('description','') }}</textarea></div>
+  <div class="field"><label for="comp_terms">Conditions specific to this competition <span class="dim">(optional)</span></label>
+    <textarea id="comp_terms" name="comp_terms" rows="4" placeholder="e.g. Delivery to UK mainland only. Cash alternative of £X available. Winner must collect within 30 days.">{{ form.get('comp_terms','') }}</textarea>
+    <span class="hint">Shown on the competition page. Every change creates a new version{% if terms_version %} (currently version {{ terms_version }}){% endif %}; each entry stays linked to the version that applied when it was made. Simple formatting: - bullet, **bold**, [link](https://…).</span></div>
   <div class="three">
     <div class="field"><label for="category">Category</label><select id="category" name="category">{% for k, n in categories %}<option value="{{ k }}" {{ 'selected' if form.get('category') == k }}>{{ n }}</option>{% endfor %}</select></div>
     <div class="field only-draw"><label for="prize_value">Prize value (£)</label><input id="prize_value" name="prize_value" type="number" step="1" min="0" value="{{ form.get('prize_value','') }}" placeholder="e.g. 600"></div>

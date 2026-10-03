@@ -13,7 +13,7 @@ from . import db as dbmod
 from .db import parse_iso, utcnow
 
 UK = ZoneInfo("Europe/London")
-ASSET_V = "23"   # bump when style.css or images change, so browsers fetch the new copy
+ASSET_V = "24"   # bump when style.css or images change, so browsers fetch the new copy
 _PLACEHOLDERS = ("example street", "example.com", "yourdomain", "ab1 2cd")
 
 
@@ -212,11 +212,16 @@ def create_app(test_config=None):
             from .notify import unread_count
             unread = unread_count(g.user["id"])
         from .flags import enabled as feature
+        from .experiments import variant
+
+        def content_block(slug):
+            from .content import current, render
+            cur = current(slug)
+            return render(cur["body"]) if cur else None
         return {
-            "feature": feature,
+            "feature": feature, "variant": variant, "content_block": content_block,
             "csrf_token": session["csrf"], "config": app.config, "user": g.get("user"), "wallet": wallet, "unread": unread,
             "basket_count": len(session.get("basket", [])),
-            "announcement": get_setting("announcement"),
             "announcements": dbmod.get_db().execute(
                 "SELECT message, level, link FROM announcements WHERE active=1 AND starts_at<=? AND (ends_at IS NULL OR ends_at>?) "
                 "ORDER BY level='warning' DESC, id DESC LIMIT 3", (dbmod.iso(utcnow()), dbmod.iso(utcnow()))).fetchall(),
@@ -426,6 +431,13 @@ def create_app(test_config=None):
                       cfg.get("RELEASE") or "dev"))
         conn.close()
         raise SystemExit(1 if fails else 0)
+
+    @app.cli.command("demo-lifecycle")
+    def demo_lifecycle_cmd():
+        """Staging only: run a whole competition — entries, postal entry, draw, winner, delivery — with test money."""
+        from .demo import run
+        with app.app_context():
+            run(app)
 
     @app.cli.command("list-admins")
     def list_admins():

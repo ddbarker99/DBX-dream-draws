@@ -1,4 +1,6 @@
 {% set ep = request.endpoint %}
+{% set reports_eps = ('control.finance','control.reports','control.targets','control.liability','control.performance','admin.stats','control.analytics','control.checkout_diagnostics','control.segments','control.experiments') %}
+{% set system_eps = ('control.health','control.releases','admin.audit_log','admin.settings','admin.features','admin.content_list','admin.content_edit','admin.announcements','admin.promos','control.flags','control.backlog','control.backlog_item','control.feedback_admin','control.support_insights') %}
 <nav class="adminbar" aria-label="Admin" style="align-items:center">
   <img class="adminbadge" src="{{ url_for('static', filename='brand/admin-160.png') }}" alt="Admin">
   <a class="{{ 'on' if ep == 'control.centre' }}" href="{{ url_for('control.centre') }}">Control Centre</a>
@@ -6,17 +8,23 @@
   <a class="{{ 'on' if ep in ('admin.dashboard','admin.entries','admin.edit_competition','admin.new_competition') }}" href="{{ url_for('admin.dashboard') }}">Competitions</a>
   {% if can('postal') %}<a class="{{ 'on' if ep == 'admin.postal_queue' }}" href="{{ url_for('admin.postal_queue') }}">Postal</a>{% endif %}
   {% if can('prizes') %}<a class="{{ 'on' if ep in ('admin.prizes','admin.claim_detail') }}" href="{{ url_for('admin.prizes') }}">Winners</a>{% endif %}
-  {% if can('money') %}<a class="{{ 'on' if ep == 'admin.payouts' }}" href="{{ url_for('admin.payouts') }}">Payouts</a>{% endif %}
-  {% if can('reports') %}<a class="{{ 'on' if ep == 'control.finance' }}" href="{{ url_for('control.finance') }}">Finance</a>
-  <a class="{{ 'on' if ep == 'control.targets' }}" href="{{ url_for('control.targets') }}">Targets</a>
-  <a class="{{ 'on' if ep == 'control.reports' }}" href="{{ url_for('control.reports') }}">Reports</a>
-  <a class="{{ 'on' if ep == 'control.liability' }}" href="{{ url_for('control.liability') }}">Liability</a>
-  <a class="{{ 'on' if ep in ('admin.stats','control.analytics','control.performance') }}" href="{{ url_for('control.performance') }}">Performance</a>{% endif %}
+  {% if can('money') %}<a class="{{ 'on' if ep in ('admin.payouts','admin.order_detail') }}" href="{{ url_for('admin.payouts') }}">Payouts</a>{% endif %}
   {% if can('users.view') %}<a class="{{ 'on' if ep in ('admin.users','admin.user_detail','control.timeline') }}" href="{{ url_for('admin.users') }}">Customers</a>{% endif %}
   {% if can('cases') %}<a class="{{ 'on' if ep in ('control.cases','control.case_detail') }}" href="{{ url_for('control.cases') }}">Cases</a>{% endif %}
-  {% if can('flags') %}<a class="{{ 'on' if ep == 'control.flags' }}" href="{{ url_for('control.flags') }}">Flags</a>{% endif %}
-  {% if can('money') %}<a class="{{ 'on' if ep == 'admin.promos' }}" href="{{ url_for('admin.promos') }}">Promos</a>{% endif %}
-  {% if can('settings') %}<a class="{{ 'on' if ep == 'admin.settings' }}" href="{{ url_for('admin.settings') }}">Settings</a>{% endif %}
-  {% if can('audit') %}<a class="{{ 'on' if ep == 'control.health' }}" href="{{ url_for('control.health') }}">Health</a>
-  <a class="{{ 'on' if ep == 'admin.audit_log' }}" href="{{ url_for('admin.audit_log') }}">Audit log</a>{% endif %}
+  {% if can('reports') %}<details class="admore{{ ' on' if ep in reports_eps }}"><summary>Reports</summary><div>
+    <a href="{{ url_for('control.finance') }}">Finance &amp; reconciliation</a>
+    <a href="{{ url_for('control.reports') }}">Business reports</a>
+    <a href="{{ url_for('control.targets') }}">Targets &amp; errors</a>
+    <a href="{{ url_for('control.liability') }}">Prize liability</a>
+    <a href="{{ url_for('control.performance') }}">Competition performance</a>
+    <a href="{{ url_for('control.checkout_diagnostics') }}">Checkout diagnostics</a>
+    <a href="{{ url_for('control.segments') }}">Customer segments</a>
+    <a href="{{ url_for('control.experiments') }}">Experiments</a></div></details>{% endif %}
+  <details class="admore{{ ' on' if ep in system_eps }}"><summary>More</summary><div>
+    {% if can('cases') %}<a href="{{ url_for('control.support_insights') }}">Support insights</a><a href="{{ url_for('control.feedback_admin') }}">Customer feedback</a><a href="{{ url_for('control.backlog') }}">Development backlog</a>{% endif %}
+    {% if can('flags') %}<a href="{{ url_for('control.flags') }}">Review flags</a>{% endif %}
+    {% if can('money') %}<a href="{{ url_for('admin.promos') }}">Promo codes</a>{% endif %}
+    {% if can('settings') %}<a href="{{ url_for('admin.settings') }}">Site settings</a><a href="{{ url_for('admin.announcements') }}">Announcements</a><a href="{{ url_for('admin.content_list') }}">Content &amp; legal pages</a><a href="{{ url_for('admin.features') }}">Features</a>{% endif %}
+    {% if can('audit') %}<a href="{{ url_for('control.health') }}">System health</a><a href="{{ url_for('control.releases') }}">Releases</a><a href="{{ url_for('admin.audit_log') }}">Audit log</a>{% endif %}
+  </div></details>
 </nav>

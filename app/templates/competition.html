@@ -245,6 +245,13 @@
     </section>
     {% endif %}
 
+    {% if conditions %}
+    <section aria-labelledby="cond-h">
+      <h2 id="cond-h">Conditions for this competition</h2>
+      <div class="panel prose">{{ conditions_html }}<p class="tiny muted" style="margin-bottom:0">Version {{ conditions.version }} · {{ conditions.created_at|uktime('%d %b %Y') }}. These apply alongside our <a href="{{ url_for('public.page', page='terms') }}">terms &amp; conditions</a>; your entry is linked to the version shown when you entered.</p></div>
+    </section>
+    {% endif %}
+
     {% if not c.free_daily %}
     <section aria-labelledby="free-h">
       <h2 id="free-h">Free entry</h2>

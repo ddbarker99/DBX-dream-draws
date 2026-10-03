@@ -283,6 +283,8 @@ def new_competition():
         cols = list(data) + ["slug", "seed", "seed_hash", "created_at"]
         vals = list(data.values()) + [slug, seed, seed_hash, iso(utcnow())]
         cur = db.execute(f"INSERT INTO competitions ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", vals)
+        from .services import save_comp_terms
+        save_comp_terms(db, cur.lastrowid, request.form.get("comp_terms", ""), g.user)
         try:
             _add_prize_table(cur.lastrowid, prizes)
         except PurchaseError as e:
@@ -328,11 +330,17 @@ def edit_competition(cid):
             return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=c, form=request.form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
         changed = {k: (c[k], v) for k, v in data.items() if k in c.keys() and c[k] != v and k != "description"}
         db.execute(f"UPDATE competitions SET {','.join(k + '=?' for k in data)} WHERE id=?", [*data.values(), cid])
+        from .services import save_comp_terms
+        save_comp_terms(db, cid, request.form.get("comp_terms", ""), g.user)
         if changed:
             audit(db, "comp.edit", f"comp:{cid}", "; ".join(f"{k}: {o!r} → {n!r}" for k, (o, n) in changed.items()))
         flash("Saved.")
         return redirect(url_for("admin.entries", cid=cid))
-    return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=c, form=_form_from(c), locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
+    from .services import comp_terms_current
+    form = _form_from(c)
+    ct = comp_terms_current(db, cid)
+    form["comp_terms"] = ct["body"] if ct else ""
+    return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=c, form=form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES, terms_version=ct["version"] if ct else 0)
 
 
 @bp.route("/competitions/<int:cid>/status", methods=["POST"])
@@ -1178,6 +1186,42 @@ def order_detail(cid):
     return render_template("admin/order.html", k=k, lines=lines, refunds=refunds, info=info)
 
 
+@bp.route("/content")
+@require("settings")
+def content_list():
+    from .content import EDITABLE, current
+    db = get_db()
+    rows = [(slug, title, legal, current(slug, db)) for slug, (title, legal) in EDITABLE.items()]
+    return render_template("admin/content.html", rows=rows)
+
+
+@bp.route("/content/<slug>", methods=["GET", "POST"])
+@require("settings")
+def content_edit(slug):
+    from .content import EDITABLE, current, publish, render
+    if slug not in EDITABLE:
+        abort(404)
+    db = get_db()
+    title, legal = EDITABLE[slug]
+    cur = current(slug, db)
+    body = request.form.get("body", cur["body"] if cur else "")
+    if request.method == "POST" and request.form.get("action") == "publish":
+        note = request.form.get("note", "").strip()
+        if not body.strip():
+            flash("Write the content first.", "error")
+        elif legal and len(note) < 5:
+            flash("Legal documents need a short note saying what changed (it's shown in the public version history).", "error")
+        else:
+            _, v = publish(slug, body, note, g.user, db)
+            audit(db, "content.publish", f"content:{slug}", f"{title} version {v}: {note[:200]}")
+            flash(f"Published version {v}. Earlier versions are kept.")
+            return redirect(url_for("admin.content_edit", slug=slug))
+    versions = db.execute("SELECT v.version, v.note, v.created_at, u.email FROM content_versions v LEFT JOIN users u ON u.id=v.created_by "
+                          "WHERE slug=? ORDER BY version DESC", (slug,)).fetchall()
+    return render_template("admin/content_edit.html", slug=slug, title=title, legal=legal, body=body, preview=render(body),
+                           versions=versions, cur=cur)
+
+
 @bp.route("/announcements", methods=["GET", "POST"])
 @require("settings")
 def announcements():
@@ -1341,7 +1385,7 @@ def features():
 @bp.route("/settings", methods=["GET", "POST"])
 @require("settings")
 def settings():
-    keys = ("announcement", "live_now_url", "live_now_title")
+    keys = ("live_now_url", "live_now_title")
     if request.method == "POST" and request.form.get("site_status") is not None:
         mode = request.form["site_status"] if request.form["site_status"] in ("ok", "payments_paused", "maintenance") else "ok"
         set_setting("site_status", mode)

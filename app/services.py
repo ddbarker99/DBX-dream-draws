@@ -345,6 +345,23 @@ def is_excluded(user):
 
 # ---------------- promo codes ----------------
 
+def comp_terms_current(db, comp_id):
+    return db.execute("SELECT * FROM comp_terms WHERE competition_id=? ORDER BY version DESC LIMIT 1", (comp_id,)).fetchone()
+
+
+def save_comp_terms(db, comp_id, body, staff):
+    """New version only if the text changed. Earlier versions stay linked to the entries made under them."""
+    body = (body or "").strip()[:8000]
+    cur = comp_terms_current(db, comp_id)
+    if (cur["body"] if cur else "") == body:
+        return None
+    v = (cur["version"] + 1) if cur else 1
+    db.execute("INSERT INTO comp_terms (competition_id, version, body, created_by, created_at) VALUES (?,?,?,?,?)",
+               (comp_id, v, body, staff["id"] if staff else None, iso(utcnow())))
+    audit(db, "comp.terms", f"comp:{comp_id}", f"Competition conditions version {v}" + (" (cleared)" if not body else ""), actor=staff)
+    return v
+
+
 def promo_problem(db, p, user_id, lines=None, now=None):
     """The single rules engine for promo codes. Returns (why it can't be used | None, eligible subtotal).
     lines: [{"comp": competition row, "net": pence}] — the basket; restrictions apply per line."""
@@ -499,9 +516,11 @@ def reserve_checkout(user, lines, promo_code="", use_credit=False, idem_key=None
                 raise PurchaseError(f"{comp['title']}: the limit is {comp['max_per_user']} tickets per person — you have {mine}.")
             numbers = _allocate(db, comp, qty, picks)
             gross, disc, net, _ = line_price(comp, qty)
+            ct = comp_terms_current(db, comp["id"])
+            site_terms = db.execute("SELECT MAX(version) FROM content_versions WHERE slug='terms'").fetchone()[0]
             cur = db.execute(
-                "INSERT INTO orders (user_id, competition_id, quantity, amount, discount, created_at) VALUES (?,?,?,?,?,?)",
-                (user["id"], comp["id"], qty, net, disc, now))
+                "INSERT INTO orders (user_id, competition_id, quantity, amount, discount, created_at, terms_version, comp_terms_id) "
+                "VALUES (?,?,?,?,?,?,?,?)", (user["id"], comp["id"], qty, net, disc, now, site_terms or 0, ct["id"] if ct else None))
             db.executemany(
                 "INSERT INTO tickets (competition_id, number, user_id, order_id, status, created_at) VALUES (?,?,?,?, 'held', ?)",
                 [(comp["id"], n, user["id"], cur.lastrowid, now) for n in numbers])
@@ -599,6 +618,8 @@ def fulfil_checkout(cid, stripe_session_id=None, amount_paid=None):
         if c["promo_id"]:
             db.execute("UPDATE promo_codes SET uses=uses+1 WHERE id=?", (c["promo_id"],))
         award_points(db, c["user_id"], c["cash_due"] + c["deposit_used"], f"c{cid}", f"Order #{cid}")
+        from .experiments import record_conversion
+        record_conversion(db, c["user_id"])
         _settle_referral(db, c)
         if c["device"]:
             from .analytics import count
@@ -715,7 +736,8 @@ def process_postal(pid, approve, actor, reason=None):
         t = db.execute("INSERT INTO tickets (competition_id, number, user_id, postal_entry_id, status, revealed_at, created_at) "
                        "VALUES (?,?,?,?, 'issued', ?, ?)",
                        (comp["id"], n, uid, pid, None if (comp["game_type"] and uid) else now, now))
-        db.execute("UPDATE postal_entries SET status='accepted' WHERE id=?", (pid,))
+        ct = comp_terms_current(db, e["competition_id"])
+        db.execute("UPDATE postal_entries SET status='accepted', comp_terms_id=? WHERE id=?", (ct["id"] if ct else None, pid))
         ip = db.execute("SELECT * FROM instant_prizes WHERE competition_id=? AND number=? AND ticket_id IS NULL",
                         (comp["id"], n)).fetchone()
         if ip:

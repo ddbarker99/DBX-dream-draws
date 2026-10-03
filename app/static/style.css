@@ -735,6 +735,10 @@ dl.facts>dt{padding-top:10px;color:var(--text-2);font-size:var(--fs-sm)}
 .rating span:not(.sr-only){display:inline-grid;place-items:center;width:44px;height:44px;border-radius:10px;border:1px solid var(--line);font-weight:700}
 .rating input:checked+span{background:var(--red-fill);border-color:var(--red-fill);color:#fff}.rating input:focus-visible+span{outline:3px solid var(--focus)}
 .rating-ends{display:flex;justify-content:space-between;max-width:250px}
+.admore{position:relative}.admore>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;min-height:40px;padding:0 12px;border-radius:var(--r-sm);background:var(--surface);border:1px solid var(--line-2);color:var(--text-2);font-weight:600;font-size:var(--fs-sm)}
+.admore>summary::-webkit-details-marker{display:none}.admore>summary::after{content:" ▾"}.admore.on>summary{border-color:var(--red-fill)}
+.admore>div{position:absolute;z-index:30;top:calc(100% + 6px);left:0;min-width:240px;display:grid;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--surface);box-shadow:0 12px 30px rgba(0,0,0,.45)}
+.admore>div a{display:block;min-height:0;padding:8px 10px;border-radius:6px;text-decoration:none;color:inherit;border:0;background:none;box-shadow:none}.admore>div a:hover,.admore>div a:focus-visible{background:rgba(255,255,255,.06)}
 .nextdraws{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:var(--s2)}
 .nextdraws a{display:block;padding:var(--s3);border:1px solid var(--line);border-radius:10px;text-decoration:none;color:inherit}
 .nextdraws a:hover{border-color:var(--red-fill)}.nextdraws span{display:block;font-size:13px;color:var(--muted,#a99);margin-top:2px}

@@ -16,7 +16,7 @@
 {% block content %}
 {% include "admin/_bar.html" %}
 <h1>Business reports</h1>
-<p class="muted" style="max-width:760px">Headline figures for the period, compared with the period of the same length just before it. Each figure has one fixed definition (see <code>docs/REPORTING-DEFINITIONS.md</code>) — <b>agree them with your accountant before relying on them for tax or accounts</b>. Per-competition figures are under <a href="{{ url_for('control.performance', **{'from': start, 'to': end}) }}">Performance</a>.</p>
+<p class="muted" style="max-width:760px">Headline figures for the period, compared with the period of the same length just before it. Each figure has one fixed definition (see <code>docs/REPORTING-DEFINITIONS.md</code>) — <b>agree them with your accountant before relying on them for tax or accounts</b>. Per-competition figures are under <a href="{{ url_for('control.performance', **{'from': start, 'to': end}) }}">Performance</a>. Also: <a href="{{ url_for('control.checkout_diagnostics') }}">Checkout diagnostics</a> · <a href="{{ url_for('control.segments') }}">Customer segments</a> · <a href="{{ url_for('control.experiments') }}">Experiments</a>.</p>
 <form class="inline-form" method="get" style="flex-wrap:wrap;margin-bottom:var(--s4)">
   <label for="from">From</label><input id="from" type="date" name="from" value="{{ start }}">
   <label for="to">To</label><input id="to" type="date" name="to" value="{{ end }}">

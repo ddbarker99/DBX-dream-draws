@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Content · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Content</h1>
+<p class="muted" style="max-width:760px">Update help and legal text without a deployment. Each publish creates a new version; earlier versions are kept permanently and legal documents show their history publicly. Until you publish one, the built-in page is used. <b>Have legal documents checked by your solicitor before publishing.</b></p>
+<div class="panel table-scroll" tabindex="0" role="region" aria-label="Pages"><table>
+  <thead><tr><th scope="col">Page</th><th scope="col">Current</th><th scope="col"><span class="sr-only">Edit</span></th></tr></thead><tbody>
+  {% for slug, title, legal, cur in rows %}<tr><td><b>{{ title }}</b>{% if legal %} <span class="pill">legal</span>{% endif %}</td>
+    <td class="small">{% if cur %}Version {{ cur.version }} · {{ cur.created_at|uktime('%d %b %Y') }}{% else %}<span class="muted">Built-in page</span>{% endif %}</td>
+    <td><a class="btn ghost small" href="{{ url_for('admin.content_edit', slug=slug) }}">Edit</a></td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

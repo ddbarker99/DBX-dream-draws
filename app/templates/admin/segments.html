@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Customer segments · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Customer segments</h1>
+<p class="muted" style="max-width:760px">Broad groups of the {{ '{:,}'.format(customers) }} customer accounts, to understand how the product is doing — for example whether new customers come back. Counts only: there's deliberately no list of people or messaging from here, and it must not be used to pressure anyone to spend (see Responsible play).</p>
+<div class="panel table-scroll" tabindex="0" role="region" aria-label="Segments"><table>
+  <thead><tr><th scope="col">Group</th><th scope="col" class="num">Customers</th><th scope="col" class="num">Orders (30 days)</th><th scope="col" class="num">Spend (30 days)</th><th scope="col" class="num">Share</th><th scope="col" class="num">Average order</th></tr></thead><tbody>
+  {% for s in segs %}<tr><td><b>{{ s.label }}</b><div class="tiny muted">{{ s.what }}</div></td><td class="num">{{ '{:,}'.format(s.n) }}</td><td class="num">{{ s.orders }}</td><td class="num">{{ s.rev|gbp }}</td><td class="num">{{ s.share if s.share is not none else '—' }}{% if s.share is not none %}%{% endif %}</td><td class="num">{{ s.avg|gbp }}</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

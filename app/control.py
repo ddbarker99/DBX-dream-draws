@@ -175,6 +175,127 @@ def centre():
                            health=health_checks(db))
 
 
+# ---------------- checkout diagnostics & segments (understanding, not targeting) ----------------
+
+@bp.route("/checkout-diagnostics")
+@require("reports")
+def checkout_diagnostics():
+    """Where card checkouts fail and whether it looks technical or UX — measured before anyone thinks about reminder emails."""
+    db = get_db()
+    since = iso(utcnow() - timedelta(days=30))
+    settled = iso(utcnow() - timedelta(minutes=45))
+    base = "FROM checkouts WHERE stripe_session_id IS NOT NULL AND created_at>=? AND created_at<?"
+    outcome = dict(db.execute(f"SELECT status, COUNT(*) {base} GROUP BY status", (since, settled)).fetchall())
+    started = sum(outcome.values())
+
+    def rate(n):
+        return round(100 * n / started, 1) if started else None
+    by_device = db.execute(f"SELECT COALESCE(device,'unknown') d, COUNT(*) n, SUM(status='paid') ok {base} GROUP BY d ORDER BY n DESC",
+                           (since, settled)).fetchall()
+    bands = db.execute(f"SELECT CASE WHEN cash_due<500 THEN 'under £5' WHEN cash_due<2000 THEN '£5–£20' WHEN cash_due<5000 THEN '£20–£50' "
+                       f"ELSE '£50+' END band, COUNT(*) n, SUM(status='paid') ok {base} GROUP BY band ORDER BY MIN(cash_due)", (since, settled)).fetchall()
+    from . import UK
+    hours = {}
+    for r in db.execute(f"SELECT created_at, status {base}", (since, settled)):
+        h = parse_iso(r["created_at"]).astimezone(UK).hour // 4 * 4
+        t = hours.setdefault(h, [0, 0])
+        t[0] += 1
+        t[1] += r["status"] == "paid"
+    retried = _sum(db, "SELECT COUNT(DISTINCT a.id) FROM checkouts a WHERE a.stripe_session_id IS NOT NULL AND a.status='expired' AND a.created_at>=? "
+                       "AND EXISTS (SELECT 1 FROM checkouts b WHERE b.user_id=a.user_id AND b.id>a.id AND b.created_at<=datetime(a.created_at,'+2 hours'))", since)
+    recovered = _sum(db, "SELECT COUNT(DISTINCT a.id) FROM checkouts a WHERE a.stripe_session_id IS NOT NULL AND a.status='expired' AND a.created_at>=? "
+                         "AND EXISTS (SELECT 1 FROM checkouts b WHERE b.user_id=a.user_id AND b.id>a.id AND b.status='paid' "
+                         "AND b.created_at<=datetime(a.created_at,'+1 day'))", since)
+    errors = _sum(db, "SELECT COALESCE(SUM(count),0) FROM error_log WHERE last_at>=? AND (endpoint LIKE '%checkout%' OR endpoint LIKE '%basket%')", since)
+    steps = dict(db.execute("SELECT step, SUM(n) FROM funnel_counts WHERE day>=? AND step IN ('basket','checkout','paid') GROUP BY step",
+                            (since[:10],)).fetchall())
+    hints = []
+    if errors:
+        hints.append(f"{errors} server error(s) on basket/checkout pages — fix these first (Targets → Server errors).")
+    if outcome.get("credit_refused", 0) >= max(3, started * 0.05):
+        hints.append("Many credit-card refusals: make 'debit cards only' clearer before the payment page.")
+    mob = next((r for r in by_device if r["d"] == "mobile"), None)
+    desk = next((r for r in by_device if r["d"] == "desktop"), None)
+    if mob and desk and mob["n"] >= 10 and desk["n"] >= 10 and mob["ok"] / mob["n"] < desk["ok"] / desk["n"] - 0.15:
+        hints.append("Mobile completes much less often than desktop — test checkout on a phone (USABILITY-TEST.md).")
+    if started and retried > started * 0.1:
+        hints.append("Lots of people try again within 2 hours of an abandoned payment — something on the payment step may be confusing or failing.")
+    return render_template("admin/checkout_diagnostics.html", started=started, outcome=outcome, rate=rate, by_device=by_device,
+                           bands=bands, hours=sorted(hours.items()), retried=retried, recovered=recovered, errors=errors, steps=steps,
+                           hints=hints)
+
+
+@bp.route("/segments")
+@require("reports")
+def segments():
+    """Broad behavioural groups, as counts only — to understand how the product is doing, not to single people out.
+    There's deliberately no export or messaging from here."""
+    db = get_db()
+    now = utcnow()
+    d30, d60 = iso(now - timedelta(days=30)), iso(now - timedelta(days=60))
+    first = "(SELECT MIN(paid_at) FROM checkouts k2 WHERE k2.user_id=u.id AND k2.status='paid')"
+    last = "(SELECT MAX(paid_at) FROM checkouts k3 WHERE k3.user_id=u.id AND k3.status='paid')"
+    rows = db.execute(f"SELECT u.id, u.created_at, {first} AS first_paid, {last} AS last_paid FROM users u WHERE u.is_admin=0").fetchall()
+    seg = {"new": [], "returning": [], "lapsed": [], "never": [], "free_only": []}
+    postal = {r[0] for r in db.execute("SELECT DISTINCT user_id FROM postal_entries WHERE status='accepted' AND user_id IS NOT NULL")}
+    for r in rows:
+        if not r["first_paid"]:
+            seg["free_only" if r["id"] in postal else "never"].append(r["id"])
+        elif r["first_paid"] >= d30:
+            seg["new"].append(r["id"])
+        elif r["last_paid"] >= d30:
+            seg["returning"].append(r["id"])
+        elif r["last_paid"] < d60:
+            seg["lapsed"].append(r["id"])
+        else:
+            seg.setdefault("quiet", []).append(r["id"])
+    out = []
+    labels = {"new": ("New", "First purchase in the last 30 days"), "returning": ("Returning", "Bought before, and again in the last 30 days"),
+              "quiet": ("Quiet", "Last bought 30–60 days ago"), "lapsed": ("Lapsed", "Haven't bought for 60+ days"),
+              "never": ("Signed up, never bought", "Account but no paid order"), "free_only": ("Free entries only", "Entered by post, never paid")}
+    total_rev = _sum(db, "SELECT SUM(cash_due + deposit_used + cash_used) FROM checkouts WHERE status='paid' AND paid_at>=?", d30)
+    for key in ("new", "returning", "quiet", "lapsed", "never", "free_only"):
+        ids = seg.get(key, [])
+        rev = orders = 0
+        if ids:
+            q = ",".join("?" * len(ids))
+            rev = _sum(db, f"SELECT SUM(cash_due + deposit_used + cash_used) FROM checkouts WHERE status='paid' AND paid_at>=? AND user_id IN ({q})", d30, *ids)
+            orders = _sum(db, f"SELECT COUNT(*) FROM checkouts WHERE status='paid' AND paid_at>=? AND user_id IN ({q})", d30, *ids)
+        out.append({"label": labels[key][0], "what": labels[key][1], "n": len(ids), "rev": rev, "orders": orders,
+                    "share": round(100 * rev / total_rev) if total_rev else None, "avg": rev // orders if orders else 0})
+    return render_template("admin/segments.html", segs=out, customers=len(rows))
+
+
+@bp.route("/experiments", methods=["GET", "POST"])
+@require("reports")
+def experiments():
+    from .experiments import EXPERIMENTS, results
+    db = get_db()
+    if request.method == "POST":
+        if not can(g.user, "settings"):
+            flash("Only administrators can start or stop experiments.", "error")
+            return redirect(url_for("control.experiments"))
+        key, action = request.form.get("key"), request.form.get("action")
+        if key not in EXPERIMENTS or action not in ("start", "stop"):
+            abort(400)
+        now = iso(utcnow())
+        db.execute("INSERT INTO experiments (key, status) VALUES (?, 'stopped') ON CONFLICT(key) DO NOTHING", (key,))
+        if action == "start":
+            db.execute("UPDATE experiments SET status='running', started_at=COALESCE(started_at, ?), stopped_at=NULL WHERE key=?", (now, key))
+        else:
+            db.execute("UPDATE experiments SET status='stopped', stopped_at=?, decision=? WHERE key=?",
+                       (now, request.form.get("decision", "").strip()[:300] or None, key))
+        audit(db, f"experiment.{action}", f"experiment:{key}", request.form.get("decision", "")[:200])
+        flash("Experiment started." if action == "start" else "Experiment stopped — everyone sees the original design again.")
+        return redirect(url_for("control.experiments"))
+    state = {r["key"]: r for r in db.execute("SELECT * FROM experiments")}
+    items = []
+    for key, exp in EXPERIMENTS.items():
+        res, verdict = results(db, key)
+        items.append({"key": key, "exp": exp, "state": state.get(key), "results": res, "verdict": verdict})
+    return render_template("admin/experiments.html", items=items)
+
+
 # ---------------- feedback & development backlog ----------------
 
 BACKLOG_KINDS = (("bug", "Bug"), ("improvement", "Improvement"), ("feature", "New feature"))

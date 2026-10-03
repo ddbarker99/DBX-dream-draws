@@ -506,3 +506,49 @@ CREATE TABLE IF NOT EXISTS backlog_evidence (
     created_at TEXT NOT NULL,
     UNIQUE (backlog_id, source, source_id)
 );
+
+-- A/B tests (declared in app/experiments.py; staff start and stop them). Only logged-in customers take part.
+CREATE TABLE IF NOT EXISTS experiments (
+    key        TEXT PRIMARY KEY,
+    status     TEXT NOT NULL DEFAULT 'stopped',     -- running | stopped
+    started_at TEXT,
+    stopped_at TEXT,
+    decision   TEXT
+);
+CREATE TABLE IF NOT EXISTS experiment_members (
+    key          TEXT NOT NULL,
+    user_id      INTEGER NOT NULL,
+    variant      TEXT NOT NULL,
+    exposed_at   TEXT NOT NULL,
+    converted_at TEXT,
+    PRIMARY KEY (key, user_id)
+);
+
+-- Editable content and legal documents: every published version kept, never edited (see app/content.py).
+CREATE TABLE IF NOT EXISTS content_versions (
+    id         INTEGER PRIMARY KEY,
+    slug       TEXT NOT NULL,
+    version    INTEGER NOT NULL,
+    body       TEXT NOT NULL,
+    note       TEXT,
+    created_by INTEGER,
+    created_at TEXT NOT NULL,
+    UNIQUE (slug, version)
+);
+CREATE TRIGGER IF NOT EXISTS content_no_update BEFORE UPDATE ON content_versions
+BEGIN SELECT RAISE(ABORT, 'Published versions are permanent — publish a new version instead.'); END;
+CREATE TRIGGER IF NOT EXISTS content_no_delete BEFORE DELETE ON content_versions
+BEGIN SELECT RAISE(ABORT, 'Published versions are permanent — publish a new version instead.'); END;
+
+-- Competition-specific conditions, versioned; each order records the version that applied when it was made.
+CREATE TABLE IF NOT EXISTS comp_terms (
+    id             INTEGER PRIMARY KEY,
+    competition_id INTEGER NOT NULL,
+    version        INTEGER NOT NULL,
+    body           TEXT NOT NULL,
+    created_by     INTEGER,
+    created_at     TEXT NOT NULL,
+    UNIQUE (competition_id, version)
+);
+CREATE TRIGGER IF NOT EXISTS comp_terms_no_update BEFORE UPDATE ON comp_terms
+BEGIN SELECT RAISE(ABORT, 'Competition terms versions are permanent.'); END;

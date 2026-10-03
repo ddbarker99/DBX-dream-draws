@@ -404,11 +404,21 @@ class Tests(Base):
         self.assertEqual(self.client.get("/nope").status_code, 404)
 
     def test_settings_live_banner(self):
-        self.post("/admin/settings", {"announcement": "Big sale", "live_now_url": "https://youtube.com/x",
-                                      "live_now_title": "Live now"})
+        self.post("/admin/settings", {"live_now_url": "https://youtube.com/x", "live_now_title": "Live now"})
+        self.post("/admin/announcements", {"message": "Big sale"})
         page = self.client.get("/").get_data(as_text=True)
         self.assertIn("Big sale", page)
         self.assertIn("youtube.com/x", page)
+
+    def test_old_announcement_setting_migrates(self):
+        from app.db import init_db
+        db = self.db()
+        db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('announcement', 'Legacy notice')")
+        db.commit()
+        init_db(self.app.config["DATABASE"])
+        self.assertEqual(self.q("SELECT message FROM announcements"), "Legacy notice")
+        self.assertEqual(self.q("SELECT value FROM settings WHERE key='announcement'"), "")
+        self.assertIn("Legacy notice", self.client.get("/").get_data(as_text=True))
 
 
 class GameTests(Base):
@@ -3095,6 +3105,141 @@ class Phase6OpsTests(PlatformBase):
         self.assertIn("Support first-reply time", html)
         self.assertIn("Payment reconciliation discrepancies", html)
         self.assertEqual(self.client.get("/admin/releases").status_code, 200)
+
+
+class Phase6GrowthTests(PlatformBase):
+    def test_fuzzy_search_finds_typos_and_winners(self):
+        db = self.db()
+        db.execute("UPDATE competitions SET title='PlayStation 5 Bundle' WHERE id=?", (self.cid,))
+        db.commit()
+        html = self.p.get("/search?q=playstaton").get_data(as_text=True)
+        self.assertIn("PlayStation 5 Bundle", html)
+        html = self.p.get("/search?q=plystation zzzz").get_data(as_text=True)
+        self.assertIn("Nothing matches", html)
+        self.assertIn("Did you mean", html)
+
+    def test_points_dashboard_and_milestones(self):
+        self.add(self.cid, 4, client=self.p)
+        self.checkout(client=self.p)
+        html = self.p.get("/account?tab=points").get_data(as_text=True)
+        self.assertIn("Milestones", html)
+        self.assertIn("Welcome aboard", html)
+        self.assertIn("Next £1", html)
+        self.assertNotIn("Spend", html.split("Milestones")[1].split("Points history")[0])     # no spending milestones
+
+    def test_security_log_and_csv_downloads(self):
+        self.add(self.cid, 2, client=self.p)
+        self.checkout(client=self.p)
+        html = self.p.get("/account?tab=profile").get_data(as_text=True)
+        self.assertIn("Recent security activity", html)
+        self.assertIn("Signed in on", html)
+        for kind, needle in (("orders", "paid by card"), ("entries", "Test Prize"), ("transactions", "date (UTC)")):
+            r = self.p.get(f"/account/export/{kind}.csv")
+            self.assertEqual(r.mimetype, "text/csv")
+            self.assertIn(needle, r.get_data(as_text=True))
+        self.assertEqual(self.p.get("/account/export/users.csv").status_code, 404)
+        self.assertNotIn("player@example.com", self.app.test_client().get("/account/export/orders.csv").get_data(as_text=True))
+
+    def test_winner_share_card_only_with_consent(self):
+        self.add(self.cid, 1, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        self.post(f"/admin/competitions/{self.cid}/draw")
+        slug = self.slug(self.cid)
+        self.assertEqual(self.client.get(f"/winners/{slug}/card.png").status_code, 404)
+        self.post(f"/admin/competitions/{self.cid}/winner", {"consent": "1", "winner_quote": "Brilliant!"})
+        r = self.client.get(f"/winners/{slug}/card.png")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.mimetype, "image/png")
+        self.assertTrue(r.data.startswith(b"\x89PNG"))
+        self.assertIn(f"/winners/{slug}/card.png", self.client.get(f"/c/{slug}").get_data(as_text=True))   # link preview
+
+    def test_feedback_and_backlog(self):
+        self.add(self.cid, 1, client=self.p)
+        chk = self.checkout(client=self.p)
+        self.assertIn("How easy was entering today?", self.p.get(f"/checkout/{chk}/done").get_data(as_text=True))
+        self.post("/feedback", {"context": "checkout", "ref": str(chk), "rating": "2", "comment": "Couldn't find my numbers",
+                                "next": f"/checkout/{chk}/done"}, client=self.p)
+        self.assertEqual(self.q("SELECT rating FROM feedback"), 2)
+        self.assertIn("Thanks for your feedback", self.p.get(f"/checkout/{chk}/done").get_data(as_text=True))
+        other = self.app.test_client()
+        self.signup("other@example.com", client=other)
+        self.assertEqual(self.post("/feedback", {"context": "checkout", "ref": str(chk), "rating": "5"}, client=other).status_code, 404)
+        fid = self.q("SELECT id FROM feedback")
+        self.post("/admin/backlog", {"source": "feedback", "source_id": str(fid), "title": "Ticket numbers hard to find after paying",
+                                     "kind": "improvement"})
+        bid = self.q("SELECT id FROM backlog")
+        from app.control import open_case
+        with self.app.test_request_context():
+            case = open_case("Pat", "player@example.com", "Entry", "Where are my numbers?", user_id=self.uid)
+        self.post("/admin/backlog", {"source": "case", "source_id": str(case), "bid": str(bid)})
+        html = self.client.get(f"/admin/backlog/{bid}").get_data(as_text=True)
+        self.assertIn("2</b> pieces of evidence", html)
+        self.assertIn("Where are my numbers?", html)
+        self.assertIn("Couldn&#39;t find my numbers", html)
+        self.assertIn("<b>2</b>", self.client.get("/admin/backlog").get_data(as_text=True))
+
+    def test_diagnostics_segments_and_experiments(self):
+        self.add(self.cid, 1, client=self.p)
+        self.checkout(client=self.p)
+        self.assertIn("Checkout diagnostics", self.client.get("/admin/checkout-diagnostics").get_data(as_text=True))
+        html = self.client.get("/admin/segments").get_data(as_text=True)
+        self.assertIn("New", html)
+        self.assertNotIn("player@example.com", html)                                 # counts only, no list of people
+        self.post("/admin/experiments", {"key": "basket_button", "action": "start"})
+        self.add(self.cid, 1, client=self.p)
+        basket = self.p.get("/basket").get_data(as_text=True)
+        v = self.q("SELECT variant FROM experiment_members WHERE user_id=?", self.uid)
+        self.assertIn("Continue to secure payment" if v == "b" else "securely", basket)
+        self.assertNotIn("Continue to secure payment", self.client.get("/basket").get_data(as_text=True))  # staff aren't included
+        self.checkout(client=self.p)
+        self.assertIsNotNone(self.q("SELECT converted_at FROM experiment_members WHERE user_id=?", self.uid))
+        self.assertIn("Not enough people yet", self.client.get("/admin/experiments").get_data(as_text=True))
+        self.role("finance")                                                     # can see results, can't start or stop tests
+        self.post("/admin/experiments", {"key": "basket_button", "action": "stop", "decision": "x"}, client=self.p)
+        self.assertEqual(self.q("SELECT status FROM experiments"), "running")
+
+    def test_content_versions_and_competition_terms(self):
+        self.post("/admin/content/terms", {"action": "publish", "body": "# Our terms\n\nVersion one.", "note": ""})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM content_versions"), 0)            # legal pages need a change note
+        self.post("/admin/content/terms", {"action": "publish", "body": "# Our terms\n\n**Version one.** <script>x</script>",
+                                           "note": "First editable version"})
+        html = self.app.test_client().get("/terms").get_data(as_text=True)
+        self.assertIn("Version 1", html)
+        self.assertIn("<strong>Version one.</strong>", html)
+        self.assertNotIn("<script>x</script>", html)
+        self.post("/admin/content/terms", {"action": "publish", "body": "Version two text.", "note": "Clarified refunds"})
+        self.assertIn("Version one", self.app.test_client().get("/legal/terms/v/1").get_data(as_text=True))
+        self.assertIn("earlier version", self.app.test_client().get("/legal/terms/v/1").get_data(as_text=True))
+        with self.assertRaises(sqlite3.DatabaseError):
+            self.db().execute("UPDATE content_versions SET body='changed'")
+        # competition conditions are versioned and each entry keeps the version it was made under
+        form = {"title": "Test Prize", "description": "A brand new prize, delivered free to your door.", "ends_at": "2099-01-01T20:00",
+                "category": "tech", "ticket_price": "2.50", "max_tickets": "20", "max_per_user": "10", "prize_value": "500",
+                "question": "2+2?", "answer_a": "3", "answer_b": "4", "answer_c": "5", "correct": "b", "comp_terms": "- UK mainland delivery only"}
+        self.post(f"/admin/competitions/{self.cid}/edit", form)
+        self.add(self.cid, 1, client=self.p)
+        self.checkout(client=self.p)
+        self.post(f"/admin/competitions/{self.cid}/edit", dict(form, comp_terms="- UK delivery including islands"))
+        tid = self.q("SELECT id FROM tickets WHERE user_id=?", self.uid)
+        page = self.p.get(f"/account/tickets/{tid}").get_data(as_text=True)
+        self.assertIn("competition conditions v1", page)
+        self.assertIn("Terms &amp; conditions v2", page)
+        self.assertIn("UK mainland", self.p.get(f"/c/{self.slug(self.cid)}/conditions/1").get_data(as_text=True))
+        self.assertIn("including islands", self.p.get(f"/c/{self.slug(self.cid)}").get_data(as_text=True))
+
+    def test_demo_lifecycle_command(self):
+        r = self.cli("demo-lifecycle")
+        self.assertEqual(r.exit_code, 0, r.output)
+        self.assertIn("drawn — winning ticket", r.output)
+        self.assertIn("delivered", r.output)
+        cid = self.q("SELECT id FROM competitions WHERE title LIKE '[DEMO]%'")
+        self.assertEqual(self.q("SELECT status FROM prize_claims WHERE competition_id=?", cid), "delivered")
+        self.app.config["DEMO_PAYMENTS"] = False
+        try:
+            self.assertNotEqual(self.cli("demo-lifecycle").exit_code, 0)           # refuses outside staging/test mode
+        finally:
+            self.app.config["DEMO_PAYMENTS"] = True
 
 
 class MigrationTest(unittest.TestCase):

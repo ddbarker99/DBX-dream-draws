@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ title }} · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('admin.content_list') }}">Content</a> › <span aria-current="page">{{ title }}</span></nav>
+<h1>{{ title }}</h1>
+{% if not cur %}<p class="notice"><span>The site is using the built-in page for this. Publishing here replaces it{% if legal %} as version 1{% endif %}.</span></p>{% endif %}
+<div class="two">
+<form method="post" class="panel stack"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <label for="body">Text</label>
+  <textarea id="body" name="body" rows="22" style="font-family:monospace">{{ body }}</textarea>
+  <p class="tiny muted">Formatting: <code># Heading</code>, <code>## Smaller heading</code>, <code>- bullet</code>, <code>1. numbered</code>, <code>**bold**</code>, <code>[link text](https://…)</code> or <code>[text](/free-entry)</code>. A blank line starts a new paragraph. HTML isn't allowed.</p>
+  <label for="note">What changed {% if legal %}(required, shown publicly){% else %}(optional){% endif %}</label><input id="note" name="note" maxlength="300">
+  <div class="actions"><button class="btn ghost" name="action" value="preview">Preview</button><button class="btn" name="action" value="publish" onclick="return confirm('Publish a new version?')">Publish new version</button></div>
+</form>
+<section class="panel prose" aria-labelledby="pv-h"><h2 id="pv-h" style="font-size:18px;margin-top:0">Preview</h2>{{ preview }}</section>
+</div>
+<section class="section" aria-labelledby="vh-h"><h2 id="vh-h">Versions</h2>
+<ul class="timeline">{% for r in versions %}<li><b>Version {{ r.version }}</b> · {{ r.created_at|uktime('%d %b %Y %H:%M') }} by {{ r.email or 'staff' }}{% if r.note %} — {{ r.note }}{% endif %}{% if legal %} · <a href="{{ url_for('public.legal_version', slug=slug, version=r.version) }}">view</a>{% endif %}</li>{% else %}<li class="muted">None published yet.</li>{% endfor %}</ul></section>
+{% endblock %}

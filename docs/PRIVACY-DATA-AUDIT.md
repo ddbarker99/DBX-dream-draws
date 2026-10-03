@@ -34,7 +34,13 @@ What DBX Dream Draws stores, where, who receives it, how long it's kept, and how
 | Feature switches, maintenance lock | `feature_flags`, `maintenance_unlock` | Operating the site | Kept; contain **no personal data** (feature name, state, staff id who changed it) |
 | Request counts and server-time buckets | `request_stats` | Reliability targets | Kept; **no personal data** (day, counter name, number) |
 | Server errors (error type, page path, stack trace) | `error_log` | Fixing faults | Resolved errors deleted after 90 days (automatic). Paths contain record numbers, not names; traces could occasionally include submitted values, so treat as internal |
-| Journey counts | `funnel_counts` | Understanding drop-off | Kept; contains **no personal data** (day, step, device type, competition only) |
+| Winner's prize choice and delivery name/address/phone | `prize_claims` | Delivering the prize | 6 years with the claim (evidence of fulfilment) |
+| Refund records | `refunds` | Accounting, disputes | 6 years |
+| Feedback ratings and comments | `feedback` | Improving the service (legitimate interest) | 2 years |
+| Development backlog evidence (links to cases/feedback, no copies of personal data) | `backlog`, `backlog_evidence` | Improving the service | While relevant |
+| Experiment membership (account number, version shown, whether they bought) | `experiment_members` | Testing design changes (legitimate interest; logged-in customers only, no cookies) | Delete 6 months after the experiment stops |
+| Published content and competition conditions versions | `content_versions`, `comp_terms` | Showing which terms applied | Permanent (no personal data) |
+| Journey counts | `funnel_counts` | Understanding drop-off | Kept; contains **no personal data** (day, step, device type, competition only), including the "started choosing entries" step |
 | Winner photo and quote | `competitions.winner_photo/quote` + `winner_consent_at/by` | Publicity | Only with recorded consent; removed on request |
 
 ## Cookies and similar technologies

@@ -233,3 +233,9 @@ python -m unittest discover tests
 - **nginx:** updated `deploy/nginx-prizecomp.conf` (caching, gzip, login rate limit) — merge it with certbot's HTTPS lines.
 - **Phase 5 groundwork:** support cases are tagged with what the customer needed (required to resolve); Admin → Cases → *Support insights* shows the top reasons, trend and where the fix belongs, next to the journey funnel (now including "started choosing entries").
 
+## v13 customer experience & growth (Phase 6)
+- **Customers:** personal homepage panel; My tickets grouped by draw date; results marked "You entered / You won"; a winner page to choose prize or cash, give delivery details and follow progress; draw calendar (`/draws`); typo-tolerant search incl. winners; points dashboard and non-spending milestones; security activity log; CSV downloads of orders/entries/transactions; one-tap feedback.
+- **Staff:** Control Centre work queues; universal search; order page with single-line refunds (wallet or card); goodwill credit with limits (`GOODWILL_LIMIT`); promotions with scheduling and rules; scheduled announcements; content & legal pages editor with version history; versioned competition conditions per entry; winner share cards; daily and weekly summary emails (`REPORT_EMAILS`); release dashboard; checkout diagnostics, segments, experiments; feedback, support insights and development backlog. Admin menu grouped into Reports and More.
+- **Staging demo:** `docker compose -p dbx-staging exec web flask --app wsgi demo-lifecycle` runs a whole competition with test money.
+- **How we work from here:** `docs/SIMPLICITY-REVIEW.md` — measure → find a problem → investigate → improve → test → release → measure again.
+

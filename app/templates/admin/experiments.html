@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Experiments · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Experiments</h1>
+<p class="muted" style="max-width:760px">Controlled tests of small, legitimate design changes. Only logged-in customers take part (no tracking cookies); each account always sees the same version; success means <b>completing a purchase</b>, not clicking. Run one test per page at a time, for at least two weeks, and stop it once there's a clear answer. New tests are added by a developer (app/experiments.py).</p>
+{% for it in items %}
+<section class="panel" style="margin-bottom:var(--s4)" aria-labelledby="ex-{{ it.key }}">
+  <div class="row"><h2 id="ex-{{ it.key }}" style="font-size:20px;margin:0">{{ it.exp.name }}</h2>
+    {% if it.state and it.state.status == 'running' %}<span class="pill live">Running since {{ it.state.started_at|uktime('%d %b') }}</span>{% else %}<span class="pill">Not running</span>{% endif %}</div>
+  <p class="small muted">{{ it.exp.why }}</p>
+  <table><thead><tr><th scope="col">Version</th><th scope="col" class="num">Customers</th><th scope="col" class="num">Purchased</th><th scope="col" class="num">Rate</th></tr></thead><tbody>
+  {% for r in it.results %}<tr><td><b>{{ r.variant|upper }}</b> {{ r.label }}{% if r.variant == 'a' %} <span class="tiny muted">(current)</span>{% endif %}</td><td class="num">{{ r.n }}</td><td class="num">{{ r.c }}</td><td class="num">{{ r.rate if r.rate is not none else '—' }}{% if r.rate is not none %}%{% endif %}</td></tr>{% endfor %}</tbody></table>
+  <p class="small"><b>{{ it.verdict }}</b></p>
+  {% if it.state and it.state.decision %}<p class="small muted">Decision: {{ it.state.decision }}</p>{% endif %}
+  {% if can('settings') %}<form method="post" class="inline-form"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="key" value="{{ it.key }}">
+    {% if it.state and it.state.status == 'running' %}<label class="sr-only" for="dec-{{ it.key }}">Decision</label><input id="dec-{{ it.key }}" name="decision" placeholder="What we decided and why" style="min-width:260px"><button class="btn ghost small" name="action" value="stop">Stop</button>
+    {% else %}<button class="btn small" name="action" value="start">Start</button>{% endif %}</form>{% endif %}
+</section>{% endfor %}
+{% endblock %}

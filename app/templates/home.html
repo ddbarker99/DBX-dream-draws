@@ -28,7 +28,7 @@
 <section class="intro">
   <div>
     <h1>Win big from <span class="nocase">{{ 10|pp }}</span></h1>
-    <p>UK prize draws for cars, tech and cash, plus instant win games. Answer one question, choose your tickets, and every draw can be checked — with a free postal entry on every competition.</p>
+    {% set intro = content_block('home-intro') %}{% if intro %}<div class="prose">{{ intro }}</div>{% else %}<p>UK prize draws for cars, tech and cash, plus instant win games. Answer one question, choose your tickets, and every draw can be checked — with a free postal entry on every competition.</p>{% endif %}
   </div>
   <div class="actions">
     <a class="btn lg" href="{{ url_for('public.competitions') }}">View competitions</a>

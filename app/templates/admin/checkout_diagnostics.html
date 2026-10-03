@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Checkout diagnostics · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Checkout diagnostics</h1>
+<p class="muted" style="max-width:760px">Card checkouts in the last 30 days and where they didn't finish. Find out whether abandonment is a technical problem or a confusing step <b>before</b> considering reminder emails. Anonymous journey counts: basket {{ '{:,}'.format(steps.basket or 0) }} → started payment {{ '{:,}'.format(steps.checkout or 0) }} → paid {{ '{:,}'.format(steps.paid or 0) }}.</p>
+{% if hints %}<ul class="youratt" style="margin-bottom:var(--s4)">{% for h in hints %}<li class="warn"><span>{{ h }}</span></li>{% endfor %}</ul>{% endif %}
+<div class="statstrip">
+  <div><b>{{ started }}</b><span>Card checkouts started</span></div>
+  <div><b>{{ rate(outcome.paid or 0) if started else '—' }}%</b><span>Paid</span></div>
+  <div><b>{{ rate(outcome.expired or 0) if started else '—' }}%</b><span>Left at the payment page</span></div>
+  <div><b>{{ (outcome.credit_refused or 0) + (outcome.needs_refund or 0) }}</b><span>Refused / refund needed</span></div>
+</div>
+<p class="small muted">{{ retried }} abandoned payments were followed by another try within 2 hours; {{ recovered }} customers paid within a day of abandoning. {{ errors }} server errors on basket/checkout pages.</p>
+<div class="two">
+<section class="panel" aria-labelledby="dv-h"><h2 id="dv-h" style="font-size:18px">By device</h2><table><thead><tr><th scope="col">Device</th><th scope="col" class="num">Started</th><th scope="col" class="num">Paid</th></tr></thead><tbody>
+  {% for r in by_device %}<tr><td>{{ r.d }}</td><td class="num">{{ r.n }}</td><td class="num">{{ (100 * r.ok / r.n)|round|int }}%</td></tr>{% else %}<tr><td colspan="3" class="muted">No data yet.</td></tr>{% endfor %}</tbody></table></section>
+<section class="panel" aria-labelledby="bd-h"><h2 id="bd-h" style="font-size:18px">By amount</h2><table><thead><tr><th scope="col">Card amount</th><th scope="col" class="num">Started</th><th scope="col" class="num">Paid</th></tr></thead><tbody>
+  {% for r in bands %}<tr><td>{{ r.band }}</td><td class="num">{{ r.n }}</td><td class="num">{{ (100 * r.ok / r.n)|round|int }}%</td></tr>{% else %}<tr><td colspan="3" class="muted">No data yet.</td></tr>{% endfor %}</tbody></table></section>
+<section class="panel" aria-labelledby="hr-h"><h2 id="hr-h" style="font-size:18px">By time of day (UK)</h2><table><thead><tr><th scope="col">Hours</th><th scope="col" class="num">Started</th><th scope="col" class="num">Paid</th></tr></thead><tbody>
+  {% for h, t in hours %}<tr><td>{{ '%02d' % h }}:00–{{ '%02d' % (h + 4) }}:00</td><td class="num">{{ t[0] }}</td><td class="num">{{ (100 * t[1] / t[0])|round|int }}%</td></tr>{% else %}<tr><td colspan="3" class="muted">No data yet.</td></tr>{% endfor %}</tbody></table></section>
+</div>
+{% endblock %}

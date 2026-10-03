@@ -47,6 +47,10 @@ How DBX Dream Draws works, for a developer joining without the original author. 
 | `status.py` | Site status: normal / payments paused / maintenance, auto-pause on provider errors |
 | `analytics.py` | Cookie-free journey counts |
 | `backups.py` | Verified backups, restore test, DR drill |
+| `content.py` | Editable, versioned pages (FAQs, help, legal) and the safe text formatter |
+| `experiments.py` | A/B tests (logged-in customers only, judged by completed purchases) |
+| `cards.py` | Winner share-card images (consent only) |
+| `demo.py` | `flask demo-lifecycle` for staging demonstrations |
 
 **Rule:** a business rule lives in exactly one function in `services.py` (or `checks.py`). Routes may *pre-check* for a friendlier message, but the authoritative check is always repeated inside the transaction in `services`.
 
@@ -96,6 +100,7 @@ All jobs are idempotent and safe to run concurrently from several processes (eac
 | watch_reminders | 30 min | Opt-in closing reminders |
 | integrity | 6 h | Data-integrity checks |
 | reconcile | 24 h | Stripe reconciliation |
+| reports | 30 min | Daily summary (7am) and weekly report (Monday 8am) emails, once each |
 | prune | 24 h | Retention clean-ups |
 
 ## 5. Safety nets, in layers

@@ -148,6 +148,9 @@ MIGRATIONS = [
     ("promo_codes", "category", "TEXT"),                      # or only this category
     ("promo_codes", "new_customers", "INTEGER NOT NULL DEFAULT 0"),  # only customers with no paid order yet
     ("promo_codes", "description", "TEXT"),
+    ("orders", "terms_version", "INTEGER"),                   # site terms version (content_versions.version, NULL = built-in v0)
+    ("orders", "comp_terms_id", "INTEGER"),                   # competition-specific conditions that applied (comp_terms.id)
+    ("postal_entries", "comp_terms_id", "INTEGER"),
 ]
 
 # Triggers that use columns added by MIGRATIONS, so they're created after them.
@@ -319,6 +322,12 @@ def init_db(path, release=None):
         for r in conn.execute("SELECT id FROM users WHERE referral_code IS NULL").fetchall():
             conn.execute("UPDATE users SET referral_code=? WHERE id=?", (secrets.token_hex(4).upper(), r["id"]))
         _chain_old_audit_rows(conn)
+        # One way to announce things: the old single "announcement" setting moves into scheduled announcements.
+        old = conn.execute("SELECT value FROM settings WHERE key='announcement'").fetchone()
+        if old and old[0].strip():
+            conn.execute("INSERT INTO announcements (message, level, starts_at, created_at) VALUES (?, 'info', "
+                         "strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))", (old[0].strip()[:300],))
+            conn.execute("UPDATE settings SET value='' WHERE key='announcement'")
         skipped = []
         for name, sql in CONSTRAINTS:
             conn.execute("SAVEPOINT c")

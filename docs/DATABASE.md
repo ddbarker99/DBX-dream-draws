@@ -32,23 +32,35 @@ users ─┬─< checkouts ─< orders >── competitions ─┬─< tickets (
 - **Free entries.** `postal_entries` record every envelope (received date, outcome, reason); accepted ones point to their ticket.
 - **Points.** `users.points` is a cache of `SUM(points_ledger.points)`; the integrity job checks they match.
 - **Audit.** `audit_log` is append-only and hash-chained (`prev_hash`, `row_hash`).
+- **Refunds of single orders.** `refunds` (one row per refunded order, permanent): card and wallet amounts, points reversed, Stripe refund id; the wallet parts are also ledger lines `refund-o<order>`.
+- **Terms.** `content_versions` keeps every published version of editable/legal pages; `comp_terms` keeps each version of a competition's own conditions. `orders.terms_version` and `orders.comp_terms_id` (and `postal_entries.comp_terms_id`) record what applied to each entry.
+- **Winner claims.** `prize_claims` also holds the winner's choice and delivery details (given on their prize page).
+- **Growth & insight.** `feedback`, `backlog` + `backlog_evidence`, `experiments` + `experiment_members`, `announcements`, `releases`.
 
 ## Tables
 | Table | Columns | References |
 |---|---|---|
+| `announcements` | `id`, `message`, `level`, `link`, `starts_at`, `ends_at`, `active`, `created_by`, `created_at` | — |
 | `audit_log` | `id`, `created_at`, `actor_id`, `actor_email`, `action`, `target`, `detail`, `prev_hash`, `row_hash` | — |
+| `backlog` | `id`, `kind`, `title`, `detail`, `status`, `created_by`, `created_at`, `updated_at` | — |
+| `backlog_evidence` | `id`, `backlog_id`, `source`, `source_id`, `note`, `added_by`, `created_at` | backlog_id→backlog.id |
 | `case_notes` | `id`, `case_id`, `created_at`, `actor_id`, `kind`, `body` | case_id→cases.id |
 | `cases` | `id`, `user_id`, `name`, `email`, `topic`, `status`, `competition_id`, `checkout_id`, `assigned_to`, `resolution`, `created_at`, `updated_at`, `priority`, `withdrawal_id`, `locked_by`, `locked_at`, `reason` | user_id→users.id |
 | `checkouts` | `id`, `user_id`, `subtotal`, `promo_id`, `promo_discount`, `credit_used`, `cash_due`, `status`, `stripe_session_id`, `created_at`, `paid_at`, `cash_used`, `deposit_used`, `idem_key`, `pay_url`, `device`, `payment_intent` | promo_id→promo_codes.id, user_id→users.id |
 | `claim_events` | `id`, `claim_id`, `created_at`, `actor_id`, `status`, `note`, `evidence` | claim_id→prize_claims.id |
+| `comp_terms` | `id`, `competition_id`, `version`, `body`, `created_by`, `created_at` | — |
 | `competitions` | `id`, `slug`, `title`, `description`, `image`, `cash_alternative`, `ticket_price`, `max_tickets`, `max_per_user`, `ends_at`, `question`, `answer_a`, `answer_b`, `answer_c`, `correct`, `status`, `seed`, `seed_hash`, `entries_hash`, `winner_ticket_id`, `drawn_at`, `created_at`, `category`, `featured`, `prize_value`, `discount_tiers`, `live_url`, `instant_salt`, `instant_hash`, `winner_photo`, `winner_quote`, `game_type`, `auto_draw`, `free_daily`, `starts_at`, `scheduled`, `winner_consent_at`, `winner_consent_by`, `locked_at`, `purging`, `completed_at`, `question_mode` | — |
 | `consent_log` | `id`, `user_id`, `channel`, `granted`, `source`, `created_at`, `ip` | user_id→users.id |
+| `content_versions` | `id`, `slug`, `version`, `body`, `note`, `created_by`, `created_at` | — |
 | `credit_ledger` | `id`, `user_id`, `amount`, `reason`, `ref`, `created_at`, `kind` | user_id→users.id |
 | `deposits` | `id`, `user_id`, `amount`, `status`, `stripe_session_id`, `payment_intent`, `refunded`, `created_at`, `paid_at` | user_id→users.id |
 | `draws` | `id`, `competition_id`, `drawn_at`, `method`, `run_by`, `seed`, `seed_hash`, `entries_hash`, `entry_count`, `winning_index`, `winning_number`, `winning_ticket_id`, `entries`, `redraw_of`, `reason`, `winner_user_id`, `snapshot_id` | — |
 | `entry_snapshots` | `id`, `competition_id`, `taken_at`, `entry_count`, `paid_count`, `postal_count`, `entries_hash`, `entries` | — |
 | `error_log` | `id`, `signature`, `first_at`, `last_at`, `count`, `endpoint`, `path`, `error`, `trace`, `resolved_at` | — |
+| `experiment_members` | `key`, `user_id`, `variant`, `exposed_at`, `converted_at` | — |
+| `experiments` | `key`, `status`, `started_at`, `stopped_at`, `decision` | — |
 | `feature_flags` | `key`, `state`, `updated_at`, `updated_by` | — |
+| `feedback` | `id`, `created_at`, `user_id`, `context`, `ref`, `rating`, `comment`, `status`, `backlog_id` | — |
 | `flags` | `id`, `kind`, `subject`, `detail`, `status`, `created_at`, `reviewed_at`, `reviewed_by`, `note` | — |
 | `funnel_counts` | `day`, `step`, `device`, `comp_id`, `n` | — |
 | `instant_prizes` | `id`, `competition_id`, `title`, `value`, `credit_amount`, `number`, `ticket_id`, `won_at`, `fulfilled`, `prize_type` | ticket_id→tickets.id, competition_id→competitions.id |
@@ -56,13 +68,15 @@ users ─┬─< checkouts ─< orders >── competitions ─┬─< tickets (
 | `job_status` | `job`, `last_started`, `last_ok`, `last_error_at`, `last_error`, `last_changed` | — |
 | `maintenance_unlock` | `id`, `reason` | — |
 | `notifications` | `id`, `user_id`, `email`, `kind`, `title`, `body`, `link`, `dedupe_key`, `created_at`, `read_at`, `email_status`, `email_tries`, `email_error`, `sent_at`, `email_payload` | user_id→users.id |
-| `orders` | `id`, `user_id`, `competition_id`, `quantity`, `amount`, `status`, `stripe_session_id`, `created_at`, `paid_at`, `checkout_id`, `discount` | checkout_id→checkouts.id, competition_id→competitions.id, user_id→users.id |
+| `orders` | `id`, `user_id`, `competition_id`, `quantity`, `amount`, `status`, `stripe_session_id`, `created_at`, `paid_at`, `checkout_id`, `discount`, `terms_version`, `comp_terms_id` | checkout_id→checkouts.id, competition_id→competitions.id, user_id→users.id |
 | `password_resets` | `token_hash`, `user_id`, `expires_at` | user_id→users.id |
 | `points_ledger` | `id`, `user_id`, `points`, `reason`, `ref`, `created_at` | user_id→users.id |
-| `postal_entries` | `id`, `competition_id`, `name`, `email`, `address`, `answer_correct`, `added_by`, `created_at`, `received_at`, `user_id`, `status`, `reject_reason`, `dob`, `phone` | user_id→users.id, added_by→users.id, competition_id→competitions.id |
-| `prize_claims` | `id`, `competition_id`, `draw_id`, `ticket_id`, `user_id`, `status`, `prize_choice`, `created_at`, `updated_at` | — |
-| `promo_codes` | `id`, `code`, `percent`, `fixed`, `min_spend`, `max_uses`, `per_user`, `uses`, `expires_at`, `active`, `created_at` | — |
+| `postal_entries` | `id`, `competition_id`, `name`, `email`, `address`, `answer_correct`, `added_by`, `created_at`, `received_at`, `user_id`, `status`, `reject_reason`, `dob`, `phone`, `comp_terms_id` | user_id→users.id, added_by→users.id, competition_id→competitions.id |
+| `prize_claims` | `id`, `competition_id`, `draw_id`, `ticket_id`, `user_id`, `status`, `prize_choice`, `created_at`, `updated_at`, `delivery_name`, `delivery_address`, `delivery_phone`, `choice_at` | — |
+| `promo_codes` | `id`, `code`, `percent`, `fixed`, `min_spend`, `max_uses`, `per_user`, `uses`, `expires_at`, `active`, `created_at`, `starts_at`, `comp_ids`, `category`, `new_customers`, `description` | — |
 | `referrals` | `id`, `referrer_id`, `referred_id`, `created_at`, `status`, `reason`, `rewarded_at` | referred_id→users.id, referrer_id→users.id |
+| `refunds` | `id`, `order_id`, `checkout_id`, `user_id`, `method`, `card_amount`, `wallet_amount`, `points_reversed`, `status`, `stripe_refund_id`, `reason`, `staff_id`, `created_at` | order_id→orders.id |
+| `releases` | `release`, `first_seen`, `schema_columns`, `constraints_skipped`, `check_at`, `check_ok`, `check_summary` | — |
 | `request_stats` | `day`, `metric`, `n` | — |
 | `settings` | `key`, `value` | — |
 | `tickets` | `id`, `competition_id`, `number`, `user_id`, `order_id`, `postal_entry_id`, `created_at`, `status`, `revealed_at` | postal_entry_id→postal_entries.id, order_id→orders.id, user_id→users.id, competition_id→competitions.id |
@@ -80,8 +94,11 @@ Triggers (refuse the change with an error):
 - `checkouts`: `checkouts_final`
 - `claim_events`: `claim_events_no_delete`
 - `claim_events`: `claim_events_no_update`
+- `comp_terms`: `comp_terms_no_update`
 - `competitions`: `comp_lock_permanent`
 - `competitions`: `comp_result_locked`
+- `content_versions`: `content_no_delete`
+- `content_versions`: `content_no_update`
 - `credit_ledger`: `ledger_no_delete`
 - `credit_ledger`: `ledger_no_update`
 - `credit_ledger`: `ledger_valid`
@@ -96,6 +113,8 @@ Triggers (refuse the change with an error):
 - `points_ledger`: `points_no_delete`
 - `points_ledger`: `points_no_update`
 - `postal_entries`: `postal_decision_final`
+- `refunds`: `refunds_final`
+- `refunds`: `refunds_no_delete`
 - `tickets`: `tickets_locked_delete`
 - `tickets`: `tickets_locked_insert`
 - `tickets`: `tickets_locked_update`
@@ -104,7 +123,6 @@ Triggers (refuse the change with an error):
 - `tickets`: `tickets_valid`
 - `withdrawals`: `withdrawals_final`
 - `withdrawals`: `withdrawals_valid`
-
 
 Unique indexes (created at start-up; if old data breaks one it's skipped and reported in System health → Data integrity): `ux_ledger_once`, `ux_points_once`, `ux_deposit_session`, `ux_claim_per_draw`, `ux_prize_per_ticket`, `ux_ticket_per_postal`, `ux_draw_winner`, `ux_withdrawal_ledger`, plus the table-level `UNIQUE` constraints (ticket numbers, emails, slugs, Stripe sessions, notification dedupe keys, referrals).
 

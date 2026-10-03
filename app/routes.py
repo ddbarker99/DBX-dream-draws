@@ -242,7 +242,11 @@ def competition(slug):
         revealed = {r[0] for r in db.execute("SELECT number FROM tickets WHERE competition_id=? AND user_id=? AND revealed_at IS NOT NULL",
                                              (c["id"], g.user["id"]))}
         mine = [{"number": t["number"], "win": t["win"] if t["number"] in revealed else None} for t in mine]
+    from .services import comp_terms_current
+    from .content import render as render_content
+    ct = comp_terms_current(db, c["id"])
     return render_template("competition.html", c=c, d=data, mine=mine, waiting=waiting, gi=game_info(db, c),
+                           conditions=ct if ct and ct["body"] else None, conditions_html=render_content(ct["body"]) if ct else "",
                            claimed=claimed, share=share, board=instant_board(db, c["id"], reveal=finished),
                            winner_name=public_name(winner["name"]) if winner else None,
                            winner_number=winner["number"] if winner else None, others=others, tiers=tiers,
@@ -1124,7 +1128,49 @@ PAGES = {"free-entry": "free_entry.html", "terms": "terms.html", "fair-draws": "
 
 @bp.route("/<any(" + ",".join(f'"{k}"' for k in PAGES) + "):page>")
 def page(page):
+    """Built-in page, unless staff have published an edited version (then the latest version, with its history)."""
+    from .content import EDITABLE, current, render
+    if page in EDITABLE:
+        cur = current(page)
+        if cur:
+            return render_template("content_page.html", slug=page, title=EDITABLE[page][0], legal=EDITABLE[page][1],
+                                   body=render(cur["body"]), v=cur, old=False)
     return render_template(PAGES[page])
+
+
+@bp.route("/legal/<slug>/versions")
+def legal_versions(slug):
+    from .content import EDITABLE
+    if slug not in EDITABLE or not EDITABLE[slug][1]:
+        abort(404)
+    rows = get_db().execute("SELECT version, note, created_at FROM content_versions WHERE slug=? ORDER BY version DESC", (slug,)).fetchall()
+    return render_template("legal_versions.html", slug=slug, title=EDITABLE[slug][0], rows=rows)
+
+
+@bp.route("/legal/<slug>/v/<int:version>")
+def legal_version(slug, version):
+    from .content import EDITABLE, render
+    if slug not in EDITABLE or not EDITABLE[slug][1]:
+        abort(404)
+    v = get_db().execute("SELECT * FROM content_versions WHERE slug=? AND version=?", (slug, version)).fetchone()
+    if v is None:
+        abort(404)
+    latest = get_db().execute("SELECT MAX(version) FROM content_versions WHERE slug=?", (slug,)).fetchone()[0]
+    return render_template("content_page.html", slug=slug, title=EDITABLE[slug][0], legal=True, body=render(v["body"]), v=v,
+                           old=version != latest)
+
+
+@bp.route("/c/<slug>/conditions/<int:version>")
+def comp_conditions(slug, version):
+    """The competition-specific conditions exactly as they were in a given version (what applied to an entry)."""
+    from .content import render
+    db = get_db()
+    c = db.execute("SELECT id, title, slug FROM competitions WHERE slug=? AND status!='draft'", (slug,)).fetchone()
+    t = db.execute("SELECT * FROM comp_terms WHERE competition_id=? AND version=?", (c["id"], version)).fetchone() if c else None
+    if t is None:
+        abort(404)
+    latest = db.execute("SELECT MAX(version) FROM comp_terms WHERE competition_id=?", (c["id"],)).fetchone()[0]
+    return render_template("comp_conditions.html", c=c, t=t, body=render(t["body"]), old=version != latest)
 
 
 @bp.route("/transparency")
@@ -1891,7 +1937,11 @@ def ticket_detail(tid):
         abort(404)
     claim = db.execute("SELECT status FROM prize_claims WHERE ticket_id=? ORDER BY id DESC LIMIT 1", (tid,)).fetchone()
     from .services import CLAIM_NAMES
-    return render_template("ticket.html", t=t, claim=claim, claim_names=CLAIM_NAMES,
+    terms = db.execute("SELECT o.terms_version, ct.version AS comp_v FROM orders o LEFT JOIN comp_terms ct ON ct.id=o.comp_terms_id "
+                       "WHERE o.id=?", (t["order_id"],)).fetchone() if t["order_id"] else \
+        db.execute("SELECT NULL AS terms_version, ct.version AS comp_v FROM postal_entries p LEFT JOIN comp_terms ct ON ct.id=p.comp_terms_id "
+                   "WHERE p.id=?", (t["postal_entry_id"],)).fetchone()
+    return render_template("ticket.html", t=t, claim=claim, claim_names=CLAIM_NAMES, terms=terms,
                            revealed=not t["game_type"] or bool(t["revealed_at"]))
 
 
