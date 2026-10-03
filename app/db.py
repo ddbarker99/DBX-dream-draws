@@ -98,6 +98,18 @@ MIGRATIONS = [
     ("competitions", "scheduled", "INTEGER NOT NULL DEFAULT 0"),
     # v7: deposits
     ("checkouts", "deposit_used", "INTEGER NOT NULL DEFAULT 0"),
+    # v8: integrity, postal workflow, admin roles, winner consent
+    ("checkouts", "idem_key", "TEXT"),                        # stops a double-click creating two checkouts
+    ("checkouts", "pay_url", "TEXT"),                         # the payment page for this checkout
+    ("postal_entries", "received_at", "TEXT"),                # the date the envelope arrived
+    ("postal_entries", "user_id", "INTEGER REFERENCES users(id)"),  # matched to an account by email
+    ("postal_entries", "status", "TEXT NOT NULL DEFAULT 'accepted'"),  # accepted | rejected
+    ("postal_entries", "reject_reason", "TEXT"),
+    ("postal_entries", "dob", "TEXT"),
+    ("postal_entries", "phone", "TEXT"),
+    ("users", "admin_role", "TEXT NOT NULL DEFAULT 'owner'"),  # owner (everything) | staff (no money or accounts)
+    ("competitions", "winner_consent_at", "TEXT"),           # winner agreed to their photo/quote being shown
+    ("competitions", "winner_consent_by", "INTEGER"),
 ]
 
 POST_INDEXES = """
@@ -108,6 +120,8 @@ CREATE INDEX IF NOT EXISTS ix_tickets_user ON tickets(user_id);
 CREATE INDEX IF NOT EXISTS ix_tickets_comp_status ON tickets(competition_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_users_ref ON users(referral_code);
 CREATE INDEX IF NOT EXISTS ix_ledger_ref ON credit_ledger(ref);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_checkout_idem ON checkouts(user_id, idem_key);
+CREATE INDEX IF NOT EXISTS ix_postal_comp ON postal_entries(competition_id, status);
 """
 
 
@@ -126,6 +140,8 @@ def init_db(path):
         for stmt in POST_INDEXES.strip().split(";"):
             if stmt.strip():
                 conn.execute(stmt)
+        conn.execute("UPDATE postal_entries SET status='rejected', reject_reason='Wrong answer' "
+                     "WHERE answer_correct=0 AND status='accepted' AND reject_reason IS NULL")
         for r in conn.execute("SELECT id FROM users WHERE referral_code IS NULL").fetchall():
             conn.execute("UPDATE users SET referral_code=? WHERE id=?", (secrets.token_hex(4).upper(), r["id"]))
         conn.execute("COMMIT")

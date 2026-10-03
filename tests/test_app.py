@@ -29,6 +29,8 @@ class Base(unittest.TestCase):
         self.app = create_app({"TESTING": True, "DEMO_PAYMENTS": True, "STRIPE_WEBHOOK_SECRET": "whsec_test",
                                "REFERRAL_BONUS": 100})
         self.client = self.app.test_client()
+        from app import routes
+        routes._FAILS.clear()          # rate limits are per process; each test starts clean
 
     def cli(self, *args):
         return self.app.test_cli_runner().invoke(args=list(args))
@@ -147,11 +149,19 @@ class Tests(Base):
         self.assertEqual(nums, [2, 7])
         c = self.app.test_client()
         self.signup("b@example.com", client=c)
-        self.add(self.cid, numbers="7", client=c)
+        r = self.add(self.cid, numbers="7", client=c)
+        r = c.get(r.headers["Location"])
+        self.assertIn("#7 has just been taken", r.get_data(as_text=True))     # told straight away, not at checkout
+        self.assertEqual(c.get("/basket").get_data(as_text=True).count("Remove"), 0)
+        # a number that goes while it's sitting in someone's basket is flagged there, then refused at checkout
+        self.add(self.cid, numbers="9", client=c)
+        self.add(self.cid, numbers="9")
+        self.checkout()
+        self.assertIn("#9", c.get("/basket").get_data(as_text=True))
         r = self.post("/basket/checkout", {}, client=c, follow_redirects=True)
-        self.assertIn("was just taken", r.get_data(as_text=True))
+        self.assertIn("has just been taken by someone else", r.get_data(as_text=True))
         j = self.client.get(f"/c/{self.slug(self.cid)}/numbers?start=1").get_json()
-        self.assertEqual(j["taken"], [2, 7])
+        self.assertEqual(j["taken"], [2, 7, 9])
 
     def test_basket_multiple_comps_one_payment(self):
         c2 = self.make_comp("Second Prize", price="1.00")
@@ -305,9 +315,11 @@ class Tests(Base):
         self.add(self.cid, 3)
         self.checkout()
         self.post(f"/admin/competitions/{self.cid}/postal",
-                  {"name": "Post Person", "email": "p@example.com", "address": "1 Road", "answer_correct": "1"})
+                  {"name": "Post Person", "email": "p@example.com", "address": "1 Road", "answer_correct": "1",
+                   "received": time.strftime("%Y-%m-%d")})
         self.post(f"/admin/competitions/{self.cid}/postal",
-                  {"name": "Wrong", "email": "w@example.com", "address": "2 Road", "answer_correct": "0"})
+                  {"name": "Wrong", "email": "w@example.com", "address": "2 Road", "answer_correct": "0",
+                   "received": time.strftime("%Y-%m-%d")})
         self.assertEqual(self.q("SELECT COUNT(*) FROM tickets"), 4)
         db = self.db()
         db.execute("UPDATE competitions SET ends_at='2000-01-01T00:00:00Z' WHERE id=?", (self.cid,))
@@ -1041,6 +1053,200 @@ class DepositTests(Base):
             self.assertEqual(rf.call_count, 1 if funding == "credit" else 0)
         self.assertEqual(self.bal("deposit"), 1000)               # only the debit one, once
         self.assertEqual(self.client.get("/admin/payouts").status_code, 200)
+
+
+class IntegrityTests(Base):
+    """Phase 1 of the rebuild: draws, payments, postal entries and the rules the legal pages promise."""
+
+    def setUp(self):
+        super().setUp()
+        self.signup("admin@example.com", name="Admin Person")
+        self.cli("make-admin", "admin@example.com")
+        self.cid = self.make_comp(max_tickets=20, max_per_user=5)
+        self.p = self.app.test_client()
+        self.signup("player@example.com", client=self.p, name="Pat Player")
+        self.uid = self.q("SELECT id FROM users WHERE email='player@example.com'")
+
+    def close(self, cid=None):
+        db = self.db()
+        db.execute("UPDATE competitions SET ends_at='2000-01-01T00:00:00Z' WHERE id=?", (cid or self.cid,))
+        db.commit()
+
+    def postal(self, **kw):
+        d = {"name": "Post Person", "email": "post@example.com", "address": "1 Road", "answer_correct": "1",
+             "received": time.strftime("%Y-%m-%d")}
+        d.update(kw)
+        return self.post(f"/admin/competitions/{self.cid}/postal", d)
+
+    def test_draw_snapshot_is_permanent(self):
+        self.add(self.cid, 3, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        self.post(f"/admin/competitions/{self.cid}/draw")
+        d = self.db().execute("SELECT * FROM draws WHERE competition_id=?", (self.cid,)).fetchone()
+        self.assertEqual(d["entry_count"], 3)
+        self.assertEqual(d["method"], "manual")
+        self.assertEqual(sorted(json.loads(d["entries"])), json.loads(d["entries"]))
+        self.assertEqual(d["winning_number"], json.loads(d["entries"])[d["winning_index"]])
+        db = self.db()
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("UPDATE draws SET winning_number=1")
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("UPDATE competitions SET winner_ticket_id=NULL WHERE id=?", (self.cid,))
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("DELETE FROM audit_log")
+        self.assertGreater(self.q("SELECT COUNT(*) FROM audit_log WHERE action='draw.run'"), 0)
+        r = self.post(f"/admin/competitions/{self.cid}/delete", {"confirm": "DELETE"}, follow_redirects=True)
+        self.assertIn("permanent record", r.get_data(as_text=True))
+        self.assertEqual(self.q("SELECT COUNT(*) FROM competitions WHERE id=?", self.cid), 1)
+
+    def test_sell_out_does_not_bring_draw_forward(self):
+        cid = self.make_comp("Tiny", max_tickets=2, max_per_user=2)
+        self.add(cid, 2, client=self.p)
+        self.checkout(client=self.p)
+        r = self.post(f"/admin/competitions/{cid}/draw", follow_redirects=True)
+        self.assertIn("after the advertised closing time", r.get_data(as_text=True))
+        self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", cid), "live")
+
+    def test_double_click_creates_one_checkout(self):
+        self.add(self.cid, 2, client=self.p)
+        html = self.p.get("/basket").get_data(as_text=True)
+        idem = re.search(r'name="idem" value="([^"]+)"', html).group(1)
+        r1 = self.post("/basket/checkout", {"idem": idem}, client=self.p)
+        r2 = self.post("/basket/checkout", {"idem": idem}, client=self.p)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM checkouts"), 1)
+        self.assertIn("/checkout/", r2.headers["Location"])
+        self.assertEqual(self.p.get(r2.headers["Location"]).status_code, 303)    # straight on to the one payment page
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets"), 2)
+
+    def _webhook(self, chk, amount):
+        body = json.dumps({"type": "checkout.session.completed", "data": {"object": {
+            "id": "cs_x", "payment_status": "paid", "amount_total": amount, "metadata": {"checkout_id": str(chk)}}}}).encode()
+        ts = int(time.time())
+        sig = hmac.new(b"whsec_test", f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+        return self.client.post("/stripe/webhook", data=body, headers={"Stripe-Signature": f"t={ts},v1={sig}"})
+
+    def test_wrong_amount_is_never_fulfilled(self):
+        self.add(self.cid, 2, client=self.p)
+        chk = self.checkout(client=self.p, pay=False)
+        self._webhook(chk, 1)
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "needs_refund")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets"), 0)
+        self.assertIn("couldn't complete this order", self.p.get(f"/checkout/{chk}/done").get_data(as_text=True))
+
+    def test_paying_for_a_cancelled_competition_is_refunded(self):
+        self.add(self.cid, 2, client=self.p)
+        chk = self.checkout(client=self.p, pay=False)
+        self.post(f"/admin/competitions/{self.cid}/status", {"action": "cancel"})
+        self._webhook(chk, 500)
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "needs_refund")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE status='issued'"), 0)
+
+    def test_cancellation_refunds_each_part_as_it_was_paid(self):
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "2", "kind": "credit", "reason": "Promo"})
+        self.post("/admin/promos", {"code": "HALF", "percent": "50", "per_user": "1"})
+        self.add(self.cid, 4, client=self.p)                     # 4 x £2.50 = £10, promo -> £5, credit £2, card £3
+        self.checkout(client=self.p, promo="HALF", use_credit=True)
+        self.post(f"/admin/competitions/{self.cid}/status", {"action": "cancel"})
+        db = self.db()
+        self.assertEqual(db.execute("SELECT COALESCE(SUM(amount),0) FROM credit_ledger WHERE user_id=? AND kind='credit' "
+                                    "AND reason LIKE 'Refund%'", (self.uid,)).fetchone()[0], 200)
+        self.assertEqual(db.execute("SELECT COALESCE(SUM(amount),0) FROM credit_ledger WHERE user_id=? AND kind='cash' "
+                                    "AND reason LIKE 'Refund%'", (self.uid,)).fetchone()[0], 300)
+        self.post(f"/admin/competitions/{self.cid}/status", {"action": "cancel"})        # can't double refund
+        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger WHERE reason LIKE 'Refund%'"), 2)
+
+    def test_postal_late_wrong_and_limits(self):
+        self.close()
+        db = self.db()
+        db.execute("UPDATE competitions SET ends_at='2099-01-01T00:00:00Z' WHERE id=?", (self.cid,))
+        db.commit()
+        self.postal(answer_correct="0")
+        self.postal(dob="2015-01-01")
+        r = self.post(f"/admin/competitions/{self.cid}/postal", {"name": "N", "email": "n@example.com", "address": "A",
+                                                                  "answer_correct": "1", "received": "2999-01-01"},
+                      follow_redirects=True)
+        self.assertIn("can&#39;t be in the future", r.get_data(as_text=True))
+        reasons = [r[0] for r in self.db().execute("SELECT reject_reason FROM postal_entries ORDER BY id")]
+        self.assertEqual(reasons, ["Wrong answer", "Under 18"])
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets"), 0)
+        # matched to an account by email: counts towards the same per-person limit as paid entries
+        self.add(self.cid, 4, client=self.p)
+        self.checkout(client=self.p)
+        self.postal(email="PLAYER@example.com", name="Pat Player")
+        self.postal(email="player@example.com", name="Pat Player")
+        rows = self.db().execute("SELECT status, reject_reason, user_id FROM postal_entries WHERE email='player@example.com' "
+                                 "ORDER BY id").fetchall()
+        self.assertEqual([tuple(r) for r in rows], [("accepted", None, self.uid), ("rejected", "Per-person limit of 5 reached", self.uid)])
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE user_id=?", self.uid), 5)
+        self.add(self.cid, 1, client=self.p)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE user_id=?", self.uid), 5)
+        # no account: limit counted by email
+        for _ in range(6):
+            self.postal()
+        self.assertEqual(self.q("SELECT COUNT(*) FROM postal_entries WHERE email='post@example.com' AND status='accepted'"), 5)
+        self.assertIn("Per-person limit", self.client.get(f"/admin/competitions/{self.cid}").get_data(as_text=True))
+
+    def test_postal_after_closing_is_rejected(self):
+        db = self.db()
+        db.execute("UPDATE competitions SET ends_at='2020-06-01T10:00:00Z' WHERE id=?", (self.cid,))
+        db.commit()
+        self.postal(received="2020-06-02")
+        self.postal(received="2020-06-01")                     # closing day counts as on time
+        rows = [tuple(r) for r in self.db().execute("SELECT status, reject_reason FROM postal_entries ORDER BY id")]
+        self.assertEqual(rows, [("rejected", "Arrived after the competition closed"), ("accepted", None)])
+
+    def test_lowering_a_limit_cancels_a_pending_raise(self):
+        self.post("/account/limits", {"daily": "", "weekly": "", "monthly": "50"}, client=self.p)
+        self.post("/account/limits", {"daily": "", "weekly": "", "monthly": "200"}, client=self.p)
+        self.assertEqual(self.q("SELECT pending_limit FROM users WHERE id=?", self.uid), 20000)
+        self.assertEqual(self.q("SELECT monthly_limit FROM users WHERE id=?", self.uid), 5000)
+        self.post("/account/limits", {"daily": "", "weekly": "", "monthly": "40"}, client=self.p)
+        self.assertIsNone(self.q("SELECT pending_limit FROM users WHERE id=?", self.uid))
+        self.assertEqual(self.q("SELECT monthly_limit FROM users WHERE id=?", self.uid), 4000)
+
+    def test_break_releases_checkouts_in_progress(self):
+        self.add(self.cid, 2, client=self.p)
+        chk = self.checkout(client=self.p, pay=False)
+        self.post("/account/exclude", {"days": "1"}, client=self.p)
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "expired")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets"), 0)
+        self.post(f"/checkout/{chk}/demo-pay", client=self.p)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE status='issued'"), 0)
+
+    def test_password_change_signs_out_other_devices(self):
+        other = self.app.test_client()
+        self.post("/login", {"email": "player@example.com", "password": "supersecret123"}, client=other)
+        self.assertEqual(other.get("/account").status_code, 200)
+        self.post("/account/profile", {"current_password": "supersecret123", "new_password": "anothersecret1"}, client=self.p)
+        self.assertEqual(self.p.get("/account").status_code, 200)       # this device stays in
+        self.assertEqual(other.get("/account").status_code, 302)        # the other one is signed out
+
+    def test_staff_cannot_touch_money(self):
+        self.post(f"/admin/users/{self.uid}", {"action": "admin", "role": "staff"})
+        self.assertEqual(self.p.get("/admin/").status_code, 200)
+        self.assertEqual(self.p.get(f"/admin/competitions/{self.cid}").status_code, 200)
+        for url in ("/admin/payouts", "/admin/users", f"/admin/users/{self.uid}", "/admin/start-fresh", "/admin/promos"):
+            self.assertEqual(self.p.get(url).status_code, 302, url)
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "50", "kind": "cash"}, client=self.p)
+        self.assertEqual(self.q("SELECT COALESCE(SUM(amount),0) FROM credit_ledger WHERE user_id=?", self.uid), 0)
+        self.assertGreater(self.q("SELECT COUNT(*) FROM audit_log WHERE action='user.admin_access'"), 0)
+
+    def test_winner_story_needs_permission(self):
+        self.add(self.cid, 1, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        self.post(f"/admin/competitions/{self.cid}/draw")
+        self.post(f"/admin/competitions/{self.cid}/winner", {"winner_quote": "Amazing!"})
+        self.assertNotIn("Amazing!", self.client.get("/winners").get_data(as_text=True))
+        self.post(f"/admin/competitions/{self.cid}/winner", {"winner_quote": "Amazing!", "consent": "1"})
+        self.assertIn("Amazing!", self.client.get("/winners").get_data(as_text=True))
+
+    def test_forgot_password_is_rate_limited(self):
+        with self.assertLogs(self.app.logger, level="WARNING") as logs:
+            for _ in range(5):
+                self.post("/forgot", {"email": "player@example.com"})
+        self.assertEqual(sum("Reset your password" in line for line in logs.output), 3)
 
 
 class MigrationTest(unittest.TestCase):

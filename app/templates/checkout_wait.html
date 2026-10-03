@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Preparing your payment · {{ config.SITE_NAME }}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="2">{% endblock %}
+{% block content %}
+<div style="max-width:620px;margin:0 auto">
+  {% set step = 3 %}{% include "_progress.html" %}
+  <div class="panel center" role="status">
+    <h1>Preparing your secure payment…</h1>
+    <p class="muted">Order #{{ c.id }} — this only takes a moment and the page moves on by itself. You haven't been charged, and pressing Pay again won't charge you twice.</p>
+    <p class="small"><a href="{{ url_for('public.checkout_cancel', cid=c.id) }}">Cancel and go back to my basket</a></p>
+  </div>
+</div>
+{% endblock %}

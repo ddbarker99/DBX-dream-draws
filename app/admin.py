@@ -12,7 +12,7 @@ from flask import (Blueprint, Response, abort, current_app, flash, g, redirect, 
 
 from . import UK, mailer
 from .db import get_db, iso, utcnow, write_txn
-from .services import (CATEGORIES, CATEGORY_NAMES, balances, prize_kind, refund_competition, GAME_NAMES, GAME_TYPES, game_info, PurchaseError, add_credit, add_instant_prizes, add_postal_entry,
+from .services import (audit, cancel_competition, CATEGORIES, CATEGORY_NAMES, balances, prize_kind, refund_competition, GAME_NAMES, GAME_TYPES, game_info, PurchaseError, add_credit, add_instant_prizes, add_postal_entry,
                        balance, comp_state, get_setting, instant_board, new_seed, public_name,
                        remove_instant_prize_group, run_draw, set_setting, settle_withdrawal, site_stats, sold_count,
                        taken_count, winner_details, delete_competition, paid_unrefunded, start_fresh, publish_problem)
@@ -28,6 +28,29 @@ def admin_required(view):
             abort(404)
         return view(*a, **kw)
     return wrapped
+
+
+def is_owner(user):
+    return bool(user and user["is_admin"] and user["admin_role"] == "owner")
+
+
+def owner_required(view):
+    """Money, balances, refunds, accounts and site resets: owners only. Staff can run competitions,
+    log postal entries, run draws and mark prizes sent."""
+    @wraps(view)
+    def wrapped(*a, **kw):
+        if g.user is None or not g.user["is_admin"]:
+            abort(404)
+        if not is_owner(g.user):
+            flash("Only an owner account can do that.", "error")
+            return redirect(url_for("admin.dashboard"))
+        return view(*a, **kw)
+    return wrapped
+
+
+@bp.app_context_processor
+def _admin_ctx():
+    return {"is_owner": is_owner(g.get("user"))}
 
 
 def _comp(cid):
@@ -86,7 +109,7 @@ def dashboard():
         "refunds": db.execute("SELECT COUNT(*) FROM checkouts WHERE status='needs_refund'").fetchone()[0]
                    + db.execute("SELECT COUNT(*) FROM deposits WHERE status='needs_refund'").fetchone()[0],
         "prizes": db.execute("SELECT COUNT(*) FROM instant_prizes WHERE ticket_id IS NOT NULL AND fulfilled=0").fetchone()[0],
-        "draws": sum(1 for x in comps if x["state"] in ("ended", "soldout") and not x["c"]["game_type"]),
+        "draws": sum(1 for x in comps if x["state"] == "ended" and not x["c"]["game_type"]),
     }
     cfg = current_app.config
     setup = [(ok, text) for ok, text in [
@@ -314,7 +337,13 @@ def edit_competition(cid):
         except ValueError as e:
             flash(str(e), "error")
             return render_template("admin/edit.html", c=c, form=request.form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
+        if c["status"] == "live" and data["ends_at"] != c["ends_at"] and data["ends_at"] <= iso(utcnow()):
+            flash("A live competition's closing time can't be moved into the past.", "error")
+            return render_template("admin/edit.html", c=c, form=request.form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
+        changed = {k: (c[k], v) for k, v in data.items() if k in c.keys() and c[k] != v and k != "description"}
         db.execute(f"UPDATE competitions SET {','.join(k + '=?' for k in data)} WHERE id=?", [*data.values(), cid])
+        if changed:
+            audit(db, "comp.edit", f"comp:{cid}", "; ".join(f"{k}: {o!r} → {n!r}" for k, (o, n) in changed.items()))
         flash("Saved.")
         return redirect(url_for("admin.entries", cid=cid))
     return render_template("admin/edit.html", c=c, form=_form_from(c), locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
@@ -333,9 +362,11 @@ def set_status(cid):
             return redirect(url_for("admin.entries", cid=cid))
         if action == "schedule" and c["starts_at"] and c["starts_at"] > iso(utcnow()):
             db.execute("UPDATE competitions SET scheduled=1 WHERE id=?", (cid,))
+            audit(db, "comp.schedule", f"comp:{cid}", f"Scheduled for {c['starts_at']}")
             flash(f"Scheduled — it goes live automatically on {_local(c['starts_at']).replace('T', ' at ')} (UK time).")
         else:
             db.execute("UPDATE competitions SET status='live', scheduled=0 WHERE id=?", (cid,))
+            audit(db, "comp.publish", f"comp:{cid}", f"Published “{c['title']}”")
             flash("Published — it's live on the site.")
             announce_live(c)
     elif action == "unpublish" and (c["status"] == "live" or c["scheduled"]):
@@ -343,12 +374,12 @@ def set_status(cid):
             flash("People have already entered, so it can't go back to draft. Cancel it instead (that refunds everyone).", "error")
             return redirect(url_for("admin.entries", cid=cid))
         db.execute("UPDATE competitions SET status='draft', scheduled=0 WHERE id=?", (cid,))
+        audit(db, "comp.unpublish", f"comp:{cid}", "Back to draft")
         flash("Back to draft — it's hidden from the site.")
     elif action == "cancel" and c["status"] in ("draft", "live"):
-        db.execute("UPDATE competitions SET status='cancelled' WHERE id=?", (cid,))
-        n, total = refund_competition(cid)
-        flash(f"Cancelled. {n} entrant{'s' if n != 1 else ''} refunded £{total / 100:.2f} to their cash balance "
-              "(they can withdraw it).", "error")
+        n, total = cancel_competition(cid)
+        flash(f"Cancelled. {n} entrant{'s' if n != 1 else ''} refunded £{total / 100:.2f} — card and cash payments to their "
+              "cash balance (withdrawable), site credit back as site credit.", "error")
     else:
         abort(400)
     return redirect(url_for("admin.entries", cid=cid))
@@ -419,7 +450,7 @@ def _backup_db():
 
 
 @bp.route("/start-fresh", methods=["GET", "POST"])
-@admin_required
+@owner_required
 def reset():
     db = get_db()
     counts = {
@@ -467,8 +498,13 @@ def entries(cid):
         "FROM tickets t LEFT JOIN users u ON u.id=t.user_id LEFT JOIN postal_entries p ON p.id=t.postal_entry_id "
         "WHERE t.competition_id=? AND t.status='issued' ORDER BY t.id DESC LIMIT 300", (cid,)).fetchall()
     held = db.execute("SELECT COUNT(*) FROM tickets WHERE competition_id=? AND status='held'", (cid,)).fetchone()[0]
-    postal_rejected = db.execute("SELECT COUNT(*) FROM postal_entries WHERE competition_id=? AND answer_correct=0",
+    postal_rejected = db.execute("SELECT COUNT(*) FROM postal_entries WHERE competition_id=? AND status='rejected'",
                                  (cid,)).fetchone()[0]
+    postal_log = db.execute(
+        "SELECT p.*, t.number, a.name AS added_by_name FROM postal_entries p LEFT JOIN tickets t ON t.postal_entry_id=p.id "
+        "LEFT JOIN users a ON a.id=p.added_by WHERE p.competition_id=? ORDER BY p.id DESC LIMIT 200", (cid,)).fetchall()
+    draw_rec = db.execute("SELECT d.*, u.email AS run_by_email FROM draws d LEFT JOIN users u ON u.id=d.run_by "
+                          "WHERE d.competition_id=? ORDER BY d.id DESC LIMIT 1", (cid,)).fetchone()
     revenue = db.execute("SELECT COALESCE(SUM(amount),0) FROM orders WHERE competition_id=? AND status='paid'",
                          (cid,)).fetchone()[0]
     prizes = db.execute(
@@ -481,7 +517,10 @@ def entries(cid):
                            prizes=prizes, board=instant_board(db, cid, reveal=True), gi=game_info(db, c),
                            game_name=GAME_NAMES.get(c["game_type"]),
                            can_edit_instant=taken_count(db, cid) == 0 and c["status"] in ("draft", "live"),
-                           now_iso=iso(utcnow()))
+                           now_iso=iso(utcnow()), postal_log=postal_log, draw_rec=draw_rec,
+                           today=datetime.now(UK).strftime("%Y-%m-%d"),
+                           audit_rows=db.execute("SELECT * FROM audit_log WHERE target=? ORDER BY id DESC LIMIT 20",
+                                                 (f"comp:{cid}",)).fetchall())
 
 
 @bp.route("/competitions/<int:cid>/instant", methods=["POST"])
@@ -513,6 +552,9 @@ def instant(cid):
             flash(f"Added — numbers picked at random and sealed with a hash.")
     except (ValueError, PurchaseError) as e:
         flash(str(e), "error")
+    else:
+        audit(get_db(), "instant.change", f"comp:{cid}", "Removed prize group " + repr(f["remove"]) if f.get("remove")
+              else "Added instant prizes")
     return redirect(url_for("admin.entries", cid=cid) + "#instant")
 
 
@@ -524,6 +566,7 @@ def instant_fulfilled(pid):
     if p is None:
         abort(404)
     db.execute("UPDATE instant_prizes SET fulfilled=1 WHERE id=?", (pid,))
+    audit(db, "prize.sent", f"comp:{p['competition_id']}", f"Instant prize #{pid} “{p['title']}” (ticket #{p['number']}) marked sent")
     flash("Marked as sent.")
     return redirect(request.form.get("back") or url_for("admin.entries", cid=p["competition_id"]))
 
@@ -531,26 +574,43 @@ def instant_fulfilled(pid):
 @bp.route("/competitions/<int:cid>/postal", methods=["POST"])
 @admin_required
 def postal(cid):
+    from datetime import date
     f = request.form
-    if not all(f.get(k, "").strip() for k in ("name", "email", "address")):
-        flash("Name, email and address are all required.", "error")
-        return redirect(url_for("admin.entries", cid=cid))
+    back = url_for("admin.entries", cid=cid) + "#postal"
+    if not all(f.get(k, "").strip() for k in ("name", "email", "address", "received")):
+        flash("Name, email, address and the date it arrived are all required.", "error")
+        return redirect(back)
     try:
-        number = add_postal_entry(cid, f["name"].strip(), f["email"].strip(), f["address"].strip(),
-                                  f.get("answer_correct") == "1", g.user["id"])
+        received = datetime.strptime(f["received"], "%Y-%m-%d").replace(hour=12, tzinfo=UK)
+        dob = date.fromisoformat(f["dob"]) if f.get("dob") else None
+    except ValueError:
+        flash("Enter the dates as shown (day, month, year).", "error")
+        return redirect(back)
+    if received.date() > datetime.now(UK).date():
+        flash("The date it arrived can't be in the future.", "error")
+        return redirect(back)
+    # An envelope that arrives on the closing day counts as on time if the competition closes later that day.
+    comp_ = _comp(cid)
+    rec_iso = iso(received)
+    if received.date() == datetime.strptime(comp_["ends_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(UK).date():
+        rec_iso = min(rec_iso, comp_["ends_at"])
+    rec_iso = min(rec_iso, iso(utcnow()))
+    try:
+        _pid, number, reason = add_postal_entry(cid, f["name"].strip(), f["email"].strip(), f["address"].strip(),
+                                                f.get("answer_correct") == "1", g.user["id"], rec_iso, dob,
+                                                "".join(ch for ch in f.get("phone", "") if ch.isdigit() or ch == "+")[:20])
     except PurchaseError as e:
         flash(str(e), "error")
+        return redirect(back)
+    if number:
+        flash(f"Postal entry accepted — ticket #{number}.")
+        mailer.send(f["email"].strip(), "Your free entry is in",
+                    f"Hi {f['name'].split()[0]},\n\nYour postal entry for {comp_['title']} has been added. Your ticket number:",
+                    highlight=f"Ticket #{number}", heading="Free entry confirmed",
+                    button=("View the competition", f"{current_app.config['SITE_URL']}{url_for('public.competition', slug=comp_['slug'])}"))
     else:
-        if number:
-            flash(f"Postal entry added — ticket #{number}.")
-            comp_ = _comp(cid)
-            mailer.send(f["email"].strip(), "Your free entry is in",
-                        f"Hi {f['name'].split()[0]},\n\nYour postal entry for {comp_['title']} has been added. Your ticket number:",
-                        highlight=f"Ticket #{number}", heading="Free entry confirmed",
-                        button=("View the competition", f"{current_app.config['SITE_URL']}{url_for('public.competition', slug=comp_['slug'])}"))
-        else:
-            flash("Logged, but the answer was wrong so no ticket was issued.")
-    return redirect(url_for("admin.entries", cid=cid))
+        flash(f"Logged as rejected: {reason}. No ticket was issued.", "error")
+    return redirect(back)
 
 
 def announce_live(c):
@@ -589,7 +649,7 @@ def announce_draw(cid):
 @admin_required
 def draw(cid):
     try:
-        number = run_draw(cid)
+        number = run_draw(cid, actor=g.user)
     except PurchaseError as e:
         flash(str(e), "error")
         return redirect(url_for("admin.entries", cid=cid))
@@ -602,6 +662,12 @@ def draw(cid):
 @admin_required
 def winner_story(cid):
     data = {"winner_quote": request.form.get("winner_quote", "").strip()[:500]}
+    has_photo = bool(request.files.get("winner_photo") and request.files["winner_photo"].filename)
+    if (has_photo or data["winner_quote"]) and not request.form.get("consent"):
+        flash("Tick the box to confirm the winner has agreed to their photo and comment being shown.", "error")
+        return redirect(url_for("admin.entries", cid=cid))
+    if request.form.get("consent"):
+        data.update(winner_consent_at=iso(utcnow()), winner_consent_by=g.user["id"])
     try:
         img = _save_image(request.files.get("winner_photo"))
     except ValueError as e:
@@ -609,7 +675,9 @@ def winner_story(cid):
         return redirect(url_for("admin.entries", cid=cid))
     if img:
         data["winner_photo"] = img
-    get_db().execute(f"UPDATE competitions SET {','.join(k + '=?' for k in data)} WHERE id=?", [*data.values(), cid])
+    db = get_db()
+    db.execute(f"UPDATE competitions SET {','.join(k + '=?' for k in data)} WHERE id=?", [*data.values(), cid])
+    audit(db, "winner.story", f"comp:{cid}", "Winner story saved" + (" with recorded permission" if request.form.get("consent") else ""))
     flash("Winner story saved — it shows on the winners page.")
     return redirect(url_for("admin.entries", cid=cid))
 
@@ -801,7 +869,7 @@ def publish_draft_games():
 # ---------------- promo codes ----------------
 
 @bp.route("/promos", methods=["GET", "POST"])
-@admin_required
+@owner_required
 def promos():
     db = get_db()
     if request.method == "POST":
@@ -809,6 +877,7 @@ def promos():
         try:
             if f.get("toggle"):
                 db.execute("UPDATE promo_codes SET active=1-active WHERE id=?", (int(f["toggle"]),))
+                audit(db, "promo.toggle", f"promo:{f['toggle']}", "Switched on/off")
             else:
                 code = re.sub(r"[^A-Za-z0-9]", "", f.get("code", "")).upper()
                 if not code:
@@ -825,6 +894,7 @@ def promos():
                            (code, percent, fixed, money(f.get("min_spend"), "Minimum spend"),
                             int(f["max_uses"]) if f.get("max_uses") else None, int(f.get("per_user") or 1), exp,
                             iso(utcnow())))
+                audit(db, "promo.create", f"promo:{code}", f"{percent}% + {fixed}p off")
                 flash(f"Promo code {code} created.")
         except ValueError as e:
             flash(str(e), "error")
@@ -841,7 +911,7 @@ def promos():
 # ---------------- users & wallet ----------------
 
 @bp.route("/users")
-@admin_required
+@owner_required
 def users():
     db = get_db()
     q = request.args.get("q", "").strip()
@@ -856,7 +926,7 @@ def users():
 
 
 @bp.route("/users/<int:uid>", methods=["GET", "POST"])
-@admin_required
+@owner_required
 def user_detail(uid):
     db = get_db()
     u = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
@@ -877,12 +947,19 @@ def user_detail(uid):
                     flash("That would make their balance negative.", "error")
                     return redirect(url_for("admin.user_detail", uid=uid))
                 add_credit(wdb, uid, amt, reason, f"admin{g.user['id']}", kind=kind)
+                audit(wdb, "wallet.adjust", f"user:{uid}", f"{amt:+}p {kind}: {reason}")
             flash("Wallet updated.")
         elif f.get("action") == "verify":
             db.execute("UPDATE users SET email_verified=1 WHERE id=?", (uid,))
+            audit(db, "user.verify", f"user:{uid}", "Email marked verified by admin")
             flash("Email marked as verified.")
         elif f.get("action") == "admin" and uid != g.user["id"]:
-            db.execute("UPDATE users SET is_admin=1-is_admin WHERE id=?", (uid,))
+            role = f.get("role") if f.get("role") in ("staff", "owner") else None
+            if role:
+                db.execute("UPDATE users SET is_admin=1, admin_role=? WHERE id=?", (role, uid))
+            else:
+                db.execute("UPDATE users SET is_admin=0 WHERE id=?", (uid,))
+            audit(db, "user.admin_access", f"user:{uid}", f"Admin access set to {role or 'none'}")
             flash("Admin access changed.")
         return redirect(url_for("admin.user_detail", uid=uid))
     tickets = db.execute("SELECT c.title, COUNT(*) AS n FROM tickets t JOIN competitions c ON c.id=t.competition_id "
@@ -894,7 +971,7 @@ def user_detail(uid):
 
 
 @bp.route("/payouts", methods=["GET", "POST"])
-@admin_required
+@owner_required
 def payouts():
     db = get_db()
     if request.method == "POST":
@@ -930,23 +1007,27 @@ def payouts():
 
 
 @bp.route("/deposit-refunds/<int:did>/done", methods=["POST"])
-@admin_required
+@owner_required
 def deposit_refund_done(did):
-    get_db().execute("UPDATE deposits SET status='expired' WHERE id=? AND status='needs_refund'", (did,))
+    db = get_db()
+    db.execute("UPDATE deposits SET status='expired' WHERE id=? AND status='needs_refund'", (did,))
+    audit(db, "refund.deposit_done", f"deposit:{did}", "Marked as refunded by hand")
     flash("Marked as refunded.")
     return redirect(url_for("admin.payouts"))
 
 
 @bp.route("/refunds/<int:cid>/done", methods=["POST"])
-@admin_required
+@owner_required
 def refund_done(cid):
-    get_db().execute("UPDATE checkouts SET status='expired' WHERE id=? AND status='needs_refund'", (cid,))
+    db = get_db()
+    db.execute("UPDATE checkouts SET status='expired' WHERE id=? AND status='needs_refund'", (cid,))
+    audit(db, "refund.checkout_done", f"checkout:{cid}", "Marked as refunded by hand")
     flash("Marked as refunded.")
     return redirect(url_for("admin.payouts"))
 
 
 @bp.route("/payouts/export.csv")
-@admin_required
+@owner_required
 def payouts_csv():
     """Pending withdrawals in a simple CSV you can use for bank bulk payments."""
     rows = get_db().execute(
@@ -964,7 +1045,7 @@ def payouts_csv():
 
 
 @bp.route("/stats")
-@admin_required
+@owner_required
 def stats():
     from datetime import timedelta
     db = get_db()
@@ -1046,8 +1127,24 @@ def settings():
                 flash("Live link must start with https://", "error")
                 return redirect(url_for("admin.settings"))
             set_setting(k, v)
+        audit(get_db(), "site.settings", None, {k: request.form.get(k, "") for k in keys})
         if request.form.get("live_now_url") and request.form.get("announce"):
             discord(f"🔴 **We're LIVE!** {request.form.get('live_now_title') or ''} {request.form['live_now_url']}")
         flash("Saved.")
         return redirect(url_for("admin.settings"))
     return render_template("admin/settings.html", s={k: get_setting(k) for k in keys})
+
+
+# ---------------- audit log ----------------
+
+@bp.route("/audit")
+@admin_required
+def audit_log():
+    db = get_db()
+    target = request.args.get("target", "").strip()[:40]
+    sql, args = "SELECT * FROM audit_log", []
+    if target:
+        sql += " WHERE target=?"
+        args.append(target)
+    rows = db.execute(sql + " ORDER BY id DESC LIMIT 300", args).fetchall()
+    return render_template("admin/audit.html", rows=rows, target=target)

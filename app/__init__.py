@@ -86,6 +86,12 @@ def create_app(test_config=None):
         uid = session.get("uid")
         if uid:
             g.user = dbmod.get_db().execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+            pwv = g.user["password_hash"][-16:] if g.user is not None else None
+            if g.user is not None and session.get("pwv") not in (None, pwv):
+                g.user = None                  # password changed on another device: sign this one out
+                session.clear()
+            elif g.user is not None and session.get("pwv") is None:
+                session["pwv"] = pwv           # sessions from before this check existed
             if g.user is None:
                 session.pop("uid", None)
             elif request.endpoint not in ("static", "public.uploads", "public.service_worker", "public.manifest"):

@@ -155,6 +155,15 @@
       if(s)setTimeout(tick,1000)})();
   });
   document.querySelectorAll('.toast:not(.error)').forEach(function(t){setTimeout(function(){t.classList.add('out');setTimeout(function(){t.remove()},400)},7000)});
+  // Payment and other one-shot forms: a second press does nothing, and the button says what's happening.
+  document.querySelectorAll('form[data-once]').forEach(function(f){
+    f.addEventListener('submit',function(e){
+      if(f.dataset.sent){e.preventDefault();return}
+      f.dataset.sent='1';
+      f.querySelectorAll('button').forEach(function(b){b.setAttribute('aria-disabled','true');b.classList.add('busy');
+        if(b.dataset.busy){b.textContent=b.dataset.busy}});
+    });
+  });
   window.addEventListener('pageshow',function(e){if(e.persisted)location.reload()});
   if('serviceWorker' in navigator)navigator.serviceWorker.register('{{ url_for("public.service_worker") }}').catch(function(){});
 })();

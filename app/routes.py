@@ -12,12 +12,12 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from . import mailer, payments
 from .db import get_db, iso, parse_iso, utcnow, write_txn
-from .services import (CATEGORIES, CATEGORY_NAMES, check_promo, MIN_DEPOSIT, MAX_DEPOSIT, create_deposit, deposit_room,
+from .services import (audit, entrant_count, CATEGORIES, CATEGORY_NAMES, check_promo, MIN_DEPOSIT, MAX_DEPOSIT, create_deposit, deposit_room,
                        fulfil_deposit, set_deposit_status, expire_stale_deposits, refundable_deposits, refund_deposits, MIN_WITHDRAWAL, REDEEM_BLOCK, TIERS, balances, claim_free_play, free_play_today,
                        redeem_points, tier_for, GAME_ICONS, GAME_NAMES, GAME_PRICES, GAME_TYPES, MAX_PICKS, game_info, reveal_ticket,
                        unplayed, PurchaseError, balance, checkout_summary, comp_state,
                        effective_limits, expire_checkout, fulfil_checkout, instant_board, is_excluded, is_new,
-                       line_price, parse_tiers, public_name, request_withdrawal, reserve_checkout, refuse_checkout, site_stats,
+                       line_price, parse_tiers, public_name, request_withdrawal, reserve_checkout, refuse_checkout, site_stats, start_break,
                        sold_count, spend_summary, taken_numbers, winner_details)
 
 bp = Blueprint("public", __name__)
@@ -382,8 +382,9 @@ def _basket_view(db):
         qty = len(ln["numbers"]) if ln["numbers"] else ln["qty"]
         gross, disc, net, p = line_price(c, qty)
         nxt = next(((q, pc) for q, pc in sorted(parse_tiers(c["discount_tiers"])) if q > qty), None)
+        clash = sorted(set(ln["numbers"]) & taken_numbers(db, c["id"])) if ln["numbers"] else []
         lines.append({"i": i, "c": c, "qty": qty, "numbers": ln["numbers"], "gross": gross, "disc": disc, "net": net,
-                      "pct": p, "open": comp_state(c) == "live", "next_tier": nxt})
+                      "pct": p, "open": comp_state(c) == "live", "next_tier": nxt, "clash": clash})
         total += net
         gross_total += gross
     return lines, total, gross_total
@@ -415,8 +416,10 @@ def _totals(db, total):
 def basket():
     db = get_db()
     lines, total, gross = _basket_view(db)
+    session["basket_idem"] = secrets.token_urlsafe(16)   # new key per view: a double-click shares it, a fresh visit doesn't
     return render_template("basket.html", lines=lines, total=total, gross=gross, t=_totals(db, total),
-                           closed=any(not ln["open"] for ln in lines))
+                           closed=any(not ln["open"] for ln in lines), clash=any(ln["clash"] for ln in lines),
+                           idem=session["basket_idem"])
 
 
 @bp.route("/basket/add", methods=["POST"])
@@ -450,6 +453,19 @@ def basket_add():
     if qty > c["max_per_user"]:
         flash(f"The limit is {c['max_per_user']} tickets per person.", "error")
         return redirect(back)
+    if nums:
+        gone = sorted(set(nums) & taken_numbers(db, c["id"]))
+        if gone:
+            flash(f"Sorry — {', '.join('#' + str(n) for n in gone[:10])} {'has' if len(gone) == 1 else 'have'} just been taken. "
+                  "Pick different numbers or use lucky dip.", "error")
+            return redirect(back)
+    if g.user:
+        have = entrant_count(db, c["id"], g.user["id"], g.user["email"])
+        if have + qty > c["max_per_user"]:
+            left = max(0, c["max_per_user"] - have)
+            flash(f"The limit is {c['max_per_user']} per person and you already have {have}"
+                  + (f" — you can add up to {left} more." if left else ", so you can't add any more."), "error")
+            return redirect(back)
     b = [ln for ln in _basket() if ln["comp_id"] != c["id"]]  # one line per competition
     if len(b) >= MAX_BASKET_LINES:
         flash("Your basket is full — check out first.", "error")
@@ -521,11 +537,15 @@ def checkout():
     db = get_db()
     lines = _basket()
     promo = request.form.get("promo") or session.get("promo", "")
+    idem = (request.form.get("idem") or "")[:64] or None
     try:
-        cid, cash = reserve_checkout(g.user, lines, promo, request.form.get("use_credit") == "1")
+        cid, cash, created = reserve_checkout(g.user, lines, promo, request.form.get("use_credit") == "1", idem)
     except (PurchaseError, ValueError) as e:
         flash(str(e), "error")
         return redirect(url_for("public.basket"))
+    if not created:                                  # second press of the same Pay button
+        return redirect(url_for("public.checkout_pay", cid=cid))
+    session.pop("basket_idem", None)
     session["held"] = {"cid": cid, "basket": lines, "promo": promo}   # restored if payment is cancelled
     session["basket"] = []
     session.pop("promo", None)
@@ -547,9 +567,10 @@ def checkout():
             _restore_basket(cid)
             flash("Payment provider unavailable — you have not been charged. Please try again.", "error")
             return redirect(url_for("public.basket"))
-        db.execute("UPDATE checkouts SET stripe_session_id=? WHERE id=?", (cs["id"], cid))
+        db.execute("UPDATE checkouts SET stripe_session_id=?, pay_url=? WHERE id=?", (cs["id"], cs["url"], cid))
         return redirect(cs["url"], code=303)
     if current_app.config["DEMO_PAYMENTS"]:
+        db.execute("UPDATE checkouts SET pay_url=? WHERE id=?", (url_for("public.demo_pay", cid=cid), cid))
         return redirect(url_for("public.demo_pay", cid=cid))
     expire_checkout(cid)
     _restore_basket(cid)
@@ -594,6 +615,18 @@ def _confirm_email(cid):
                 ("\n\nYour ticket numbers:" if chips else "") ,
                 highlight=chips or None, button=button, heading="You're in!",
                 preheader="Your entries are confirmed — good luck!")
+
+
+@bp.route("/checkout/<int:cid>/pay")
+@login_required
+def checkout_pay(cid):
+    """Where a repeated Pay press (or a refresh) lands: carry on with the one checkout already started."""
+    c = _own_checkout(cid)
+    if c["status"] != "pending" or c["cash_due"] == 0:
+        return redirect(url_for("public.checkout_done", cid=cid))
+    if c["pay_url"]:
+        return redirect(c["pay_url"], code=303)
+    return render_template("checkout_wait.html", c=c)       # payment page still being prepared
 
 
 @bp.route("/checkout/<int:cid>/demo-pay", methods=["GET", "POST"])
@@ -689,7 +722,7 @@ def stripe_webhook():
                 and obj.get("payment_status") == "paid":
             if _refuse_credit_card(int(cid), obj):
                 return "", 200
-            if fulfil_checkout(int(cid), obj.get("id")) == "paid":
+            if fulfil_checkout(int(cid), obj.get("id"), obj.get("amount_total")) == "paid":
                 _confirm_email(int(cid))
         elif event["type"] in ("checkout.session.expired", "checkout.session.async_payment_failed"):
             expire_checkout(int(cid))
@@ -917,6 +950,10 @@ def service_worker():
 
 # ---------------- accounts ----------------
 
+def _pw_version(db, uid):
+    return db.execute("SELECT password_hash FROM users WHERE id=?", (uid,)).fetchone()[0][-16:]
+
+
 def _age(dob):
     t = date.today()
     return t.year - dob.year - ((t.month, t.day) < (dob.month, dob.day))
@@ -935,6 +972,10 @@ def signup():
         f = request.form
         email, name, pw = f.get("email", "").strip().lower(), " ".join(f.get("name", "").split()), f.get("password", "")
         error = None
+        key = "signup:" + (request.remote_addr or "?")
+        if _too_many(key, limit=10, window=3600):
+            flash("Too many sign-ups from this connection — please try again in an hour.", "error")
+            return render_template("signup.html", form=f), 429
         try:
             dob = date.fromisoformat(f.get("dob", ""))
         except ValueError:
@@ -962,9 +1003,11 @@ def signup():
             (email, name, generate_password_hash(pw), dob.isoformat(), 0, secrets.token_hex(4).upper(),
              ref["id"] if ref else None, 1 if f.get("marketing") else 0, iso(utcnow()),
              "".join(ch for ch in f.get("phone", "") if ch.isdigit() or ch == "+")[:20] or None))
+        _fail(key)
         session.clear()
         session.permanent = True
         session["uid"] = cur.lastrowid
+        session["pwv"] = _pw_version(db, cur.lastrowid)
         send_verification(db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone())
         flash("Welcome! We've emailed you a link to confirm your email address.")
         return redirect(safe_next(request.args.get("next")))
@@ -989,6 +1032,7 @@ def login():
             session.clear()
             session.permanent = True
             session["uid"] = u["id"]
+            session["pwv"] = u["password_hash"][-16:]
             session["basket"] = basket_keep
             return redirect(safe_next(request.args.get("next")))
         flash("Wrong email or password.", "error")
@@ -1005,7 +1049,12 @@ def logout():
 def forgot():
     if request.method == "POST":
         db = get_db()
-        u = db.execute("SELECT * FROM users WHERE email=?", (request.form.get("email", "").strip().lower(),)).fetchone()
+        email = request.form.get("email", "").strip().lower()
+        keys = ("reset-ip:" + (request.remote_addr or "?"), "reset-em:" + email)
+        limited = _too_many(keys[0], limit=10, window=3600) or _too_many(keys[1], limit=3, window=3600)
+        for k in keys:
+            _fail(k)
+        u = None if limited else db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
         if u:
             token = secrets.token_urlsafe(32)
             db.execute("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES (?,?,?)",
@@ -1035,6 +1084,8 @@ def reset(token):
         else:
             db.execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(pw), r["user_id"]))
             db.execute("DELETE FROM password_resets WHERE user_id=?", (r["user_id"],))
+            audit(db, "account.password_reset", f"user:{r['user_id']}", "Password reset by email link; all devices signed out",
+                  actor=False)
             flash("Password updated — log in with your new password.")
             return redirect(url_for("public.login"))
     return render_template("reset.html")
@@ -1162,16 +1213,25 @@ def set_limits():
             raised = True
         elif nv != old:
             sets.append((col, nv))
-    db = get_db()
-    for col, v in sets:
-        db.execute(f"UPDATE users SET {col}=? WHERE id=?", (v, g.user["id"]))
+    with write_txn() as db:
+        u = db.execute("SELECT * FROM users WHERE id=?", (g.user["id"],)).fetchone()
+        for col, v in sets:
+            db.execute(f"UPDATE users SET {col}=? WHERE id=?", (v, g.user["id"]))
+        new_pending = (pend.get("pending_limit"), pend.get("pending_daily"), pend.get("pending_weekly"))
+        old_pending = (u["pending_limit"], u["pending_daily"], u["pending_weekly"])
+        if not raised:
+            # Anything waiting to go up is cancelled: the limits just submitted are the ones that apply.
+            db.execute("UPDATE users SET pending_limit=NULL, pending_daily=NULL, pending_weekly=NULL, pending_limit_at=NULL "
+                       "WHERE id=?", (g.user["id"],))
+        elif new_pending != old_pending or not u["pending_limit_at"]:
+            db.execute("UPDATE users SET pending_limit=?, pending_daily=?, pending_weekly=?, pending_limit_at=? WHERE id=?",
+                       (*new_pending, iso(utcnow() + timedelta(hours=72)), g.user["id"]))
+        audit(db, "safer.limits", f"user:{g.user['id']}", f"Requested {new}; applied now {dict(sets)}; "
+              f"waiting 72h {pend or 'nothing'}")
     if raised:
-        db.execute("UPDATE users SET pending_limit=?, pending_daily=?, pending_weekly=?, pending_limit_at=? WHERE id=?",
-                   (pend.get("pending_limit"), pend.get("pending_daily"), pend.get("pending_weekly"),
-                    iso(utcnow() + timedelta(hours=72)), g.user["id"]))
         flash("Lower limits apply now. Any increase takes 72 hours to start.")
     else:
-        flash("Limits updated.")
+        flash("Limits updated. They apply straight away.")
     return redirect(url_for("public.account", tab="settings"))
 
 
@@ -1181,8 +1241,9 @@ def self_exclude():
     days = {"1": 1, "7": 7, "30": 30, "90": 90, "180": 180, "365": 365}.get(request.form.get("days"))
     if not days:
         abort(400)
-    get_db().execute("UPDATE users SET excluded_until=? WHERE id=?", (iso(utcnow() + timedelta(days=days)), g.user["id"]))
+    start_break(g.user, days)
     session["basket"] = []
+    session.pop("held", None)
     flash(f"You're on a break for {days} day{'s' if days > 1 else ''}. You won't be able to buy tickets until then.")
     return redirect(url_for("public.account", tab="settings"))
 
@@ -1215,7 +1276,10 @@ def profile():
         if len(f["new_password"]) < 10:
             flash("Use a password of at least 10 characters.", "error")
             return redirect(url_for("public.account", tab="settings"))
-        db.execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(f["new_password"]), g.user["id"]))
+        new_hash = generate_password_hash(f["new_password"])
+        db.execute("UPDATE users SET password_hash=? WHERE id=?", (new_hash, g.user["id"]))
+        session["pwv"] = new_hash[-16:]          # this device stays logged in; every other one is signed out
+        audit(db, "account.password_changed", f"user:{g.user['id']}", "Changed password from account settings")
     phone = "".join(ch for ch in f.get("phone", "") if ch.isdigit() or ch == "+")[:20] or None
     db.execute("UPDATE users SET marketing=?, phone=? WHERE id=?", (1 if f.get("marketing") else 0, phone, g.user["id"]))
     flash("Saved.")

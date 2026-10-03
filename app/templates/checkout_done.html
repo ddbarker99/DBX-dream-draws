@@ -6,8 +6,11 @@
 <div style="max-width:760px;margin:0 auto">
 {% if c.status == 'paid' %}
   {% set step = 4 %}{% include "_progress.html" %}
-  <h1>You're in!</h1>
-  <p class="muted">Order #{{ c.id }} is confirmed and we've emailed you a copy. Good luck!</p>
+  <div class="confirm-head" role="status">
+    <span class="tick" aria-hidden="true">✓</span>
+    <div><h1>Your entries are confirmed</h1>
+    <p class="muted">Order reference <b>#{{ c.id }}</b> · {{ c.paid_at|uktime }}. We've emailed a copy to {{ user.email }}.</p></div>
+  </div>
   {% if wins %}
   <div class="bigwin" role="status" style="margin-bottom:var(--s4)">
     <h2>You've won instantly!</h2>
@@ -17,29 +20,48 @@
   {% endif %}
   {% for l in lines %}
   <section class="panel">
-    <div class="row"><h2 style="font-size:18px;margin:0"><a href="{{ url_for('public.competition', slug=l.slug) }}">{{ l.title }}</a></h2><span class="muted small">{{ l.tickets|length }} {{ 'play' if l.game else 'ticket' }}{{ 's' if l.tickets|length != 1 }}</span></div>
+    <div class="row"><h2 style="font-size:18px;margin:0"><a href="{{ url_for('public.competition', slug=l.slug) }}">{{ l.title }}</a></h2><span class="num">{{ l.amount|gbp }}</span></div>
     {% if l.game %}
-    <p class="muted small">Your plays are ready to reveal.</p>
-    <a class="btn" href="{{ url_for('public.play', slug=l.slug) }}">Play now</a>
+    <p class="muted small">{{ l.tickets|length }} play{{ 's' if l.tickets|length != 1 }} ready to reveal. Results are already decided — revealing just shows you.</p>
+    <a class="btn" href="{{ url_for('public.play', slug=l.slug) }}">Reveal my plays</a>
     {% else %}
+    <p class="muted small" style="margin:4px 0 var(--s3)">{{ l.tickets|length }} ticket{{ 's' if l.tickets|length != 1 }} · Draw {{ 'on' if l.auto_draw else 'live after' }} {{ l.ends_at|uktime }}</p>
+    <p class="small" style="margin:0 0 var(--s2)"><b>Your ticket numbers</b></p>
     <div class="reveal">{% for t in l.tickets %}<div class="{{ 'win' if t.win }}" style="animation-delay:{{ ([loop.index0, 25]|min * 0.05)|round(2) }}s">#{{ t.number }}{% if t.win %}<small>Won: {{ t.win }}</small>{% endif %}</div>{% endfor %}</div>
     {% endif %}
   </section>
   {% endfor %}
-  <div class="actions" style="margin-top:var(--s5)"><a class="btn" href="{{ url_for('public.competitions') }}">Enter another competition</a><a class="btn ghost" href="{{ url_for('public.account', tab='entries') }}">View my entries</a></div>
-{% elif c.status in ('credit_refused', 'needs_refund') %}
+  <section class="panel">
+    <div class="sumrow"><span class="muted">Entries</span><span>{{ c.subtotal|gbp }}</span></div>
+    {% if c.promo_discount %}<div class="sumrow"><span class="muted">Promo code</span><span class="pos">−{{ c.promo_discount|gbp }}</span></div>{% endif %}
+    {% if c.credit_used %}<div class="sumrow"><span class="muted">Site credit</span><span>−{{ c.credit_used|gbp }}</span></div>{% endif %}
+    {% if c.deposit_used %}<div class="sumrow"><span class="muted">Deposited funds</span><span>−{{ c.deposit_used|gbp }}</span></div>{% endif %}
+    {% if c.cash_used %}<div class="sumrow"><span class="muted">Cash balance</span><span>−{{ c.cash_used|gbp }}</span></div>{% endif %}
+    <div class="sumrow big"><span>Paid by card</span><span>{{ c.cash_due|gbp }}</span></div>
+  </section>
+  <p class="small muted">You can find these entries any time under <a href="{{ url_for('public.account', tab='entries') }}">My account → My entries</a>.</p>
+  <div class="actions" style="margin-top:var(--s4)"><a class="btn" href="{{ url_for('public.account', tab='entries') }}">View my entries</a><a class="btn ghost" href="{{ url_for('public.competitions') }}">More competitions</a></div>
+{% elif c.status == 'needs_refund' %}
+  <div class="panel center" role="alert">
+    <p style="font-size:44px;margin:0" aria-hidden="true">↩️</p>
+    <h1>We couldn't complete this order</h1>
+    <p class="muted">Your payment arrived after the reservation ended, or something in the order changed while you were paying (for example, a competition closed). <b>No tickets were issued and you'll be refunded in full</b> — we've been notified automatically.</p>
+    <p class="small muted">Order reference #{{ c.id }}. Questions? <a href="{{ url_for('public.contact') }}">Contact us</a> and quote this reference.</p>
+    <a class="btn" href="{{ url_for('public.competitions') }}">Browse competitions</a>
+  </div>
+{% elif c.status == 'credit_refused' %}
   <div class="panel center">
     <p style="font-size:44px;margin:0" aria-hidden="true">💳</p>
     <h1>Credit cards aren't accepted</h1>
     <p class="muted">For competition entries we can only take <b>debit cards</b>, Apple Pay or Google Pay linked to a debit card, or Pay by Bank.</p>
-    <p>{% if c.status == 'credit_refused' %}Your payment has been <b>refunded in full</b> — it can take 5–10 working days to appear.{% else %}We'll refund your payment in full shortly.{% endif %} No tickets were issued.</p>
+    <p>Your payment has been <b>refunded in full</b> — it can take 5–10 working days to appear. No tickets were issued.</p>
     <a class="btn" href="{{ url_for('public.competitions') }}">Try again with a debit card</a>
   </div>
 {% elif c.status == 'pending' %}
   {% set step = 3 %}{% include "_progress.html" %}
-  <div class="panel center" role="status"><h1>Confirming your payment…</h1><p class="muted">This usually takes a few seconds and the page refreshes by itself.</p></div>
+  <div class="panel center" role="status"><h1>Confirming your payment…</h1><p class="muted">We're waiting for the payment provider to confirm. This usually takes a few seconds and the page refreshes by itself — please don't pay again. Your entries will show here (and in your account) only once payment is confirmed.</p></div>
 {% else %}
-  <div class="panel center"><h1>Payment not completed</h1><p class="muted">You haven't been charged.</p><a class="btn" href="{{ url_for('public.basket') }}">Back to basket</a></div>
+  <div class="panel center" role="alert"><h1>Your reservation has ended</h1><p class="muted">The payment wasn't completed within 30 minutes, so the numbers were released. <b>You haven't been charged.</b> Your basket is kept — check out again to reserve new numbers.</p><a class="btn" href="{{ url_for('public.basket') }}">Back to my basket</a></div>
 {% endif %}
 </div>
 {% endblock %}

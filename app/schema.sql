@@ -166,3 +166,48 @@ CREATE TABLE IF NOT EXISTS deposits (
     paid_at           TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_deposits_user ON deposits(user_id, status);
+
+-- v8: integrity. A permanent snapshot of every draw, and an append-only log of sensitive actions.
+-- Triggers stop either being edited afterwards, and stop a drawn competition's result changing.
+CREATE TABLE IF NOT EXISTS draws (
+    id                INTEGER PRIMARY KEY,
+    competition_id    INTEGER NOT NULL,
+    drawn_at          TEXT NOT NULL,
+    method            TEXT NOT NULL,              -- 'automatic' | 'manual'
+    run_by            INTEGER,                    -- admin user id for manual draws
+    seed              TEXT NOT NULL,
+    seed_hash         TEXT NOT NULL,
+    entries_hash      TEXT NOT NULL,
+    entry_count       INTEGER NOT NULL,
+    winning_index     INTEGER NOT NULL,
+    winning_number    INTEGER NOT NULL,
+    winning_ticket_id INTEGER NOT NULL,
+    entries           TEXT NOT NULL               -- JSON list of every eligible ticket number, sorted
+);
+CREATE INDEX IF NOT EXISTS ix_draws_comp ON draws(competition_id);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          INTEGER PRIMARY KEY,
+    created_at  TEXT NOT NULL,
+    actor_id    INTEGER,                          -- NULL = the system (automatic draw, webhook, ...)
+    actor_email TEXT,
+    action      TEXT NOT NULL,
+    target      TEXT,
+    detail      TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_audit_target ON audit_log(target);
+
+CREATE TRIGGER IF NOT EXISTS draws_no_update BEFORE UPDATE ON draws
+BEGIN SELECT RAISE(ABORT, 'Draw records are permanent.'); END;
+
+CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'The audit log is append-only.'); END;
+
+CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'The audit log is append-only.'); END;
+
+CREATE TRIGGER IF NOT EXISTS comp_result_locked BEFORE UPDATE ON competitions
+WHEN OLD.status = 'drawn' AND (NEW.status IS NOT OLD.status OR NEW.winner_ticket_id IS NOT OLD.winner_ticket_id
+     OR NEW.entries_hash IS NOT OLD.entries_hash OR NEW.drawn_at IS NOT OLD.drawn_at OR NEW.seed IS NOT OLD.seed
+     OR NEW.ends_at IS NOT OLD.ends_at)
+BEGIN SELECT RAISE(ABORT, 'Draw results are permanent.'); END;

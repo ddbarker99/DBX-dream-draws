@@ -1,26 +1,53 @@
 {% extends "base.html" %}
 {% block title %}Free postal entry · {{ config.SITE_NAME }}{% endblock %}
-{% block desc %}Enter any {{ config.SITE_NAME }} competition free by post, with exactly the same chance of winning as a paid entry.{% endblock %}
+{% block desc %}Enter any {{ config.SITE_NAME }} competition or instant win game free by post, with exactly the same chance of winning as a paid entry.{% endblock %}
 {% block content %}
 <div class="prose">
 <h1>Free postal entry</h1>
-<p>You can enter any of our competitions for free. Postal entries go into the draw — and can win instant prizes — on exactly the same basis as paid entries.</p>
-<h2>How to enter</h2>
-<ol>
-  <li>On a postcard or in a letter, write: the <strong>competition name</strong>, your <strong>answer</strong> to the question, your <strong>full name</strong>, <strong>address</strong>, <strong>email</strong>, <strong>phone number</strong> and <strong>date of birth</strong>.</li>
-  <li>Post it, first or second class, to:<br>
-    {% if config.POSTAL_ADDRESS %}<strong>{{ config.POSTAL_ADDRESS }}</strong>
-    {% else %}<strong>our postal entry address</strong> — {% if config.SUPPORT_EMAIL %}email <a href="mailto:{{ config.SUPPORT_EMAIL }}">{{ config.SUPPORT_EMAIL }}</a>{% else %}<a href="{{ url_for('public.contact') }}">contact us</a>{% endif %} and we'll send it to you straight away.{% endif %}</li>
-  <li>One entry per envelope. It must arrive before the competition closes.</li>
-</ol>
-<p>We'll email you your ticket number once your entry has been added. Postal and online entries count together towards the per-person limit, and the same eligibility rules apply: UK residents aged 18 or over.</p>
-<h2>Things to know</h2>
-<ul>
-  <li>Ordinary first- or second-class post is all you need — you don't need recorded or tracked delivery.</li>
-  <li>Each competition's question is shown on its page. Answer it on your entry.</li>
-  <li>Incomplete, illegible, late or duplicated entries can't be accepted. Proof of posting isn't proof of receipt.</li>
-  <li>Free entries go into the same draw as paid entries and can win instant prizes on exactly the same basis.</li>
+<p class="lead">You can enter any {{ config.SITE_NAME }} prize draw or instant win game <strong>free by post</strong>. A valid postal entry goes into the same draw, and can win instant prizes, on exactly the same basis as a paid entry.</p>
+
+<h2>1. Write your entry</h2>
+<p>On a postcard, or a letter in an envelope, write clearly:</p>
+<ul class="checklist">
+  <li>the <strong>name of the competition</strong> you're entering (exactly as shown on its page)</li>
+  <li>your <strong>answer</strong> to that competition's question</li>
+  <li>your <strong>full name</strong> and <strong>postal address</strong></li>
+  <li>your <strong>email address</strong> — use the one on your {{ config.SITE_NAME }} account if you have one</li>
+  <li>your <strong>phone number</strong> and <strong>date of birth</strong></li>
 </ul>
+
+<h2>2. Post it</h2>
+<p>Send it by ordinary first- or second-class post — you don't need recorded or tracked delivery — to:</p>
+<p class="address">{% if config.POSTAL_ADDRESS %}{{ config.POSTAL_ADDRESS }}{% else %}Our postal entry address — {% if config.SUPPORT_EMAIL %}email <a href="mailto:{{ config.SUPPORT_EMAIL }}">{{ config.SUPPORT_EMAIL }}</a>{% else %}<a href="{{ url_for('public.contact') }}">contact us</a>{% endif %} and we'll send it to you straight away.{% endif %}</p>
+
+<h2>3. Deadline</h2>
+<p>Your entry must <strong>arrive before the competition's closing time</strong>, shown on its page. An entry that arrives on the closing day counts as on time. Allow a few days for the post — proof of posting isn't proof that we received it.</p>
+
+<h2>What happens next</h2>
+<ul>
+  <li>We record every envelope we open, with the date it arrived and the outcome.</li>
+  <li>If it's valid, we allocate a ticket number at random and <strong>email it to you</strong>.</li>
+  <li>If your email matches a {{ config.SITE_NAME }} account, the entry appears in <em>My account → My entries</em>, and any cash or site-credit instant prize goes straight to that wallet (for instant win games, when you reveal your play). You don't need an account to enter by post — without one, we contact you about any prize.</li>
+</ul>
+
+<h2>Limits</h2>
+<ul>
+  <li><strong>One entry per envelope.</strong> You can send more than one envelope.</li>
+  <li>Postal and online entries <strong>count together</strong> towards each competition's per-person limit, shown on its page.</li>
+  <li>The daily free game is already free, so it doesn't take postal entries.</li>
+</ul>
+
+<h2>When an entry can't be accepted</h2>
+<p>We'll record the envelope but can't issue a ticket if:</p>
+<ul>
+  <li>it arrives after the competition has closed;</li>
+  <li>the answer to the question is wrong or missing;</li>
+  <li>the entrant is under 18 or doesn't live in the UK;</li>
+  <li>the entrant has already reached the per-person limit;</li>
+  <li>the competition has sold out before it arrives; or</li>
+  <li>it's incomplete or illegible, so we can't tell which competition it's for or who sent it.</li>
+</ul>
+
 <p>Full details are in section 4 of our <a href="{{ url_for('public.page', page='terms') }}#free-entry">terms and conditions</a>.</p>
 {% if user and user.is_admin and not config.POSTAL_ADDRESS %}<p class="notice warn"><span><b>Admin only:</b> set POSTAL_ADDRESS in your .env so the address shows here.</span></p>{% endif %}
 </div>

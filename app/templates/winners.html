@@ -27,12 +27,12 @@
   <div class="grid">
   {% for it in items %}
     <a class="card" href="{{ url_for('public.competition', slug=it.c.slug) }}">
-      <div class="thumb">{% if it.c.winner_photo %}<img src="{{ url_for('public.uploads', name=it.c.winner_photo) }}" alt="{{ it.name }} with their prize" loading="lazy">{% elif it.c.image %}<img src="{{ url_for('public.uploads', name=it.c.image) }}" alt="" loading="lazy">{% else %}<span aria-hidden="true">🏆</span>{% endif %}
+      <div class="thumb">{% if it.c.winner_photo and it.c.winner_consent_at %}<img src="{{ url_for('public.uploads', name=it.c.winner_photo) }}" alt="{{ it.name }} with their prize" loading="lazy">{% elif it.c.image %}<img src="{{ url_for('public.uploads', name=it.c.image) }}" alt="" loading="lazy">{% else %}<span aria-hidden="true">🏆</span>{% endif %}
         <div class="badges"><span class="pill drawn">Drawn {{ it.c.drawn_at|uktime('%d %b %Y') }}</span></div></div>
       <div class="body">
         <h3>{{ it.c.title }}</h3>
         <div class="meta-line"><b style="color:#fff">{{ it.name }}</b><span>Ticket #{{ it.number }}</span></div>
-        {% if it.c.winner_quote %}<p class="small muted" style="margin:0">“{{ it.c.winner_quote }}”</p>{% endif %}
+        {% if it.c.winner_quote and it.c.winner_consent_at %}<p class="small muted" style="margin:0">“{{ it.c.winner_quote }}”</p>{% endif %}
       </div>
     </a>
   {% endfor %}

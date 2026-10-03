@@ -7,7 +7,7 @@ import random
 import secrets
 from datetime import timedelta
 
-from flask import current_app
+from flask import current_app, g, has_request_context
 
 from zoneinfo import ZoneInfo
 
@@ -30,6 +30,17 @@ CATEGORY_NAMES = dict(CATEGORIES)
 
 class PurchaseError(Exception):
     pass
+
+
+# ---------------- audit log ----------------
+
+def audit(db, action, target=None, detail="", actor=None):
+    """Append a row to the permanent audit log. actor defaults to the logged-in user (None = the system)."""
+    if actor is None and has_request_context() and g.get("user") is not None:
+        actor = g.user
+    db.execute("INSERT INTO audit_log (created_at, actor_id, actor_email, action, target, detail) VALUES (?,?,?,?,?,?)",
+               (iso(utcnow()), actor["id"] if actor else None, actor["email"] if actor else None, action, target,
+                str(detail)[:2000]))
 
 
 # ---------------- provably fair maths ----------------
@@ -144,11 +155,15 @@ def prize_kind(prize):
     return "credit" if prize["credit_amount"] else "physical"
 
 
-def pay_prize(db, user_id, prize):
+def pay_prize(db, user_id, prize, comp_title=None):
     kind = prize_kind(prize)
     if kind in ("cash", "credit") and prize["credit_amount"]:
-        label = "Instant cash win" if kind == "cash" else "Instant win"
-        add_credit(db, user_id, prize["credit_amount"], f"{label}: {prize['title']}", f"ip{prize['id']}", kind=kind)
+        if comp_title is None:
+            r = db.execute("SELECT title FROM competitions WHERE id=?", (prize["competition_id"],)).fetchone()
+            comp_title = r["title"] if r else ""
+        label = "Cash prize" if kind == "cash" else "Site credit prize"
+        add_credit(db, user_id, prize["credit_amount"], f"{label}: {prize['title']}" + (f" — {comp_title}" if comp_title else ""),
+                   f"ip{prize['id']}", kind=kind)
         return True
     return False
 
@@ -186,6 +201,8 @@ def request_withdrawal(user, amount, details):
                           vals["account_number"], vals["paypal_email"]))
         add_credit(db, user["id"], -amount, "Withdrawal to " + ("bank" if method == "bank" else "PayPal"),
                    f"w{cur.lastrowid}", kind="cash")
+        audit(db, "withdrawal.requested", f"user:{user['id']}", f"Withdrawal #{cur.lastrowid} of {amount}p by {method}",
+              actor=user)
         return cur.lastrowid
 
 
@@ -196,6 +213,8 @@ def settle_withdrawal(wid, paid, note=""):
             raise PurchaseError("Already handled.")
         db.execute("UPDATE withdrawals SET status=?, note=?, done_at=? WHERE id=?",
                    ("paid" if paid else "rejected", note, iso(utcnow()), wid))
+        audit(db, "withdrawal.paid" if paid else "withdrawal.rejected", f"user:{w['user_id']}",
+              f"Withdrawal #{wid} of {w['amount']}p" + (f" — {note}" if note else ""))
         # once handled, keep only the last 4 digits of bank details
         if w["account_number"]:
             db.execute("UPDATE withdrawals SET account_number=?, sort_code=? WHERE id=?",
@@ -248,6 +267,17 @@ def spend_summary(db, user_id):
             "monthly": spend_since(db, user_id, day.replace(day=1))}
 
 
+def start_break(user, days):
+    """Take a break: blocks every paid route, and releases any checkout or deposit already in progress
+    so it can't be completed during the break (a late payment is flagged and refunded)."""
+    with write_txn() as db:
+        db.execute("UPDATE users SET excluded_until=? WHERE id=?", (iso(utcnow() + timedelta(days=days)), user["id"]))
+        for r in db.execute("SELECT id FROM checkouts WHERE user_id=? AND status='pending'", (user["id"],)).fetchall():
+            _expire_checkout_db(db, r["id"])
+        db.execute("UPDATE deposits SET status='expired' WHERE user_id=? AND status='pending'", (user["id"],))
+        audit(db, "safer.break", f"user:{user['id']}", f"Took a {days}-day break", actor=user)
+
+
 def is_excluded(user):
     return bool(user["excluded_until"]) and parse_iso(user["excluded_until"]) > utcnow()
 
@@ -260,8 +290,11 @@ def check_promo(db, code, user_id, subtotal):
         raise PurchaseError("That promo code isn't valid.")
     if p["expires_at"] and parse_iso(p["expires_at"]) < utcnow():
         raise PurchaseError("That promo code has expired.")
-    if p["max_uses"] is not None and p["uses"] >= p["max_uses"]:
-        raise PurchaseError("That promo code has been fully used.")
+    if p["max_uses"] is not None:
+        in_use = db.execute("SELECT COUNT(*) FROM checkouts WHERE promo_id=? AND status IN ('paid','pending')",
+                            (p["id"],)).fetchone()[0]
+        if max(p["uses"], in_use) >= p["max_uses"]:
+            raise PurchaseError("That promo code has been fully used.")
     if subtotal < p["min_spend"]:
         raise PurchaseError(f"That code needs a minimum spend of £{p['min_spend']/100:.2f}.")
     used = db.execute("SELECT COUNT(*) FROM checkouts WHERE user_id=? AND promo_id=? AND status IN ('paid','pending')",
@@ -322,7 +355,8 @@ def _allocate(db, comp, qty, picks):
             raise PurchaseError(f"Ticket #{bad[0]} doesn't exist in {comp['title']}.")
         clash = [n for n in picks if n in taken]
         if clash:
-            raise PurchaseError(f"Ticket #{clash[0]} in {comp['title']} was just taken — please pick another.")
+            raise PurchaseError(f"Ticket #{clash[0]} in {comp['title']} has just been taken by someone else — "
+                                "remove it from your basket and pick another number.")
         return picks
     free = comp["max_tickets"] - len(taken)
     if qty > free:
@@ -338,15 +372,26 @@ def _allocate(db, comp, qty, picks):
     return sorted(out)
 
 
-def reserve_checkout(user, lines, promo_code="", use_credit=False):
-    """lines: [{'comp_id', 'qty', 'numbers': [..] or [], 'answer'}]. Atomic: either
-    everything is held or nothing is. Returns (checkout_id, cash_due)."""
+def reserve_checkout(user, lines, promo_code="", use_credit=False, idem_key=None):
+    """lines: [{'comp_id', 'qty', 'numbers': [..] or [], 'answer'}]. Atomic: either everything is held or
+    nothing is. idem_key: one per basket view, so pressing Pay twice can't create two checkouts.
+    Returns (checkout_id, cash_due, created) — created is False if idem_key was already used."""
+    if idem_key:
+        r = get_db().execute("SELECT id, cash_due FROM checkouts WHERE user_id=? AND idem_key=?",
+                             (user["id"], idem_key)).fetchone()
+        if r:
+            return r["id"], r["cash_due"], False
     if not lines:
         raise PurchaseError("Your basket is empty.")
     if is_excluded(user):
         raise PurchaseError("Your account is on a break, so you can't enter right now.")
     limits = effective_limits(user)
     with write_txn() as db:
+        if idem_key:   # checked again inside the lock: the second click waits here, then finds the first
+            r = db.execute("SELECT id, cash_due FROM checkouts WHERE user_id=? AND idem_key=?",
+                           (user["id"], idem_key)).fetchone()
+            if r:
+                return r["id"], r["cash_due"], False
         cleanup_expired(db)
         now = iso(utcnow())
         orders, subtotal = [], 0
@@ -362,7 +407,7 @@ def reserve_checkout(user, lines, promo_code="", use_credit=False):
             qty = len(picks) if picks else int(ln["qty"])
             if qty < 1:
                 raise PurchaseError("Choose at least one ticket.")
-            mine = user_ticket_count(db, comp["id"], user["id"])
+            mine = entrant_count(db, comp["id"], user["id"], user["email"])
             if mine + qty > comp["max_per_user"]:
                 raise PurchaseError(f"{comp['title']}: the limit is {comp['max_per_user']} tickets per person — you have {mine}.")
             numbers = _allocate(db, comp, qty, picks)
@@ -396,9 +441,9 @@ def reserve_checkout(user, lines, promo_code="", use_credit=False):
                                     f"(£{spent[period]/100:.2f} spent). You can review limits on your account page.")
 
         cur = db.execute(
-            "INSERT INTO checkouts (user_id, subtotal, promo_id, promo_discount, credit_used, cash_used, deposit_used, cash_due, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            (user["id"], subtotal, promo["id"] if promo else None, promo_disc, credit, cash_used, dep_used, cash, now))
+            "INSERT INTO checkouts (user_id, subtotal, promo_id, promo_discount, credit_used, cash_used, deposit_used, cash_due, "
+            "created_at, idem_key) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (user["id"], subtotal, promo["id"] if promo else None, promo_disc, credit, cash_used, dep_used, cash, now, idem_key))
         cid = cur.lastrowid
         db.execute(f"UPDATE orders SET checkout_id=? WHERE id IN ({','.join('?' * len(orders))})", [cid, *orders])
         if credit:
@@ -407,15 +452,33 @@ def reserve_checkout(user, lines, promo_code="", use_credit=False):
             add_credit(db, user["id"], -cash_used, "Cash balance used at checkout", f"c{cid}", kind="cash")
         if dep_used:
             add_credit(db, user["id"], -dep_used, "Deposited funds used at checkout", f"c{cid}", kind="deposit")
-        return cid, cash
+        return cid, cash, True
 
 
-def fulfil_checkout(cid, stripe_session_id=None):
+def fulfil_checkout(cid, stripe_session_id=None, amount_paid=None):
     """Payment confirmed: issue tickets, pay instant wins, referral bonus.
-    Idempotent — Stripe may send the same webhook more than once."""
+    Idempotent — Stripe may send the same webhook more than once. amount_paid (pence, from the payment
+    provider) must match what we asked for, or nothing is issued and the payment is flagged for a refund."""
     with write_txn() as db:
         c = db.execute("SELECT * FROM checkouts WHERE id=?", (cid,)).fetchone()
         if c is None:
+            return None
+        if c["status"] == "pending" and amount_paid is not None and amount_paid != c["cash_due"]:
+            _expire_checkout_db(db, cid)
+            db.execute("UPDATE checkouts SET status='needs_refund', stripe_session_id=COALESCE(?, stripe_session_id) WHERE id=?",
+                       (stripe_session_id, cid))
+            audit(db, "checkout.amount_mismatch", f"checkout:{cid}", f"Expected {c['cash_due']}p, provider reported {amount_paid}p",
+                  actor=False)
+            current_app.logger.error("Checkout %s amount mismatch: expected %s got %s", cid, c["cash_due"], amount_paid)
+            return None
+        if c["status"] == "pending" and db.execute(
+                "SELECT 1 FROM orders o JOIN competitions k ON k.id=o.competition_id WHERE o.checkout_id=? "
+                "AND k.status NOT IN ('live','drawn')", (cid,)).fetchone():
+            # A competition in this basket was cancelled while the customer was paying.
+            _expire_checkout_db(db, cid)
+            db.execute("UPDATE checkouts SET status='needs_refund', stripe_session_id=COALESCE(?, stripe_session_id) WHERE id=?",
+                       (stripe_session_id, cid))
+            audit(db, "checkout.comp_closed", f"checkout:{cid}", "Paid after a competition in the basket was cancelled", actor=False)
             return None
         if c["status"] == "expired":
             # Paid after we released the tickets (very late webhook) — flag for a refund.
@@ -457,7 +520,7 @@ def fulfil_checkout(cid, stripe_session_id=None):
 
 def checkout_summary(db, cid):
     rows = db.execute(
-        "SELECT o.id, o.quantity, o.amount, c.title, c.slug, c.id AS comp_id, c.game_type FROM orders o "
+        "SELECT o.id, o.quantity, o.amount, c.title, c.slug, c.id AS comp_id, c.game_type, c.ends_at, c.auto_draw FROM orders o "
         "JOIN competitions c ON c.id=o.competition_id WHERE o.checkout_id=?", (cid,)).fetchall()
     out = []
     for r in rows:
@@ -465,31 +528,84 @@ def checkout_summary(db, cid):
                           "LEFT JOIN instant_prizes ip ON ip.ticket_id=t.id WHERE t.order_id=? ORDER BY t.number",
                           (r["game_type"], r["id"])).fetchall()
         out.append({"title": r["title"], "slug": r["slug"], "amount": r["amount"], "tickets": nums,
-                    "game": r["game_type"]})
+                    "game": r["game_type"], "ends_at": r["ends_at"], "auto_draw": r["auto_draw"], "qty": r["quantity"]})
     return out
 
 
 # ---------------- postal entries ----------------
 
-def add_postal_entry(comp_id, name, email, address, answer_correct, admin_id):
+def entrant_count(db, comp_id, user_id=None, email=None):
+    """Entries one person holds in a competition: paid and postal tickets on their account, plus accepted
+    postal entries sent with their email address that aren't matched to an account."""
+    n = 0
+    if user_id:
+        n += user_ticket_count(db, comp_id, user_id)
+    if email:
+        n += db.execute("SELECT COUNT(*) FROM postal_entries WHERE competition_id=? AND status='accepted' "
+                        "AND user_id IS NULL AND email=? COLLATE NOCASE", (comp_id, email)).fetchone()[0]
+    return n
+
+
+def _age_on(dob, day):
+    return day.year - dob.year - ((day.month, day.day) < (dob.month, dob.day))
+
+
+def add_postal_entry(comp_id, name, email, address, answer_correct, admin_id, received_at=None, dob=None, phone=None):
+    """Record one envelope. Every envelope is kept with its outcome so none is forgotten.
+    received_at: ISO UTC timestamp of the day it arrived (defaults to now). dob: date or None.
+    Returns (entry_id, ticket_number or None, reject_reason or None)."""
+    from datetime import date as _date
+    received = received_at or iso(utcnow())
+    email = (email or "").strip().lower()
     with write_txn() as db:
         cleanup_expired(db)
         comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
         if comp is None or comp["status"] != "live":
-            raise PurchaseError("Competition isn't accepting entries.")
+            raise PurchaseError("This competition isn't accepting entries (it's a draft, drawn or cancelled).")
+        if comp["free_daily"]:
+            raise PurchaseError("The daily free game is already free — it doesn't take postal entries.")
+        if parse_iso(received) > utcnow():
+            raise PurchaseError("The received date can't be in the future.")
+        user = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone() if email else None
+        reason = None
+        if parse_iso(received) > parse_iso(comp["ends_at"]):
+            reason = "Arrived after the competition closed"
+        elif not answer_correct:
+            reason = "Wrong answer"
+        elif dob is not None and _age_on(dob, _date.today()) < 18:
+            reason = "Under 18"
+        elif entrant_count(db, comp_id, user["id"] if user else None, email) >= comp["max_per_user"]:
+            reason = f"Per-person limit of {comp['max_per_user']} reached"
+        elif taken_count(db, comp_id) >= comp["max_tickets"]:
+            reason = "Sold out"
         cur = db.execute(
-            "INSERT INTO postal_entries (competition_id, name, email, address, answer_correct, added_by, created_at) "
-            "VALUES (?,?,?,?,?,?,?)", (comp_id, name, email, address, 1 if answer_correct else 0, admin_id, iso(utcnow())))
-        if not answer_correct:
-            return None
+            "INSERT INTO postal_entries (competition_id, name, email, address, answer_correct, added_by, created_at, "
+            "received_at, user_id, status, reject_reason, dob, phone) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (comp_id, name, email, address, 1 if answer_correct else 0, admin_id, iso(utcnow()), received,
+             user["id"] if user else None, "rejected" if reason else "accepted", reason,
+             dob.isoformat() if dob else None, phone or None))
+        pid = cur.lastrowid
+        if reason:
+            audit(db, "postal.reject", f"comp:{comp_id}", f"Postal entry #{pid} from {name} <{email}> rejected: {reason}")
+            return pid, None, reason
         n = _allocate(db, comp, 1, None)[0]
-        t = db.execute("INSERT INTO tickets (competition_id, number, postal_entry_id, status, revealed_at, created_at) "
-                       "VALUES (?,?,?, 'issued', ?, ?)", (comp_id, n, cur.lastrowid, iso(utcnow()), iso(utcnow())))
+        now = iso(utcnow())
+        t = db.execute("INSERT INTO tickets (competition_id, number, user_id, postal_entry_id, status, revealed_at, created_at) "
+                       "VALUES (?,?,?,?, 'issued', ?, ?)",
+                       (comp_id, n, user["id"] if user else None, pid, None if (comp["game_type"] and user) else now, now))
         ip = db.execute("SELECT * FROM instant_prizes WHERE competition_id=? AND number=? AND ticket_id IS NULL",
                         (comp_id, n)).fetchone()
-        if ip:  # postal entrants win instant prizes too (paid out manually)
-            db.execute("UPDATE instant_prizes SET ticket_id=?, won_at=? WHERE id=?", (t.lastrowid, iso(utcnow()), ip["id"]))
-        return n
+        if ip:
+            # Postal entrants win instant prizes on the same basis. Matched to an account: cash/credit is paid
+            # to the wallet (games: when they reveal it). No account: staff pay it by hand from Payouts.
+            pay_now = bool(user) and not comp["game_type"] and prize_kind(ip) in ("cash", "credit") and bool(ip["credit_amount"])
+            db.execute("UPDATE instant_prizes SET ticket_id=?, won_at=?, fulfilled=? WHERE id=?",
+                       (t.lastrowid, now, 1 if pay_now else 0, ip["id"]))
+            if pay_now:
+                pay_prize(db, user["id"], ip, comp["title"])
+        audit(db, "postal.accept", f"comp:{comp_id}", f"Postal entry #{pid} from {name} <{email}> — ticket #{n}"
+              + (f" (account #{user['id']})" if user else ""))
+        return pid, n, None
 
 
 # ---------------- instant wins ----------------
@@ -549,7 +665,8 @@ def instant_board(db, comp_id, reveal=False):
 
 # ---------------- the draw ----------------
 
-def run_draw(comp_id):
+def run_draw(comp_id, actor=None):
+    """Pick the winner and keep a permanent snapshot of every eligible entry used. actor=None: automatic draw."""
     with write_txn() as db:
         cleanup_expired(db)
         comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
@@ -557,18 +674,27 @@ def run_draw(comp_id):
             raise PurchaseError("Only live competitions can be drawn.")
         if comp["game_type"]:
             raise PurchaseError("Instant-win games don't have a main draw.")
-        if comp_state(comp, sold_count(db, comp_id)) not in ("ended", "soldout"):
-            raise PurchaseError("Wait until the competition ends or sells out.")
+        if parse_iso(comp["ends_at"]) > utcnow():
+            # We publish a draw time on every competition, and sell-outs don't bring it forward.
+            raise PurchaseError("The draw can only run after the advertised closing time.")
         if db.execute("SELECT 1 FROM tickets WHERE competition_id=? AND status='held'", (comp_id,)).fetchone():
             raise PurchaseError("Some checkouts are still in progress. Try again in up to 45 minutes.")
         tickets = db.execute("SELECT id, number FROM tickets WHERE competition_id=? AND status='issued' ORDER BY number",
                              (comp_id,)).fetchall()
         if not tickets:
             raise PurchaseError("No entries to draw from.")
-        digest = entries_digest(t["number"] for t in tickets)
-        winner = tickets[pick_index(comp["seed"], digest, len(tickets))]
+        numbers = [t["number"] for t in tickets]
+        digest = entries_digest(numbers)
+        idx = pick_index(comp["seed"], digest, len(tickets))
+        winner, now = tickets[idx], iso(utcnow())
         db.execute("UPDATE competitions SET status='drawn', entries_hash=?, winner_ticket_id=?, drawn_at=? WHERE id=?",
-                   (digest, winner["id"], iso(utcnow()), comp_id))
+                   (digest, winner["id"], now, comp_id))
+        db.execute("INSERT INTO draws (competition_id, drawn_at, method, run_by, seed, seed_hash, entries_hash, entry_count, "
+                   "winning_index, winning_number, winning_ticket_id, entries) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (comp_id, now, "manual" if actor else "automatic", actor["id"] if actor else None, comp["seed"],
+                    comp["seed_hash"], digest, len(numbers), idx, winner["number"], winner["id"], json.dumps(numbers)))
+        audit(db, "draw.run", f"comp:{comp_id}", f"{'Manual' if actor else 'Automatic'} draw of {len(numbers)} entries: "
+              f"winning ticket #{winner['number']}", actor=actor or False)
         return winner["number"]
 
 
@@ -733,20 +859,62 @@ def redeem_points(user_id, blocks):
 
 # ---------------- cancellations ----------------
 
-def refund_competition(comp_id):
-    """Refund every paid entry to the entrant's CASH balance (withdrawable). Safe to run twice."""
+def order_refund_parts(db, order):
+    """What the customer actually paid for one order, split by where the money came from.
+    Promo discounts aren't refunded (they weren't paid); site credit goes back as site credit and
+    deposited funds as deposited funds; card payments and cash winnings go back as cash (withdrawable)."""
+    c = db.execute("SELECT * FROM checkouts WHERE id=?", (order["checkout_id"],)).fetchone() if order["checkout_id"] else None
+    if c is None or c["subtotal"] <= 0:
+        return {"cash": order["amount"], "credit": 0, "deposit": 0}
+    total_paid = c["subtotal"] - c["promo_discount"]
+    paid = order["amount"] * total_paid // c["subtotal"]
+    if total_paid <= 0:
+        return {"cash": 0, "credit": 0, "deposit": 0}
+    credit = paid * c["credit_used"] // total_paid
+    deposit = paid * c["deposit_used"] // total_paid
+    return {"cash": paid - credit - deposit, "credit": credit, "deposit": deposit}
+
+
+def _refunded(db, order_id):
+    return db.execute("SELECT 1 FROM credit_ledger WHERE ref=? OR ref LIKE ?",
+                      (f"refund-o{order_id}", f"refund-o{order_id}-%")).fetchone() is not None
+
+
+def refund_competition(comp_id, db=None):
+    """Refund every paid entry, each part in the form it was paid (see order_refund_parts). Safe to run twice."""
+    if db is None:
+        with write_txn() as wdb:
+            return refund_competition(comp_id, wdb)
+    comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
+    rows = db.execute("SELECT * FROM orders WHERE competition_id=? AND status='paid'", (comp_id,)).fetchall()
+    n = total = 0
+    for o in rows:
+        if _refunded(db, o["id"]):
+            continue
+        parts = order_refund_parts(db, o)
+        if not any(parts.values()):
+            continue
+        for kind, amt in parts.items():
+            if amt > 0:
+                add_credit(db, o["user_id"], amt, f"Refund — {comp['title']} was cancelled",
+                           f"refund-o{o['id']}" + ("" if kind == "cash" else f"-{kind}"), kind=kind)
+        n += 1
+        total += sum(parts.values())
+    return n, total
+
+
+def cancel_competition(comp_id):
+    """Cancel, release anything still being paid for, and refund everyone — all in one transaction."""
     with write_txn() as db:
         comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
-        rows = db.execute("SELECT * FROM orders WHERE competition_id=? AND status='paid'", (comp_id,)).fetchall()
-        n = total = 0
-        for o in rows:
-            ref = f"refund-o{o['id']}"
-            if db.execute("SELECT 1 FROM credit_ledger WHERE ref=?", (ref,)).fetchone():
-                continue
-            if o["amount"] > 0:
-                add_credit(db, o["user_id"], o["amount"], f"Refund — {comp['title']} was cancelled", ref, kind="cash")
-                n += 1
-                total += o["amount"]
+        if comp is None or comp["status"] not in ("draft", "live"):
+            raise PurchaseError("Only draft or live competitions can be cancelled.")
+        db.execute("UPDATE competitions SET status='cancelled', scheduled=0 WHERE id=?", (comp_id,))
+        for r in db.execute("SELECT DISTINCT checkout_id FROM orders WHERE competition_id=? AND status='pending' "
+                            "AND checkout_id IS NOT NULL", (comp_id,)).fetchall():
+            _expire_checkout_db(db, r[0])
+        n, total = refund_competition(comp_id, db)
+        audit(db, "comp.cancel", f"comp:{comp_id}", f"Cancelled “{comp['title']}”; {n} entrants refunded {total}p")
         return n, total
 
 
@@ -807,9 +975,9 @@ def claim_free_play(user, comp_id):
 
 def paid_unrefunded(db, comp_id):
     """Paid orders on a competition whose money hasn't been given back yet."""
-    return db.execute(
-        "SELECT COUNT(*) FROM orders o WHERE o.competition_id=? AND o.status='paid' AND o.amount>0 "
-        "AND NOT EXISTS (SELECT 1 FROM credit_ledger l WHERE l.ref='refund-o' || o.id)", (comp_id,)).fetchone()[0]
+    return sum(1 for o in db.execute("SELECT * FROM orders WHERE competition_id=? AND status='paid' AND amount>0",
+                                     (comp_id,)).fetchall()
+               if any(order_refund_parts(db, o).values()) and not _refunded(db, o["id"]))
 
 
 def _delete_comp_rows(db, comp_ids):
@@ -822,7 +990,7 @@ def _delete_comp_rows(db, comp_ids):
     images += [r[0] for r in db.execute(f"SELECT winner_photo FROM competitions WHERE id IN ({q}) AND winner_photo IS NOT NULL", comp_ids)]
     checkouts = [r[0] for r in db.execute(
         f"SELECT DISTINCT checkout_id FROM orders WHERE competition_id IN ({q}) AND checkout_id IS NOT NULL", comp_ids)]
-    db.execute(f"UPDATE competitions SET winner_ticket_id=NULL WHERE id IN ({q})", comp_ids)
+    db.execute(f"DELETE FROM draws WHERE competition_id IN ({q})", comp_ids)
     db.execute(f"DELETE FROM instant_prizes WHERE competition_id IN ({q})", comp_ids)
     db.execute(f"DELETE FROM tickets WHERE competition_id IN ({q})", comp_ids)
     db.execute(f"DELETE FROM postal_entries WHERE competition_id IN ({q})", comp_ids)
@@ -837,11 +1005,15 @@ def _delete_comp_rows(db, comp_ids):
 def delete_competition(comp_id):
     """Delete one competition or game. Refuses while paid entries haven't been refunded — cancel it first."""
     with write_txn() as db:
-        if db.execute("SELECT 1 FROM competitions WHERE id=?", (comp_id,)).fetchone() is None:
+        comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
+        if comp is None:
             raise PurchaseError("That competition doesn't exist.")
+        if comp["status"] == "drawn":
+            raise PurchaseError("Drawn competitions are kept as a permanent record of the result, so they can't be deleted.")
         if paid_unrefunded(db, comp_id):
             raise PurchaseError("This has paid entries that haven't been refunded. Cancel it first (that refunds "
                                 "everyone), then delete it.")
+        audit(db, "comp.delete", f"comp:{comp_id}", f"Deleted “{comp['title']}” ({comp['status']})")
         return _delete_comp_rows(db, [comp_id])
 
 
@@ -878,6 +1050,8 @@ def start_fresh(competitions="", wallets=False, accounts=False, promos=False):
                 db.execute(f"UPDATE users SET referred_by=NULL WHERE referred_by IN ({q})", players)
                 db.execute(f"DELETE FROM users WHERE id IN ({q})", players)
             out["player accounts"] = len(players)
+        audit(db, "site.start_fresh", None, f"Options: competitions={competitions!r} wallets={wallets} accounts={accounts} "
+              f"promos={promos}. Deleted: {out}")
     return out, images
 
 

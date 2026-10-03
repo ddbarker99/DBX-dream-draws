@@ -26,11 +26,11 @@
   {% if (c.status == 'live' and not sold and not held) or c.scheduled %}
   <form method="post" action="{{ url_for('admin.set_status', cid=c.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn ghost small" name="action" value="unpublish">{{ 'Unschedule' if c.scheduled else 'Unpublish (back to draft)' }}</button></form>
   {% endif %}
-  {% if state in ('ended','soldout') and not c.game_type %}
+  {% if state == 'ended' and not c.game_type %}
   <form method="post" action="{{ url_for('admin.draw', cid=c.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn small" onclick="return confirm('Run the draw now? This is final.')">🎲 Run draw</button></form>
   {% endif %}
   {% if c.status in ('draft','live') %}
-  <form method="post" action="{{ url_for('admin.set_status', cid=c.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn danger small" name="action" value="cancel" onclick="return confirm('Cancel this competition? You must refund entrants.')">Cancel</button></form>
+  <form method="post" action="{{ url_for('admin.set_status', cid=c.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn danger small" name="action" value="cancel" onclick="return confirm('Cancel this competition? Everyone who entered is refunded automatically. This can\'t be undone.')">Cancel</button></form>
   {% endif %}
 </div>
 
@@ -39,8 +39,10 @@
 <form class="panel" method="post" action="{{ url_for('admin.winner_story', cid=c.id) }}" enctype="multipart/form-data">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <strong>Winner story</strong> <span class="small muted">— only with the winner's permission</span>
-  <div class="two"><div><label>Photo</label><input type="file" name="winner_photo" accept="image/*"></div>
-  <div><label>Their comment</label><input name="winner_quote" value="{{ c.winner_quote or '' }}" maxlength="500"></div></div>
+  <div class="two"><div><label for="w-photo">Photo</label><input id="w-photo" type="file" name="winner_photo" accept="image/*"></div>
+  <div><label for="w-quote">Their comment</label><input id="w-quote" name="winner_quote" value="{{ c.winner_quote or '' }}" maxlength="500"></div></div>
+  <label class="check" style="margin-top:12px"><input type="checkbox" name="consent" value="1" {{ 'checked' if c.winner_consent_at }}> The winner has agreed to their photo and comment being shown publicly</label>
+  {% if c.winner_consent_at %}<p class="small muted">Permission recorded {{ c.winner_consent_at|uktime }}.</p>{% endif %}
   <button class="btn small" style="margin-top:12px">Save story</button>
 </form>
 {% endif %}
@@ -99,17 +101,31 @@
     <td><form method="post" action="{{ url_for('admin.instant_fulfilled', pid=p.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn small good">Mark sent</button></form></td></tr>{% endfor %}</table>{% endif %}
 </div>
 
+{% if not c.free_daily %}
+<h2 id="postal">Postal entries</h2>
 {% if c.status == 'live' %}
-<h2>Add postal entry</h2>
 <form class="panel" method="post" action="{{ url_for('admin.postal', cid=c.id) }}">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
-  <div class="two"><div><label>Name</label><input name="name" required></div><div><label>Email</label><input name="email" type="email" required></div></div>
-  <label>Postal address</label><input name="address" required>
-  <label>Their answer to "{{ c.question }}" (correct: {{ c['answer_' + c.correct] }})</label>
-  <select name="answer_correct"><option value="1">Correct</option><option value="0">Wrong — log only, no ticket</option></select>
-  <button class="btn block" style="margin-top:14px">Add entry</button>
-  {% if postal_rejected %}<p class="small muted">{{ postal_rejected }} postal entr{{ 'y' if postal_rejected == 1 else 'ies' }} logged with wrong answers.</p>{% endif %}
+  <p class="small muted" style="margin-top:0">Log <b>every</b> envelope you open for this competition, including ones that can't be accepted — the system checks the closing date, answer, age and per-person limit, and keeps a record either way. If the email matches an account, the ticket appears in that player's account.</p>
+  <div class="two"><div><label for="pe-name">Full name</label><input id="pe-name" name="name" required autocomplete="off"></div><div><label for="pe-email">Email</label><input id="pe-email" name="email" type="email" required autocomplete="off"></div></div>
+  <label for="pe-address">Postal address</label><input id="pe-address" name="address" required autocomplete="off">
+  <div class="two"><div><label for="pe-dob">Date of birth</label><input id="pe-dob" name="dob" type="date"></div><div><label for="pe-phone">Phone</label><input id="pe-phone" name="phone" inputmode="tel" autocomplete="off"></div></div>
+  <div class="two"><div><label for="pe-received">Date it arrived</label><input id="pe-received" name="received" type="date" value="{{ today }}" max="{{ today }}" required></div>
+  <div><label for="pe-answer">Their answer to “{{ c.question }}” <span class="muted">(correct: {{ c['answer_' + c.correct] }})</span></label>
+  <select id="pe-answer" name="answer_correct"><option value="1">Correct</option><option value="0">Wrong</option></select></div></div>
+  <button class="btn block" style="margin-top:14px">Record envelope</button>
 </form>
+{% endif %}
+<div class="panel table-scroll">
+  {% if postal_log %}
+  <table>
+    <tr><th>Arrived</th><th>Name</th><th>Email</th><th>Outcome</th><th>Logged by</th></tr>
+    {% for p in postal_log %}<tr><td>{{ (p.received_at or p.created_at)|uktime('%d %b %Y') }}</td><td>{{ p.name }}{% if p.user_id %} <span class="pill small">account</span>{% endif %}</td><td>{{ p.email }}</td>
+      <td>{% if p.status == 'accepted' %}<span class="pill new">Accepted · #{{ p.number }}</span>{% else %}<span class="pill hot">Rejected</span> {{ p.reject_reason }}{% endif %}</td>
+      <td class="small muted">{{ p.added_by_name or '—' }} · {{ p.created_at|uktime('%d %b %H:%M') }}</td></tr>{% endfor %}
+  </table>
+  {% else %}<p class="muted" style="margin:0">No postal entries recorded yet.</p>{% endif %}
+</div>
 {% endif %}
 
 <h2>Latest entries</h2>
@@ -121,10 +137,31 @@
 
 <h2>Draw seed</h2>
 <p class="small muted">Public hash (shown on the site since launch):</p><div class="hash">{{ c.seed_hash }}</div>
+{% if draw_rec %}
+<h2>Draw record</h2>
+<div class="panel">
+  <p class="small muted" style="margin-top:0">A permanent snapshot taken at the moment of the draw. It can't be edited or deleted.</p>
+  <dl class="facts">
+    <dt>Drawn</dt><dd>{{ draw_rec.drawn_at|uktime }} · {{ draw_rec.method }}{% if draw_rec.run_by_email %} by {{ draw_rec.run_by_email }}{% endif %}</dd>
+    <dt>Eligible entries</dt><dd>{{ '{:,}'.format(draw_rec.entry_count) }}</dd>
+    <dt>Winning ticket</dt><dd>#{{ draw_rec.winning_number }} (position {{ draw_rec.winning_index + 1 }} in the sorted list)</dd>
+    <dt>Entries hash</dt><dd class="hash">{{ draw_rec.entries_hash }}</dd>
+    <dt>Seed</dt><dd class="hash">{{ draw_rec.seed }}</dd>
+  </dl>
+</div>
+{% endif %}
+{% if audit_rows %}
+<h2>History</h2>
+<div class="panel table-scroll"><table>
+  {% for a in audit_rows %}<tr><td class="small muted">{{ a.created_at|uktime('%d %b %Y %H:%M') }}</td><td>{{ a.actor_email or 'System' }}</td><td>{{ a.detail }}</td></tr>{% endfor %}
+</table><p class="small"><a href="{{ url_for('admin.audit_log', target='comp:' ~ c.id) }}">Full history</a></p></div>
+{% endif %}
 
 <section class="panel" id="delete" style="margin-top:32px;border-color:#7a1622">
   <h2 style="margin-top:0;font-size:20px">Delete this {{ 'game' if c.game_type else 'competition' }}</h2>
-  {% if c.status in ('draft','live') and revenue %}
+  {% if c.status == 'drawn' %}
+  <p class="small muted">Drawn competitions are kept permanently as the record of the result, so they can't be deleted.</p>
+  {% elif c.status in ('draft','live') and revenue %}
   <p class="small muted">This has paid entries. <b>Cancel</b> it first (button at the top) — that refunds everyone to their cash balance — then you can delete it.</p>
   {% else %}
   <p class="small muted">Removes it from the site for good, with all its entries, instant prizes and orders. Money already paid out or refunded to wallets stays in those wallets. This can't be undone.</p>

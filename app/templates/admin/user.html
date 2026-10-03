@@ -17,7 +17,12 @@
   <div class="panel" style="margin:0"><strong>Access</strong>
     <p class="small muted">Admins can see all entries, run draws and change wallets.</p>
     {% if not u.email_verified %}<form method="post" style="margin-bottom:10px"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="verify"><button class="btn ghost small">Mark email verified</button></form>{% endif %}
-    {% if u.id != user.id %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="admin"><button class="btn ghost small">{{ 'Remove admin' if u.is_admin else 'Make admin' }}</button></form>{% else %}<p class="small">This is you.</p>{% endif %}
+    {% if u.id != user.id %}<form method="post" class="inline-form"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="admin">
+      <label class="sr-only" for="role">Admin access</label>
+      <select id="role" name="role"><option value="" {{ 'selected' if not u.is_admin }}>No admin access</option>
+        <option value="staff" {{ 'selected' if u.is_admin and u.admin_role == 'staff' }}>Staff — competitions, postal entries, draws, prizes</option>
+        <option value="owner" {{ 'selected' if u.is_admin and u.admin_role == 'owner' }}>Owner — everything, including money and accounts</option></select>
+      <button class="btn ghost small">Save access</button></form>{% else %}<p class="small">This is you.</p>{% endif %}
   </div>
 </div>
 <h2>Tickets</h2>

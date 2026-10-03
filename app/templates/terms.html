@@ -36,7 +36,7 @@
 <h2 id="free-entry">4. Free entry route</h2>
 <p>The complete free postal entry instructions are maintained at <a href="{{ url_for('public.page', page='free-entry') }}">{{ config.SITE_URL.split('://')[-1] }}/free-entry</a> and are signposted on every competition page.</p>
 <p>Entrants are responsible for following those instructions exactly and for allowing enough time for their entry to arrive. Only ordinary first- or second-class post is required; we do not require recorded, tracked or special-delivery services.</p>
-<p>A valid free entry participates on the same basis as a corresponding paid entry for the allocation of prizes, including instant prizes. The free-entry route is subject to the same eligibility requirements and per-person entry limits as paid entries.</p>
+<p>A valid free entry participates on the same basis as a corresponding paid entry for the allocation of prizes, including instant prizes. The free-entry route is subject to the same eligibility requirements and per-person entry limits as paid entries. We record every postal entry we receive, with the date it arrived and whether it was accepted. If the email address on a postal entry matches a {{ S }} account, the entry is added to that account, counts towards its per-person limit, and any cash or site-credit instant prize is credited to it; otherwise we email the entry number and contact the entrant about any prize.</p>
 
 <h2 id="limits">5. Entry limits</h2>
 <p>Each competition may have a maximum total number of entries, a maximum number of entries per person, and/or other entry restrictions displayed before entry.</p>
@@ -45,17 +45,18 @@
 
 <h2 id="reservations">6. Entry numbers and reservations</h2>
 <p>Where numbered entries are used, entrants may select available numbers or have numbers allocated automatically ("lucky dip").</p>
-<p>During online checkout, numbers are reserved temporarily for up to 30 minutes. A reservation is not a confirmed entry: if checkout is not completed within the reservation period, the numbers are released and made available to other entrants.</p>
+<p>When you continue from your basket to payment, your numbers are reserved for 30 minutes. A reservation is not a confirmed entry. If payment is not completed within those 30 minutes, the reservation ends, no payment can be taken for it, and the numbers are released to other entrants (normally within 45 minutes of the reservation starting; the extra time lets us process confirmations from our payment provider). If a payment nevertheless reaches us after a reservation has ended, it is refunded in full and no entry is issued.</p>
+<p>A number shown as available can still be taken by another entrant before you reserve it. If that happens we tell you before you pay, and you can choose another number or a lucky dip.</p>
 <p>An online entry is confirmed only once the website records successful completion of payment and issues confirmation, which is shown on screen and sent by email.</p>
 
 <h2 id="dates">7. Opening and closing dates</h2>
-<p>Each competition displays its closing date and time. Entries must be received before that deadline.</p>
+<p>Each competition displays its closing date and time. Online entries must be reserved before that deadline and paid for within the reservation period in section 6; postal entries must arrive before it.</p>
 <p>Where a draw date is advertised, we will not bring it forward or postpone it because fewer entries than expected have been sold, except where a change is reasonably necessary because of circumstances beyond our control and is permitted by applicable law and advertising rules.</p>
-<p>Unless a competition clearly states otherwise before entry, failing to sell every available entry does not by itself stop the advertised draw from taking place.</p>
+<p>Unless a competition clearly states otherwise before entry, failing to sell every available entry does not by itself stop the advertised draw from taking place. Selling out early does not bring the draw forward: the draw never runs before the advertised closing time.</p>
 
 <h2 id="draws">8. Draws and winner selection</h2>
 <p>Winners of chance-based draws are selected fairly from all eligible entries using the verifiable method described on our <a href="{{ url_for('public.page', page='fair-draws') }}">Fair Draws page</a>. Where a different selection process applies, it will be explained in the competition-specific terms.</p>
-<p>Paid and valid free entries are not distinguished from one another when the winner is selected. We keep records of completed draws so that each result can be verified.</p>
+<p>Paid and valid free entries are not distinguished from one another when the winner is selected. At the moment of each draw we keep a permanent record of every eligible entry number, the method used and the winning entry. Draw results cannot be edited afterwards; if a correction were ever needed, it would be recorded separately and explained publicly.</p>
 
 <h2 id="automatic-draws">9. Automatic draws</h2>
 <p>Unless a competition is advertised as being drawn live or by another stated method, the winner-selection process runs automatically when the draw time is reached, using the method described on the Fair Draws page. An automated draw does not change the eligibility requirements or the treatment of valid paid and free entries.</p>
@@ -108,11 +109,11 @@ Cash prizes and refunds are credited to your cash balance. Subject to verificati
 <p>If a winner does not respond, cannot be verified or cannot accept a prize, we will follow the process disclosed for the relevant promotion and applicable promotional rules rather than automatically withholding the prize.</p>
 
 <h2 id="publicity">20. Winner information and publicity</h2>
-<p>To show that prizes have been awarded, we publish limited winner information: normally the winner's first name and surname initial, with the prize or promotion and the winning entry number. Photographs, testimonials, videos or more extensive publicity are used only with an appropriate lawful basis and, where required, the winner's permission.</p>
+<p>To show that prizes have been awarded, we publish limited winner information: normally the winner's first name and surname initial, with the prize or promotion and the winning entry number. Photographs, testimonials, videos or more extensive publicity are used only with the winner's recorded permission.</p>
 
 <h2 id="refunds">21. Cancellations and refunds</h2>
 <p>Because entries relate to promotions with defined entry periods and allocated entry numbers, please check your selections before completing payment. Except where required by law or expressly permitted by these Terms, a confirmed entry cannot be cancelled because the entrant has changed their mind. This does not affect any statutory rights that cannot lawfully be excluded.</p>
-<p>If we cancel a promotion without awarding the advertised prize, every affected entrant receives a full refund of the price paid. Refunds are credited to the entrant's withdrawable cash balance, from which they can be withdrawn at any time (the £5 minimum withdrawal does not apply to refunds — contact us and we will pay a smaller refund out). Where a refund is due for a payment that did not result in an entry, it is returned to the original payment method.</p>
+<p>If we cancel a promotion without awarding the advertised prize, every affected entrant receives a full refund of what they paid, credited to their {{ S }} wallet automatically and in the same form it was paid: the part paid by card or from their cash balance goes to their withdrawable cash balance; the part paid with site credit or deposited funds is returned as site credit or deposited funds. Promotional discounts are not refunded as money because they were not paid. Cash refunds can be withdrawn at any time (the £5 minimum withdrawal does not apply to refunds — contact us and we will pay a smaller refund out). Where a refund is due for a payment that did not result in an entry, it is returned to the original payment method.</p>
 
 <h2 id="errors">22. Errors, technical problems and service interruptions</h2>
 <p>We take reasonable steps to keep the website and promotion systems accurate and available, but temporary technical failures can occur. If an obvious pricing, prize, entry-number, display or technical error occurs, we may take reasonable and proportionate steps to correct it. We will not use this clause to avoid honouring a valid promotion because an outcome is commercially inconvenient.</p>
