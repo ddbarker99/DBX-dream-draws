@@ -3,7 +3,7 @@
 {% block robots %}<meta name="robots" content="noindex">{% endblock %}
 {% block content %}
 <nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('public.account') }}">My account</a> › <a href="{{ url_for('public.account', tab='transactions') }}">Transactions</a> › <span aria-current="page">#{{ c.id }}</span></nav>
-<div class="acct-head"><h1>Order #{{ c.id }}</h1><span class="pill {{ c.status }}">{{ {'paid':'Paid','credit_refused':'Refunded','needs_refund':'Refund due'}.get(c.status, c.status) }}</span></div>
+<div class="acct-head"><h1>Order #{{ c.id }}</h1><span class="pill {{ c.status }}">{{ {'paid':'Paid','credit_refused':'Refunded','needs_refund':'Refund due','refunded':'Refunded'}.get(c.status, c.status) }}</span></div>
 <div class="basket">
   <div class="stack">
     {% for l in lines %}

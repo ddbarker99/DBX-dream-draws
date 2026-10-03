@@ -11,7 +11,7 @@
   <div class="actions" style="justify-content:center"><a class="btn" href="{{ url_for('public.competitions') }}">Find a competition</a><a class="btn ghost" href="{{ url_for('public.instant_wins') }}">Play Instant Wins</a></div>
 {% elif d.status == 'pending' %}
   <h1>Confirming your payment…</h1><p class="muted" role="status">This usually takes a few seconds and the page refreshes by itself.</p>
-{% elif d.status in ('credit_refused', 'needs_refund') %}
+{% elif d.status in ('credit_refused', 'needs_refund', 'refunded') %}
   <h1>Credit cards aren't accepted</h1>
   <p class="muted">{% if d.status == 'credit_refused' %}Your payment has been refunded in full — it can take 5–10 working days to appear.{% else %}We'll refund your payment in full shortly.{% endif %} Please try again with a debit card.</p>
   <a class="btn" href="{{ url_for('public.account', tab='wallet') }}#deposit">Back to my wallet</a>

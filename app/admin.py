@@ -1102,7 +1102,7 @@ def payouts():
 @require("money")
 def deposit_refund_done(did):
     db = get_db()
-    db.execute("UPDATE deposits SET status='expired' WHERE id=? AND status='needs_refund'", (did,))
+    db.execute("UPDATE deposits SET status='refunded' WHERE id=? AND status='needs_refund'", (did,))
     audit(db, "refund.deposit_done", f"deposit:{did}", "Marked as refunded by hand")
     flash("Marked as refunded.")
     return redirect(url_for("admin.payouts"))
@@ -1112,7 +1112,7 @@ def deposit_refund_done(did):
 @require("money")
 def refund_done(cid):
     db = get_db()
-    db.execute("UPDATE checkouts SET status='expired' WHERE id=? AND status='needs_refund'", (cid,))
+    db.execute("UPDATE checkouts SET status='refunded' WHERE id=? AND status='needs_refund'", (cid,))
     audit(db, "refund.checkout_done", f"checkout:{cid}", "Marked as refunded by hand")
     flash("Marked as refunded.")
     return redirect(url_for("admin.payouts"))

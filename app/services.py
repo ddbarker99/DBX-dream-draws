@@ -1391,6 +1391,7 @@ def start_fresh(competitions="", wallets=False, accounts=False, promos=False):
             out["withdrawals"] = db.execute("DELETE FROM withdrawals").rowcount
             db.execute("DELETE FROM deposits")
             db.execute("UPDATE users SET points=0, points_lifetime=0")
+            db.execute("DELETE FROM points_ledger")
         if promos:
             db.execute("UPDATE checkouts SET promo_id=NULL")
             out["promo codes"] = db.execute("DELETE FROM promo_codes").rowcount

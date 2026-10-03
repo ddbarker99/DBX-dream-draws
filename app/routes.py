@@ -816,6 +816,9 @@ def stripe_webhook():
         abort(400)
     event = json.loads(payload)
     obj = event.get("data", {}).get("object", {})
+    if event.get("type") in ("charge.refunded", "charge.dispute.created", "charge.dispute.closed"):
+        _payment_reversal(event["type"], obj)
+        return "", 200
     did = (obj.get("metadata") or {}).get("deposit_id")
     if did:
         if event["type"] in ("checkout.session.completed", "checkout.session.async_payment_succeeded") \
@@ -833,11 +836,36 @@ def stripe_webhook():
                 and obj.get("payment_status") == "paid":
             if _refuse_credit_card(int(cid), obj):
                 return "", 200
+            if obj.get("payment_intent"):
+                get_db().execute("UPDATE checkouts SET payment_intent=? WHERE id=? AND payment_intent IS NULL",
+                                 (obj["payment_intent"], int(cid)))
             if fulfil_checkout(int(cid), obj.get("id"), obj.get("amount_total")) == "paid":
                 _confirm_email(int(cid))
         elif event["type"] in ("checkout.session.expired", "checkout.session.async_payment_failed"):
             expire_checkout(int(cid))
     return "", 200
+
+
+def _payment_reversal(kind, obj):
+    """A refund made in Stripe's dashboard, or a chargeback. Nothing is changed automatically — staff decide —
+    but it's flagged at once (not just at the next daily reconciliation) and staff are emailed."""
+    from .control import _flag
+    pi = obj.get("payment_intent")
+    db = get_db()
+    k = db.execute("SELECT id, user_id, status FROM checkouts WHERE payment_intent=?", (pi,)).fetchone() if pi else None
+    d = db.execute("SELECT id, user_id FROM deposits WHERE payment_intent=?", (pi,)).fetchone() if pi and not k else None
+    what = f"checkout #{k['id']} (customer {k['user_id']}, {k['status']})" if k else \
+        f"deposit #{d['id']} (customer {d['user_id']})" if d else f"payment {pi} (no matching order)"
+    label = {"charge.refunded": "Refunded in Stripe", "charge.dispute.created": "Chargeback opened",
+             "charge.dispute.closed": "Chargeback closed"}[kind]
+    amount = obj.get("amount_refunded") if kind == "charge.refunded" else obj.get("amount")
+    detail = f"{label}: {what}, {amount}p. Check whether entries should be cancelled or the wallet adjusted."
+    if kind == "charge.dispute.closed":
+        detail = f"{label} ({obj.get('status')}): {what}"
+    if _flag(db, "Payment reversal", f"{kind}:{obj.get('id')}", detail):
+        audit(db, "payment.reversal", f"checkout:{k['id']}" if k else (f"deposit:{d['id']}" if d else None), detail, actor=False)
+        if current_app.config["SUPPORT_EMAIL"]:
+            mailer.send(current_app.config["SUPPORT_EMAIL"], f"⚠ {label}", detail + "\n\nSee Admin → Flags.", heading=label)
 
 
 # ---------------- deposits ----------------
@@ -1460,7 +1488,7 @@ def account():
             "(SELECT SUM(o.quantity) FROM orders o WHERE o.checkout_id=k.id) AS entries, "
             "(SELECT GROUP_CONCAT(c.title, ', ') FROM orders o JOIN competitions c ON c.id=o.competition_id "
             " WHERE o.checkout_id=k.id) AS titles FROM checkouts k "
-            "WHERE k.user_id=? AND k.status IN ('paid','credit_refused','needs_refund') ORDER BY k.id DESC LIMIT ?",
+            "WHERE k.user_id=? AND k.status IN ('paid','credit_refused','needs_refund','refunded') ORDER BY k.id DESC LIMIT ?",
             (uid, 3 if tab == "overview" else 100)).fetchall()
     if tab == "wallet":
         expire_stale_deposits(db, uid)
@@ -1499,7 +1527,7 @@ def order_detail(cid):
     c = _own_checkout(cid)
     if c["status"] == "pending":
         return redirect(url_for("public.checkout_done", cid=cid))
-    if c["status"] not in ("paid", "credit_refused", "needs_refund"):
+    if c["status"] not in ("paid", "credit_refused", "needs_refund", "refunded"):
         abort(404)
     return render_template("order.html", c=c, lines=checkout_summary(get_db(), cid))
 

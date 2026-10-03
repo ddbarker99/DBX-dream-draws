@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS checkouts (
     promo_discount    INTEGER NOT NULL DEFAULT 0,
     credit_used       INTEGER NOT NULL DEFAULT 0,
     cash_due          INTEGER NOT NULL,            -- charged by card
-    status            TEXT NOT NULL DEFAULT 'pending',  -- pending | paid | expired | needs_refund
+    status            TEXT NOT NULL DEFAULT 'pending',  -- pending | paid | expired | credit_refused | needs_refund | refunded (by staff)
     stripe_session_id TEXT UNIQUE,
     created_at        TEXT NOT NULL,
     paid_at           TEXT
@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS deposits (
     id                INTEGER PRIMARY KEY,
     user_id           INTEGER NOT NULL REFERENCES users(id),
     amount            INTEGER NOT NULL,
-    status            TEXT NOT NULL DEFAULT 'pending',   -- pending | paid | expired | credit_refused | needs_refund
+    status            TEXT NOT NULL DEFAULT 'pending',   -- pending | paid | expired | credit_refused | needs_refund | refunded (by staff)
     stripe_session_id TEXT,
     payment_intent    TEXT,
     refunded          INTEGER NOT NULL DEFAULT 0,        -- pence refunded back to the card so far

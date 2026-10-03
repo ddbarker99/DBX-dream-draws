@@ -15,6 +15,10 @@ jobs:
         run: python -m pytest -q tests/test_app.py
       - name: Crawl every page as guest, player and admin
         run: python tests/qa_crawl.py
+      - name: Concurrency stress (separate processes racing for the same tickets)
+        run: |
+          python tests/stress_concurrency.py --buyers 24 --tickets 30
+          python tests/stress_concurrency.py --buyers 30 --tickets 12
       - name: Performance budgets (page weight, requests, server time)
         run: python tests/perf_budget.py
       - name: Keyboard-only walkthrough and axe-core scan (real browser)

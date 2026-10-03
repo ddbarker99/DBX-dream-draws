@@ -312,7 +312,7 @@ def timeline_events(db, uid):
             ns = [r[0] for r in db.execute("SELECT number FROM tickets WHERE order_id=? ORDER BY number", (ln["id"],))]
             nums.append(f"{ln['title']}: {ln['quantity']}" + (f" (#{', #'.join(map(str, ns[:20]))}{'…' if len(ns) > 20 else ''})" if ns else ""))
         label = {"paid": "Order paid", "expired": "Checkout not completed", "credit_refused": "Credit card refused & refunded",
-                 "needs_refund": "Payment needs a refund", "pending": "Checkout in progress"}.get(k["status"], k["status"])
+                 "needs_refund": "Payment needs a refund", "refunded": "Payment refunded by staff", "pending": "Checkout in progress"}.get(k["status"], k["status"])
         ev.append((k["paid_at"] or k["created_at"], "order", f"{label} — order #{k['id']}",
                    f"Card £{k['cash_due'] / 100:.2f} · balance £{(k['credit_used'] + k['cash_used'] + k['deposit_used']) / 100:.2f}"
                    f"{' · promo £%.2f' % (k['promo_discount'] / 100) if k['promo_discount'] else ''} — " + "; ".join(nums)))
@@ -612,9 +612,9 @@ def target_rows(db):
     add("Mobile checkout completion gap vs desktop", None if mob is None or desk is None else round(desk - mob, 1), " pts", "<=", 10,
         f"Mobile {mob if mob is not None else '—'}% vs desktop {desk if desk is not None else '—'}%, last 30 days")
     card = _sum(db, "SELECT COUNT(*) FROM checkouts WHERE stripe_session_id IS NOT NULL AND created_at>=? "
-                    "AND status IN ('paid','credit_refused','needs_refund')", month)
+                    "AND status IN ('paid','credit_refused','needs_refund','refunded')", month)
     bad = _sum(db, "SELECT COUNT(*) FROM checkouts WHERE stripe_session_id IS NOT NULL AND created_at>=? "
-                   "AND status IN ('credit_refused','needs_refund')", month)
+                   "AND status IN ('credit_refused','needs_refund','refunded')", month)
     add("Payment problems (refused or needing a refund)", pct(bad, card), "%", "<=", 2, f"{bad} of {card} card payments, last 30 days")
     orders = _sum(db, "SELECT COUNT(*) FROM checkouts WHERE status='paid' AND paid_at>=?", month)
     cases = _sum(db, "SELECT COUNT(*) FROM cases WHERE created_at>=? AND topic IN ('Entry','Account','Other','Payment')", month)

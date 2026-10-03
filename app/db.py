@@ -135,6 +135,9 @@ MIGRATIONS = [
     # v11: tamper-evident audit log, feature flags
     ("audit_log", "prev_hash", "TEXT"),
     ("audit_log", "row_hash", "TEXT"),
+    # v12: production hardening
+    ("checkouts", "payment_intent", "TEXT"),                  # Stripe payment, to match refunds and chargebacks
+    ("cases", "reason", "TEXT"),                              # what the customer was actually confused about
 ]
 
 # Triggers that use columns added by MIGRATIONS, so they're created after them.
@@ -178,6 +181,80 @@ POST_TRIGGERS = [
             OR (NEW.winner_ticket_id IS NOT OLD.winner_ticket_id AND NEW.winner_ticket_id IS NOT
                 (SELECT winning_ticket_id FROM draws WHERE competition_id=OLD.id ORDER BY id DESC LIMIT 1)))
        BEGIN SELECT RAISE(ABORT, 'Draw results are permanent.'); END""",
+]
+
+# The database itself refuses impossible states, so a bug in the application can't create them.
+POST_TRIGGERS += [
+    # Tickets: never more than the competition's maximum, never outside its number range, only known states.
+    """CREATE TRIGGER IF NOT EXISTS tickets_no_oversell BEFORE INSERT ON tickets
+       WHEN (SELECT COUNT(*) FROM tickets WHERE competition_id=NEW.competition_id)
+            >= (SELECT max_tickets FROM competitions WHERE id=NEW.competition_id)
+       BEGIN SELECT RAISE(ABORT, 'Sold out: no tickets left.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS tickets_valid BEFORE INSERT ON tickets
+       WHEN NEW.number < 1 OR NEW.number > (SELECT max_tickets FROM competitions WHERE id=NEW.competition_id)
+            OR NEW.status NOT IN ('held', 'issued')
+       BEGIN SELECT RAISE(ABORT, 'Invalid ticket.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS tickets_status_valid BEFORE UPDATE OF status ON tickets
+       WHEN NEW.status NOT IN ('held', 'issued') OR (OLD.status = 'issued' AND NEW.status != 'issued')
+       BEGIN SELECT RAISE(ABORT, 'An issued ticket stays issued.'); END""",
+    # Money rows must make sense.
+    """CREATE TRIGGER IF NOT EXISTS ledger_valid BEFORE INSERT ON credit_ledger
+       WHEN NEW.amount = 0 OR NEW.kind NOT IN ('cash', 'credit', 'deposit')
+       BEGIN SELECT RAISE(ABORT, 'Invalid wallet entry.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS withdrawals_valid BEFORE INSERT ON withdrawals
+       WHEN NEW.amount <= 0 BEGIN SELECT RAISE(ABORT, 'Invalid withdrawal.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS withdrawals_final BEFORE UPDATE ON withdrawals
+       WHEN NEW.amount != OLD.amount OR NEW.user_id != OLD.user_id
+            OR (OLD.status IN ('paid', 'rejected') AND NEW.status != OLD.status)
+       BEGIN SELECT RAISE(ABORT, 'A completed withdrawal cannot be changed.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS orders_valid BEFORE INSERT ON orders
+       WHEN NEW.quantity <= 0 OR NEW.amount < 0 BEGIN SELECT RAISE(ABORT, 'Invalid order.'); END""",
+    # A paid checkout or deposit stays paid (refunds are separate records); amounts never change.
+    """CREATE TRIGGER IF NOT EXISTS checkouts_final BEFORE UPDATE ON checkouts
+       WHEN NEW.cash_due != OLD.cash_due OR NEW.user_id != OLD.user_id OR (OLD.status = 'paid' AND NEW.status != 'paid')
+            OR (OLD.status IN ('credit_refused', 'refunded') AND NEW.status != OLD.status)
+       BEGIN SELECT RAISE(ABORT, 'A completed payment cannot be changed.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS deposits_final BEFORE UPDATE ON deposits
+       WHEN NEW.amount != OLD.amount OR NEW.user_id != OLD.user_id OR NEW.refunded < OLD.refunded
+            OR NEW.refunded > NEW.amount OR (OLD.status = 'paid' AND NEW.status != 'paid')
+       BEGIN SELECT RAISE(ABORT, 'A completed deposit cannot be changed.'); END""",
+    # An instant prize, once won, belongs to that ticket for good; paid stays paid.
+    """CREATE TRIGGER IF NOT EXISTS instant_prize_final BEFORE UPDATE ON instant_prizes
+       WHEN (OLD.ticket_id IS NOT NULL AND NEW.ticket_id IS NOT OLD.ticket_id) OR (OLD.fulfilled = 1 AND NEW.fulfilled = 0)
+            OR (OLD.ticket_id IS NOT NULL AND (NEW.number != OLD.number OR NEW.credit_amount != OLD.credit_amount))
+       BEGIN SELECT RAISE(ABORT, 'A won prize cannot be changed.'); END""",
+    # Draw records: the winner must be an issued ticket in that competition.
+    """CREATE TRIGGER IF NOT EXISTS draws_valid BEFORE INSERT ON draws
+       WHEN (SELECT competition_id FROM tickets WHERE id=NEW.winning_ticket_id AND status='issued') IS NOT NEW.competition_id
+       BEGIN SELECT RAISE(ABORT, 'The winning ticket is not a valid entry in this competition.'); END""",
+    # Prize-claim history and processed postal entries are permanent.
+    """CREATE TRIGGER IF NOT EXISTS claim_events_no_update BEFORE UPDATE ON claim_events
+       BEGIN SELECT RAISE(ABORT, 'Prize-claim history is permanent.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS claim_events_no_delete BEFORE DELETE ON claim_events
+       WHEN NOT EXISTS (SELECT 1 FROM maintenance_unlock)
+            AND (SELECT purging FROM competitions c JOIN prize_claims p ON p.competition_id=c.id WHERE p.id=OLD.claim_id) = 0
+       BEGIN SELECT RAISE(ABORT, 'Prize-claim history is permanent.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS postal_decision_final BEFORE UPDATE OF status, answer_correct, received_at, competition_id ON postal_entries
+       WHEN OLD.status IN ('accepted', 'rejected') AND (NEW.status IS NOT OLD.status OR NEW.answer_correct IS NOT OLD.answer_correct
+            OR NEW.received_at IS NOT OLD.received_at OR NEW.competition_id IS NOT OLD.competition_id)
+       BEGIN SELECT RAISE(ABORT, 'A processed postal entry cannot be changed.'); END""",
+]
+
+# Uniqueness rules that stop anything being processed twice. Created one by one: if old data already breaks one,
+# the site still starts, the rule is skipped and System health → Data integrity says which (fix the data, restart).
+CONSTRAINTS = [
+    ("ux_ledger_once", "CREATE UNIQUE INDEX IF NOT EXISTS ux_ledger_once ON credit_ledger(ref, kind, amount > 0) "
+                       "WHERE ref IS NOT NULL AND ref NOT LIKE 'admin%'"),   # each prize, refund, deposit… paid once
+    ("ux_points_once", "CREATE UNIQUE INDEX IF NOT EXISTS ux_points_once ON points_ledger(ref, points > 0) WHERE ref IS NOT NULL"),
+    ("ux_deposit_session", "CREATE UNIQUE INDEX IF NOT EXISTS ux_deposit_session ON deposits(stripe_session_id) "
+                           "WHERE stripe_session_id IS NOT NULL"),
+    ("ux_claim_per_draw", "CREATE UNIQUE INDEX IF NOT EXISTS ux_claim_per_draw ON prize_claims(draw_id) WHERE draw_id IS NOT NULL"),
+    ("ux_prize_per_ticket", "CREATE UNIQUE INDEX IF NOT EXISTS ux_prize_per_ticket ON instant_prizes(ticket_id) WHERE ticket_id IS NOT NULL"),
+    ("ux_ticket_per_postal", "CREATE UNIQUE INDEX IF NOT EXISTS ux_ticket_per_postal ON tickets(postal_entry_id) "
+                             "WHERE postal_entry_id IS NOT NULL"),
+    ("ux_draw_winner", "CREATE UNIQUE INDEX IF NOT EXISTS ux_draw_winner ON draws(competition_id, winning_ticket_id)"),
+    ("ux_withdrawal_once", "CREATE UNIQUE INDEX IF NOT EXISTS ux_withdrawal_ledger ON credit_ledger(ref) "
+                           "WHERE ref LIKE 'w%' AND amount < 0"),
 ]
 
 POST_INDEXES = """
@@ -224,6 +301,18 @@ def init_db(path):
         for r in conn.execute("SELECT id FROM users WHERE referral_code IS NULL").fetchall():
             conn.execute("UPDATE users SET referral_code=? WHERE id=?", (secrets.token_hex(4).upper(), r["id"]))
         _chain_old_audit_rows(conn)
+        skipped = []
+        for name, sql in CONSTRAINTS:
+            conn.execute("SAVEPOINT c")
+            try:
+                conn.execute(sql)
+                conn.execute("RELEASE c")
+            except sqlite3.IntegrityError:
+                conn.execute("ROLLBACK TO c")
+                conn.execute("RELEASE c")
+                skipped.append(name)
+        conn.execute("INSERT INTO settings (key, value) VALUES ('constraints_skipped', ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (",".join(skipped),))
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")

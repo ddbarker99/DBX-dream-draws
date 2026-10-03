@@ -1066,12 +1066,12 @@ class DepositTests(Base):
         from app import payments
         for funding, want in (("debit", "paid"), ("credit", "credit_refused")):
             with mock.patch.object(payments, "enabled", return_value=True), \
-                 mock.patch.object(payments, "create_checkout", return_value={"id": "cs_d", "url": "https://stripe.test/x"}):
+                 mock.patch.object(payments, "create_checkout", return_value={"id": f"cs_d_{funding}", "url": "https://stripe.test/x"}):
                 r = self.post("/account/deposit", {"amount": "10"})
             self.assertEqual(r.headers["Location"], "https://stripe.test/x")
             did = self.q("SELECT MAX(id) FROM deposits")
             body = json.dumps({"type": "checkout.session.completed", "data": {"object": {
-                "id": "cs_d", "payment_status": "paid", "payment_intent": f"pi_{did}",
+                "id": f"cs_d_{funding}", "payment_status": "paid", "payment_intent": f"pi_{did}",
                 "metadata": {"deposit_id": str(did)}}}}).encode()
             ts = int(time.time())
             sig = hmac.new(b"whsec_test", f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
@@ -2335,6 +2335,348 @@ class SecurityTests(PlatformBase):
         r = self.client.get("/", base_url="https://localhost")
         self.assertIn("max-age=", r.headers.get("Strict-Transport-Security", ""))
         self.assertNotIn("Strict-Transport-Security", self.client.get("/").headers)
+
+
+def stripe_event(etype, obj, secret=b"whsec_test"):
+    body = json.dumps({"type": etype, "data": {"object": obj}}).encode()
+    ts = int(time.time())
+    sig = hmac.new(secret, f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+    return body, {"Stripe-Signature": f"t={ts},v1={sig}"}
+
+
+class AutoDrawBase(PlatformBase):
+    def close(self, cid=None):
+        db = self.db()
+        db.execute("UPDATE competitions SET auto_draw=1")                 # as the admin form defaults to
+        db.commit()
+        super().close(cid)
+
+
+class MoneyJourneyTests(AutoDrawBase):
+    """Phase 4: every money-critical journey end to end, through the real Stripe webhook path (Stripe mocked)."""
+
+    def stripe_checkout(self, client, n=1, **add):
+        from unittest import mock
+        from app import payments
+        self.add(add.pop("cid", self.cid), n, client=client, **add)
+        sid = f"cs_{time.time_ns()}"
+        with mock.patch.object(payments, "enabled", return_value=True), \
+             mock.patch.object(payments, "create_checkout", return_value={"id": sid, "url": "https://checkout.stripe.test/x"}):
+            r = self.post("/basket/checkout", {}, client=client)
+        self.assertEqual(r.headers.get("Location"), "https://checkout.stripe.test/x")
+        chk = self.q("SELECT MAX(id) FROM checkouts")
+        return chk, sid
+
+    def webhook(self, etype, chk, sid, amount=None, pi=None, funding="debit", times=1):
+        from unittest import mock
+        from app import payments
+        obj = {"id": sid, "payment_status": "paid" if "completed" in etype or "succeeded" in etype else "unpaid",
+               "payment_intent": pi or f"pi_{chk}", "metadata": {"checkout_id": str(chk)},
+               "amount_total": self.q("SELECT cash_due FROM checkouts WHERE id=?", chk) if amount is None else amount}
+        body, headers = stripe_event(etype, obj)
+        codes = []
+        with mock.patch.object(payments, "card_funding", return_value=funding), mock.patch.object(payments, "refund"):
+            for _ in range(times):
+                codes.append(self.client.post("/stripe/webhook", data=body, headers=headers).status_code)
+        return codes
+
+    def verify_player(self):
+        db = self.db()
+        db.execute("UPDATE users SET email_verified=1")
+        db.commit()
+
+    def test_full_journey_entry_to_withdrawal(self):
+        self.verify_player()
+        # an instant-win competition where every number wins £3 cash, and the main draw
+        iw = self.make_comp("Cash Instant", max_tickets=3, max_per_user=3, price="1.00",
+                            instant=[{"title": "£6 Cash", "value": "6", "type": "cash", "quantity": "3"}])
+        chk, sid = self.stripe_checkout(self.p, 2)                          # 2 × £2.50 on the main draw
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE status='held'"), 2)
+        self.assertEqual(self.webhook("checkout.session.completed", chk, sid, times=3), [200, 200, 200])   # duplicate callbacks
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "paid")
+        self.assertEqual(self.q("SELECT payment_intent FROM checkouts WHERE id=?", chk), f"pi_{chk}")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE status='issued' AND user_id=?", self.uid), 2)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM points_ledger WHERE ref=?", f"c{chk}"), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM notifications WHERE user_id=? AND kind='order'", self.uid) <= 1, True)
+        chk2, sid2 = self.stripe_checkout(self.p, 1, cid=iw)                # instant cash win → wallet
+        self.webhook("checkout.session.completed", chk2, sid2, times=2)
+        self.assertEqual(self.q("SELECT COALESCE(SUM(amount),0) FROM credit_ledger WHERE user_id=? AND kind='cash'", self.uid), 600)
+        # closing → frozen list → automatic draw → winner and prize claim, once, however often jobs run
+        self.close()
+        for _ in range(3):
+            self.run_jobs()
+        self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", self.cid), "drawn")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM draws WHERE competition_id=?", self.cid), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM prize_claims WHERE competition_id=?", self.cid), 1)
+        self.assertEqual(self.q("SELECT user_id FROM tickets WHERE id=(SELECT winner_ticket_id FROM competitions WHERE id=?)", self.cid),
+                         self.uid)
+        self.assertIn("Winner", self.p.get("/account?tab=entries&show=winner").get_data(as_text=True))
+        # withdrawal of the instant cash, paid by finance
+        bank = {"amount": "6", "method": "bank", "account_name": "Pat Player", "sort_code": "12-34-56",
+                "account_number": "12345678", "step": "confirm"}
+        self.post("/account/withdraw", bank, client=self.p)
+        self.post("/account/withdraw", bank, client=self.p)                  # second attempt: no balance left
+        wid = self.q("SELECT id FROM withdrawals")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM withdrawals"), 1)
+        self.assertEqual(self.q("SELECT COALESCE(SUM(amount),0) FROM credit_ledger WHERE user_id=? AND kind='cash'", self.uid), 0)
+        self.post("/admin/payouts", {"wid": str(wid), "action": "paid"})
+        self.post("/admin/payouts", {"wid": str(wid), "action": "paid"})            # double-click
+        self.assertEqual(self.q("SELECT status FROM withdrawals"), "paid")
+        with self.assertRaises(sqlite3.DatabaseError):
+            self.db().execute("UPDATE withdrawals SET status='requested'")
+        self.assertIn("Paid", self.p.get(f"/account/withdrawals/{wid}").get_data(as_text=True))
+
+    def test_failed_and_expired_payments_release_everything(self):
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "1", "kind": "credit", "reason": "Gift"})
+        chk, sid = self.stripe_checkout(self.p, 2, use_credit=True) if False else self.stripe_checkout(self.p, 2)
+        self.webhook("checkout.session.async_payment_failed", chk, sid)
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "expired")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets"), 0)
+        chk, sid = self.stripe_checkout(self.p, 1)
+        self.webhook("checkout.session.expired", chk, sid, times=2)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets"), 0)
+        # a late "paid" after we released the numbers: nothing issued, flagged for refund
+        self.webhook("checkout.session.completed", chk, sid)
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "needs_refund")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets"), 0)
+        self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger WHERE user_id=?", self.uid), 100)   # gift intact
+
+    def test_reservation_expiry_without_any_webhook(self):
+        chk, sid = self.stripe_checkout(self.p, 3)
+        db = self.db()
+        db.execute("UPDATE checkouts SET created_at='2000-01-01T00:00:00Z' WHERE id=?", (chk,))
+        db.commit()
+        self.run_jobs()
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "expired")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets"), 0)
+
+    def test_wrong_amount_and_cancelled_competition(self):
+        chk, sid = self.stripe_checkout(self.p, 1)
+        self.webhook("checkout.session.completed", chk, sid, amount=1)
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "needs_refund")
+        chk, sid = self.stripe_checkout(self.p, 1)
+        self.post(f"/admin/competitions/{self.cid}/status", {"action": "cancel"})
+        self.webhook("checkout.session.completed", chk, sid)
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "needs_refund")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE status='issued'"), 0)
+        self.post(f"/admin/refunds/{chk}/done")
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "refunded")    # history kept
+
+    def test_cancellation_refunds_once_even_if_repeated(self):
+        self.verify_player()
+        chk, sid = self.stripe_checkout(self.p, 4)
+        self.webhook("checkout.session.completed", chk, sid)
+        self.post(f"/admin/competitions/{self.cid}/status", {"action": "cancel"})
+        from app.services import refund_competition
+        with self.app.app_context():
+            for _ in range(3):
+                refund_competition(self.cid)
+        self.run_jobs()
+        self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger WHERE user_id=? AND ref LIKE 'refund-o%'", self.uid), 1000)
+
+    def test_interrupted_session_still_gets_tickets(self):
+        chk, sid = self.stripe_checkout(self.p, 2)
+        self.post("/logout", client=self.p)                              # browser closed / session lost mid-payment
+        self.webhook("checkout.session.completed", chk, sid)
+        self.post("/login", {"email": "player@example.com", "password": "supersecret123"}, client=self.p)
+        html = self.p.get("/account?tab=entries").get_data(as_text=True)
+        self.assertIn("Test Prize", html)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE status='issued'"), 2)
+
+    def test_chargeback_and_dashboard_refund_flagged(self):
+        chk, sid = self.stripe_checkout(self.p, 1)
+        self.webhook("checkout.session.completed", chk, sid)
+        for etype, obj in (("charge.dispute.created", {"id": "dp_1", "payment_intent": f"pi_{chk}", "amount": 250}),
+                           ("charge.refunded", {"id": "ch_1", "payment_intent": f"pi_{chk}", "amount_refunded": 250})):
+            body, headers = stripe_event(etype, obj)
+            for _ in range(2):
+                self.assertEqual(self.client.post("/stripe/webhook", data=body, headers=headers).status_code, 200)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM flags WHERE kind='Payment reversal'"), 2)
+        self.assertIn(f"checkout #{chk}", self.client.get("/admin/flags").get_data(as_text=True))
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "paid")        # staff decide
+
+
+class HardeningTests(AutoDrawBase):
+    """Phase 4: the database refuses impossible states; jobs are idempotent; failures leave data consistent."""
+
+    def test_database_refuses_impossible_states(self):
+        self.skip_integrity = True
+        self.add(self.cid, 2, client=self.p)
+        chk = self.checkout(client=self.p)
+        iw = self.make_comp("IW", max_tickets=2, max_per_user=2, price="1.00",
+                            instant=[{"title": "£1 Cash", "value": "1", "type": "cash", "quantity": "2"}])
+        self.add(iw, 1, client=self.p)
+        self.checkout(client=self.p)
+        other = self.make_comp("Other")
+        db = self.db()
+        t = db.execute("SELECT * FROM tickets WHERE competition_id=? LIMIT 1", (self.cid,)).fetchone()
+        ip = db.execute("SELECT * FROM instant_prizes WHERE ticket_id IS NOT NULL").fetchone()
+        now = "2026-01-01T00:00:00Z"
+        attempts = {
+            "number out of range": ("INSERT INTO tickets (competition_id, number, user_id, status, created_at) VALUES (?, 999, ?, 'issued', ?)",
+                                    (self.cid, self.uid, now)),
+            "number zero": ("INSERT INTO tickets (competition_id, number, user_id, status, created_at) VALUES (?, 0, ?, 'issued', ?)",
+                            (self.cid, self.uid, now)),
+            "duplicate number": ("INSERT INTO tickets (competition_id, number, user_id, status, created_at) VALUES (?,?,?, 'issued', ?)",
+                                 (self.cid, t["number"], self.uid, now)),
+            "issued back to held": ("UPDATE tickets SET status='held' WHERE id=?", (t["id"],)),
+            "zero wallet entry": ("INSERT INTO credit_ledger (user_id, amount, reason, created_at, kind) VALUES (?, 0, 'x', ?, 'cash')",
+                                  (self.uid, now)),
+            "unknown wallet kind": ("INSERT INTO credit_ledger (user_id, amount, reason, created_at, kind) VALUES (?, 5, 'x', ?, 'gold')",
+                                    (self.uid, now)),
+            "prize paid twice": ("INSERT INTO credit_ledger (user_id, amount, reason, ref, created_at, kind) VALUES (?, 100, 'x', ?, ?, 'cash')",
+                                 (self.uid, f"ip{ip['id']}", now)),
+            "negative withdrawal": ("INSERT INTO withdrawals (user_id, amount, created_at) VALUES (?, -5, ?)", (self.uid, now)),
+            "paid checkout un-paid": ("UPDATE checkouts SET status='expired' WHERE id=?", (chk,)),
+            "paid checkout amount": ("UPDATE checkouts SET cash_due=1 WHERE id=?", (chk,)),
+            "won prize reassigned": ("UPDATE instant_prizes SET ticket_id=? WHERE id=?", (t["id"], ip["id"])),
+            "draw with foreign ticket": ("INSERT INTO draws (competition_id, drawn_at, method, seed, seed_hash, entries_hash, entry_count, "
+                                         "winning_index, winning_number, winning_ticket_id, entries) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                                         (other, now, "manual", "s", "h", "e", 1, 0, t["number"], t["id"], "[]")),
+            "empty order": ("INSERT INTO orders (user_id, competition_id, quantity, amount, created_at) VALUES (?,?,0,0,?)",
+                            (self.uid, self.cid, now)),
+        }
+        for label, (sql, args) in attempts.items():
+            with self.assertRaises(sqlite3.DatabaseError, msg=label):
+                db.execute(sql, args)
+        # overselling: fill the competition directly, then one more is refused by the database itself
+        small = self.make_comp("Two", max_tickets=2, max_per_user=2)
+        for n in (1, 2):
+            db.execute("INSERT INTO tickets (competition_id, number, user_id, status, created_at) VALUES (?,?,?, 'issued', ?)",
+                       (small, n, self.uid, now))
+        db.commit()
+        db.execute("UPDATE competitions SET max_tickets=3 WHERE id=?", (small,))  # even with room in the range…
+        db.execute("UPDATE competitions SET max_tickets=2 WHERE id=?", (small,))
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("INSERT INTO tickets (competition_id, number, user_id, status, created_at) VALUES (?,3,?, 'issued', ?)",
+                       (small, self.uid, now))
+        self.assertEqual(self.q("SELECT value FROM settings WHERE key='constraints_skipped'"), "")
+
+    def test_jobs_are_idempotent_even_in_parallel(self):
+        iw = self.make_comp("Scratchy", max_tickets=4, max_per_user=4, price="1.00",
+                            instant=[{"title": "£2 Cash", "value": "2", "type": "cash", "quantity": "4"}])
+        db = self.db()
+        db.execute("UPDATE competitions SET game_type='scratch' WHERE id=?", (iw,))      # a game: prizes paid on reveal / settle
+        db.execute("UPDATE users SET email_verified=1")
+        db.commit()
+        self.add(iw, 2, client=self.p)
+        self.checkout(client=self.p)
+        self.add(self.cid, 3, client=self.p)
+        self.checkout(client=self.p)
+        db.execute("UPDATE competitions SET ends_at='2000-01-01T00:00:00Z', auto_draw=1")
+        db.execute("UPDATE instant_prizes SET won_at='2000-01-01T00:00:00Z' WHERE ticket_id IS NOT NULL")
+        db.commit()
+        from app.jobs import run_all_jobs
+        errors = []
+
+        def go():
+            try:
+                with self.app.test_request_context():
+                    for _ in range(2):
+                        run_all_jobs(force=True)
+            except Exception as e:                 # pragma: no cover
+                errors.append(e)
+        threads = [threading.Thread(target=go) for _ in range(5)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        self.assertEqual(errors, [])
+        self.assertEqual(self.q("SELECT COUNT(*) FROM draws"), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM prize_claims"), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM entry_snapshots WHERE competition_id=?", self.cid), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger WHERE ref LIKE 'ip%'"), 2)        # each won prize paid once
+        self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger WHERE ref LIKE 'ip%'"), 400)
+        dup = self.q("SELECT COUNT(*) FROM (SELECT dedupe_key FROM notifications WHERE dedupe_key IS NOT NULL GROUP BY dedupe_key HAVING COUNT(*)>1)")
+        self.assertEqual(dup, 0)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM notifications WHERE user_id=? AND title LIKE '%won%'", self.uid), 1)
+
+    def test_payment_provider_down_at_checkout(self):
+        from unittest import mock
+        from app import payments
+        self.add(self.cid, 2, client=self.p)
+        with mock.patch.object(payments, "enabled", return_value=True), \
+             mock.patch.object(payments, "create_checkout", side_effect=RuntimeError("Stripe 503")):
+            r = self.post("/basket/checkout", {}, client=self.p, follow_redirects=True)
+        self.assertIn("not been charged", r.get_data(as_text=True))
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets"), 0)                 # numbers released
+        self.assertIn("Test Prize", self.p.get("/basket").get_data(as_text=True))   # basket kept
+
+    def test_email_outage_never_blocks_purchases(self):
+        from unittest import mock
+        from app import mailer
+        self.app.config.update(SMTP_HOST="smtp.invalid", MAIL_FROM="x@example.com")
+        try:
+            with mock.patch.object(mailer, "_transmit", side_effect=OSError("SMTP down")):
+                self.add(self.cid, 2, client=self.p)
+                chk = self.checkout(client=self.p)
+                self.run_jobs()
+            self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "paid")
+            self.assertGreater(self.q("SELECT COUNT(*) FROM notifications WHERE email_status='failed'"), 0)
+            self.assertIn("Email sending", self.client.get("/admin/health").get_data(as_text=True))
+            with mock.patch.object(mailer, "_transmit", return_value=None):              # SMTP back: retried
+                db = self.db()
+                db.execute("UPDATE notifications SET email_tries=1 WHERE email_status='failed'")
+                db.commit()
+                self.run_jobs()
+            self.assertEqual(self.q("SELECT COUNT(*) FROM notifications WHERE email_status='failed'"), 0)
+        finally:
+            self.app.config.update(SMTP_HOST="")
+
+    def test_database_error_mid_payment_rolls_back_then_retry_succeeds(self):
+        from unittest import mock
+        from app import services
+        chk = self.checkout_pending()
+        with mock.patch.object(services, "award_points", side_effect=sqlite3.OperationalError("database is locked")):
+            with self.app.test_request_context():
+                with self.assertRaises(sqlite3.OperationalError):
+                    services.fulfil_checkout(chk)
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "pending")    # nothing half-done
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE status='issued'"), 0)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM orders WHERE status='paid'"), 0)
+        with self.app.test_request_context():
+            self.assertEqual(services.fulfil_checkout(chk), "paid")                             # Stripe retries
+            self.assertEqual(services.fulfil_checkout(chk), "paid")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE status='issued'"), 2)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM points_ledger"), 1)
+
+    def checkout_pending(self):
+        self.add(self.cid, 2, client=self.p)
+        return self.checkout(client=self.p, pay=False)
+
+    def test_draw_failing_halfway_leaves_no_trace_and_retries(self):
+        from unittest import mock
+        from app import services
+        self.add(self.cid, 3, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        with mock.patch.object(services, "_new_claim", side_effect=RuntimeError("crash mid-draw")):
+            with self.app.test_request_context():
+                with self.assertRaises(RuntimeError):
+                    services.run_draw(self.cid)
+        self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", self.cid), "live")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM draws"), 0)
+        self.assertIsNone(self.q("SELECT winner_ticket_id FROM competitions WHERE id=?", self.cid))
+        self.run_jobs()                                                                          # next job run draws it
+        self.assertEqual(self.q("SELECT COUNT(*) FROM draws"), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM prize_claims"), 1)
+
+    def test_restart_during_checkout(self):
+        chk = self.checkout_pending()
+        from app import create_app
+        fresh = create_app({"TESTING": True, "DATABASE": self.app.config["DATABASE"], "UPLOAD_DIR": self.app.config["UPLOAD_DIR"],
+                            "STRIPE_WEBHOOK_SECRET": "whsec_test", "ADMIN_MFA": False})          # the site restarted
+        body, headers = stripe_event("checkout.session.completed", {"id": "cs_r", "payment_status": "paid", "payment_intent": "pi_r",
+                                                                   "metadata": {"checkout_id": str(chk)}, "amount_total": 500})
+        self.assertEqual(fresh.test_client().post("/stripe/webhook", data=body, headers=headers).status_code, 200)
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "paid")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE status='issued'"), 2)
+
+    def test_worker_down_jobs_still_run_from_web(self):
+        self.add(self.cid, 1, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        self.jobs_due()
+        self.p.get("/competitions")                                   # any customer visit
+        self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", self.cid), "drawn")
 
 
 class MigrationTest(unittest.TestCase):

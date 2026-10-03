@@ -132,6 +132,24 @@ def integrity_problems(db):
         out.append(f"{r['n']} ticket(s) created in competition {r['competition_id']} after it closed")
     for r in q("SELECT ip.id FROM instant_prizes ip JOIN tickets t ON t.id=ip.ticket_id WHERE t.competition_id!=ip.competition_id"):
         out.append(f"Instant prize {r['id']} is linked to a ticket from another competition")
+    skipped = db.execute("SELECT value FROM settings WHERE key='constraints_skipped'").fetchone()
+    if skipped and skipped[0]:
+        out.append(f"Database safety rules not active because existing data breaks them: {skipped[0]} — see docs/DEPLOY.md")
+    for r in q("SELECT u.id, u.points, COALESCE(SUM(p.points),0) s FROM users u LEFT JOIN points_ledger p ON p.user_id=u.id "
+               "GROUP BY u.id HAVING u.points != s"):
+        out.append(f"Customer {r['id']}'s points balance ({r['points']}) doesn't match their points history ({r['s']})")
+    for r in q("SELECT w.id FROM withdrawals w WHERE NOT EXISTS (SELECT 1 FROM credit_ledger l WHERE l.ref='w' || w.id AND l.amount<0)"):
+        out.append(f"Withdrawal {r['id']} has no matching wallet entry")
+    for r in q("SELECT w.id FROM withdrawals w WHERE w.status='rejected' AND NOT EXISTS "
+               "(SELECT 1 FROM credit_ledger l WHERE l.ref='w' || w.id AND l.amount>0)"):
+        out.append(f"Returned withdrawal {r['id']} wasn't credited back")
+    for r in q("SELECT d.id FROM deposits d WHERE d.status='paid' AND NOT EXISTS (SELECT 1 FROM credit_ledger l WHERE l.ref='d' || d.id)"):
+        out.append(f"Paid deposit {r['id']} has no wallet entry")
+    for r in q("SELECT ip.id FROM instant_prizes ip WHERE ip.fulfilled=1 AND ip.credit_amount>0 AND NOT EXISTS "
+               "(SELECT 1 FROM credit_ledger l WHERE l.ref='ip' || ip.id)"):
+        out.append(f"Instant prize {r['id']} is marked paid but no wallet entry exists")
+    for r in q("SELECT c.id FROM competitions c WHERE c.status='drawn' AND NOT EXISTS (SELECT 1 FROM entry_snapshots s WHERE s.competition_id=c.id)"):
+        out.append(f"Drawn competition {r['id']} has no frozen entry list")
     from .services import verify_audit_chain
     broken = verify_audit_chain(db)
     if broken:

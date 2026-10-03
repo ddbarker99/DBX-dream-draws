@@ -53,7 +53,7 @@ def compare(db, sessions, refunds, now=None, since=None):
             if parse_iso(row["created_at"]) < settled:
                 out.append((f"{kind}:{n}:unfulfilled", f"{label} was paid at Stripe ({amount}p) but is “{status}” here — "
                                                        f"nothing was issued. Fulfil or refund it."))
-        elif status == "credit_refused" and back < amount:
+        elif status in ("credit_refused", "refunded") and back < amount:
             out.append((f"{kind}:{n}:refund", f"{label} was refused (credit card) but Stripe shows only {back}p of {amount}p refunded"))
         elif status == "paid":
             expected = row["refunded"] if kind == "deposit" else 0
