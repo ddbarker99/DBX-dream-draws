@@ -1726,6 +1726,20 @@ class OpsTests(PlatformBase):
 class CustomerExperienceTests(PlatformBase):
     """Phase 3: dashboard, My tickets, preferences, transparency, reminders, sold-out, support centre."""
 
+    def test_account_header_and_every_tab_reachable(self):
+        html = self.p.get("/account").get_data(as_text=True)
+        self.assertIn("<h1>Hi Pat</h1>", html)
+        nav = re.search(r'<nav class="tabs" aria-label="My account">(.*?)</nav>', html, re.S)
+        self.assertIsNotNone(nav, "account tabs missing")
+        for label in ("Overview", "My tickets", "Wins &amp; prizes", "Transactions", "Wallet", "DBX Points",
+                      "Responsible play", "Profile &amp; security"):
+            self.assertIn(label, nav.group(1))
+        self.assertEqual(len(re.findall(r"<h1[ >]", html)), 1)
+        self.assertNotIn("<h1>Hi Pat</h1>\n  {% if", html)
+        for tab in ("entries", "wins", "transactions", "wallet", "points", "safer", "profile"):
+            page = self.p.get(f"/account?tab={tab}").get_data(as_text=True)
+            self.assertIn('<nav class="tabs" aria-label="My account">', page, tab)
+
     def test_dashboard_shows_what_needs_action(self):
         html = self.p.get("/account").get_data(as_text=True)
         self.assertIn("Confirm your email", html)

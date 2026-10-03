@@ -40,7 +40,14 @@
 {% endmacro %}
 {% block content %}
 <div class="acct-head">
-  <div><h1>{% if tab == 'overview' %}
+  <div><h1>{% if tab == 'overview' %}Hi {{ u.name.split()[0] }}{% else %}{{ dict(tabs)[tab] }}{% endif %}</h1>
+    <p class="muted" style="margin:0">{{ u.email }}{% if not u.email_verified %} · <span class="pill pending">Email not confirmed</span>{% endif %}{% if excluded %} · <span class="pill hot">On a break until {{ u.excluded_until|uktime('%d %b %Y') }}</span>{% endif %}</p></div>
+</div>
+<nav class="tabs" aria-label="My account">
+  {% for key, label in tabs %}<a href="{{ url_for('public.account', tab=key if key != 'overview' else None) }}"{% if tab == key %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+</nav>
+
+{% if tab == 'overview' %}
   {% if attention %}
   <section aria-labelledby="att-h" style="margin-bottom:var(--s5)"><h2 id="att-h" class="sr-only">Needs your attention</h2>
     <ul class="youratt">{% for text, link, label, level in attention %}<li class="{{ level }}"><span>{{ text }}</span><a class="btn small {{ 'green' if level == 'good' else 'ghost' }}" href="{{ link }}">{{ label }}</a></li>{% endfor %}</ul>
