@@ -381,3 +381,15 @@ CREATE TABLE IF NOT EXISTS referrals (
     reason      TEXT,
     rewarded_at TEXT
 );
+
+-- v10: every change to marketing consent, with where it came from (PECR/UK GDPR record of consent).
+CREATE TABLE IF NOT EXISTS consent_log (
+    id         INTEGER PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    channel    TEXT NOT NULL,                     -- email | sms | reminders
+    granted    INTEGER NOT NULL,
+    source     TEXT NOT NULL,                     -- signup | settings | unsubscribe link
+    created_at TEXT NOT NULL,
+    ip         TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_consent_user ON consent_log(user_id, id);

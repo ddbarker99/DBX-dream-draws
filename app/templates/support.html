@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Help &amp; support · {{ config.SITE_NAME }}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% macro err(k) %}{% if errors.get(k) %}<span class="field-error" id="{{ k }}-err">{{ errors[k] }}</span>{% endif %}{% endmacro %}
+{% block content %}
+<div style="max-width:720px;margin:0 auto">
+<h1>Help &amp; support</h1>
+<p class="muted">Tell us what it's about and pick the order, competition or withdrawal it relates to. We'll have the details in front of us, so you won't need to explain twice. We reply within 1 working day. Quick answers are in the <a href="{{ url_for('public.page', page='faq') }}">FAQs</a>; your past requests are in <a href="{{ url_for('public.my_cases') }}">My support requests</a>.</p>
+<form class="panel" method="post" novalidate data-once>
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <fieldset><legend>What's it about?</legend>{{ err('topic') }}
+    <div class="topicgrid">{% for key, label, _ in topics %}<label class="topic"><input type="radio" name="topic" value="{{ key }}" {{ 'checked' if form.get('topic') == key }} {% if errors.topic %}aria-describedby="topic-err"{% endif %}><span><b>{{ key }}</b><small>{{ label }}</small></span></label>{% endfor %}</div></fieldset>
+  <div class="two">
+    <div class="field"><label for="checkout_id">Order <span class="dim">(optional)</span></label><select id="checkout_id" name="checkout_id"><option value="">—</option>{% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if form.get('checkout_id')|string == o.id|string }}>#{{ o.id }} · {{ o.created_at|uktime('%d %b') }} · {{ (o.titles or '')|truncate(30) }}</option>{% endfor %}</select></div>
+    <div class="field" style="margin-top:0"><label for="competition_id">Competition <span class="dim">(optional)</span></label><select id="competition_id" name="competition_id"><option value="">—</option>{% for c in comps %}<option value="{{ c.id }}" {{ 'selected' if form.get('competition_id')|string == c.id|string }}>{{ c.title }}</option>{% endfor %}</select></div>
+  </div>
+  {% if wds %}<div class="field"><label for="withdrawal_id">Withdrawal <span class="dim">(optional)</span></label><select id="withdrawal_id" name="withdrawal_id"><option value="">—</option>{% for w in wds %}<option value="{{ w.id }}" {{ 'selected' if form.get('withdrawal_id')|string == w.id|string }}>{{ w.amount|gbp }} · {{ w.status }} · {{ w.created_at|uktime('%d %b') }}</option>{% endfor %}</select></div>{% endif %}
+  <div class="field"><label for="message">Your message</label><textarea id="message" name="message" rows="5" required {% if errors.message %}aria-invalid="true" aria-describedby="message-err"{% endif %}>{{ form.get('message','') }}</textarea>{{ err('message') }}</div>
+  <button class="btn block lg" style="margin-top:var(--s4)" data-busy="Sending…">Send to our team</button>
+  <p class="hint">Worried about your gambling or spending? You can <a href="{{ url_for('public.account', tab='safer') }}">set limits or take a break</a> straight away, or call GamCare free on 0808 8020 133.</p>
+</form>
+</div>
+{% endblock %}

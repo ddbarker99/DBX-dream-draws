@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Email preferences · {{ config.SITE_NAME }}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+<div class="form-narrow"><div class="panel">
+{% if done %}
+  <h1>You're unsubscribed</h1>
+  <p class="muted">We won't send you marketing emails or texts. You'll still get messages about your account, entries, wins and withdrawals.</p>
+  <p class="small">Changed your mind? Update your choices in <a href="{{ url_for('public.account', tab='profile') }}#comms">My account</a>.</p>
+{% else %}
+  <h1>Unsubscribe</h1>
+  <p class="muted">Stop marketing emails and texts to <b>{{ u.email }}</b>.</p>
+  <form method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label class="check"><input type="checkbox" name="reminders" value="1"> Also stop the competition reminders I asked for</label>
+    <button class="btn block" style="margin-top:var(--s4)">Unsubscribe</button></form>
+{% endif %}
+</div></div>
+{% endblock %}

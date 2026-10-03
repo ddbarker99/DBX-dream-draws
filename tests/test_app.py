@@ -1465,7 +1465,14 @@ class PlatformTests(Base):
         self.assertEqual(self.q("SELECT COUNT(*) FROM notifications WHERE dedupe_key=?", f"order:{chk}"), 1)
         self.assertIn("1 new", self.p.get("/").get_data(as_text=True))
         self.assertIn("Entries confirmed", self.p.get("/account/notifications").get_data(as_text=True))
-        self.assertNotIn("1 new", self.p.get("/").get_data(as_text=True))                     # read now
+        self.assertIn("1 new", self.p.get("/").get_data(as_text=True))                        # viewing isn't reading
+        nid = self.q("SELECT id FROM notifications WHERE dedupe_key=?", f"order:{chk}")
+        r = self.p.get(f"/account/notifications/{nid}/open")                                    # opening the link reads it
+        self.assertIn(f"/account/orders/{chk}", r.headers["Location"])
+        self.assertNotIn("1 new", self.p.get("/").get_data(as_text=True))
+        other = self.app.test_client()
+        self.signup("snoop@example.com", client=other)
+        self.assertEqual(other.get(f"/account/notifications/{nid}/open").status_code, 404)
 
     def test_finance_reconciles(self):
         self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "1", "kind": "credit", "reason": "Promo"})
@@ -1548,7 +1555,7 @@ class CustomerFeatureTests(PlatformTests):
         html = self.client.get("/search?q=test").get_data(as_text=True)
         self.assertIn("Test Prize", html)
         self.assertIn("Nothing matches", self.client.get("/search?q=zzzz").get_data(as_text=True))
-        self.post(f"/watch/{self.slug(self.cid)}", client=self.p)
+        self.post(f"/watch/{self.slug(self.cid)}", {"remind_close": "1"}, client=self.p)
         self.assertIn("Saved competitions", self.p.get("/account").get_data(as_text=True))
         db = self.db()
         db.execute("UPDATE competitions SET ends_at=strftime('%Y-%m-%dT%H:%M:%SZ','now','+3 hours') WHERE id=?", (self.cid,))
@@ -1556,8 +1563,9 @@ class CustomerFeatureTests(PlatformTests):
         self.run_jobs()
         self.run_jobs()
         self.assertEqual(self.q("SELECT COUNT(*) FROM notifications WHERE kind='reminder'"), 1)     # once, not every run
-        self.assertIsNone(self.q("SELECT email_status FROM notifications WHERE kind='reminder'"))   # no marketing opt-in: no email
-        self.post(f"/watch/{self.slug(self.cid)}", client=self.p)
+        self.assertIsNotNone(self.q("SELECT email_status FROM notifications WHERE kind='reminder'"))  # they asked for it
+        self.assertIn("/unsubscribe/", self.q("SELECT body FROM notifications WHERE kind='reminder'"))
+        self.post(f"/watch/{self.slug(self.cid)}", {"action": "remove"}, client=self.p)
         self.assertEqual(self.q("SELECT COUNT(*) FROM watchlist"), 0)
 
     def test_find_my_ticket_and_public_list(self):
@@ -1700,6 +1708,100 @@ class OpsTests(PlatformTests):
         self.assertIn("to=staff@example.com", out)
         self.assertIn("[STAGING]", out)
         self.assertIn("STAGING", self.client.get("/").get_data(as_text=True))
+
+
+class CustomerExperienceTests(PlatformTests):
+    """Phase 3: dashboard, My tickets, preferences, transparency, reminders, sold-out, support centre."""
+
+    def test_dashboard_shows_what_needs_action(self):
+        html = self.p.get("/account").get_data(as_text=True)
+        self.assertIn("Confirm your email", html)
+        self.assertIn("When you enter a competition", html)                 # helpful empty state
+        db = self.db()
+        db.execute("UPDATE users SET email_verified=1")
+        db.commit()
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "20", "kind": "cash", "reason": "Prize"})
+        self.assertIn("£20.00 of cash winnings you can withdraw", self.p.get("/account").get_data(as_text=True))
+
+    def test_my_tickets_filters_and_ticket_page(self):
+        self.add(self.cid, numbers="3,4", client=self.p)
+        chk = self.checkout(client=self.p)
+        tid = self.q("SELECT id FROM tickets WHERE number=3")
+        html = self.p.get("/account?tab=entries").get_data(as_text=True)
+        self.assertIn(f"/account/tickets/{tid}", html)
+        page = self.p.get(f"/account/tickets/{tid}").get_data(as_text=True)
+        self.assertIn(f"Order #{chk}", page)
+        self.assertIn("Draw pending", page)
+        self.close()
+        self.assertIn("Upcoming draw <span class=\"count\">1", self.p.get("/account?tab=entries").get_data(as_text=True))
+        self.post(f"/admin/competitions/{self.cid}/draw")
+        html = self.p.get("/account?tab=entries&show=completed").get_data(as_text=True)
+        self.assertIn("Test Prize", html)
+        self.assertIn("Winner", self.p.get(f"/account/tickets/{self.q('SELECT winner_ticket_id FROM competitions')}").get_data(as_text=True))
+        other = self.app.test_client()
+        self.signup("other@example.com", client=other)
+        self.assertEqual(other.get(f"/account/tickets/{tid}").status_code, 404)
+
+    def test_preferences_record_consent_and_unsubscribe(self):
+        self.post("/signup", {"name": "Mark Eting", "email": "m@example.com", "dob": "1990-01-01", "password": "supersecret123",
+                              "agree": "1", "marketing": "1"}, client=self.app.test_client())
+        mid = self.q("SELECT id FROM users WHERE email='m@example.com'")
+        self.assertEqual((self.q("SELECT marketing FROM users WHERE id=?", mid), self.q("SELECT marketing_sms FROM users WHERE id=?", mid)), (1, 0))
+        self.assertEqual(self.q("SELECT source FROM consent_log WHERE user_id=?", mid), "signup")
+        self.assertEqual(self.q("SELECT marketing FROM users WHERE id=?", self.uid), 0)            # never opted in by default
+        self.post("/account/preferences", {"marketing_sms": "1", "reminder_emails": "1"}, client=self.p)
+        self.assertEqual(self.q("SELECT marketing_sms FROM users WHERE id=?", self.uid), 1)
+        with self.app.test_request_context():
+            from app.routes import unsubscribe_link
+            link = unsubscribe_link(mid)
+        path = link.split("localhost:5000")[-1]
+        guest = self.app.test_client()
+        self.assertIn("Unsubscribe", guest.get(path).get_data(as_text=True))
+        self.post(path, {}, client=guest)
+        self.assertEqual(self.q("SELECT marketing FROM users WHERE id=?", mid), 0)
+        self.assertEqual(self.q("SELECT source FROM consent_log WHERE user_id=? ORDER BY id DESC", mid), "unsubscribe link")
+        self.assertEqual(guest.get("/unsubscribe/forged").status_code, 404)
+
+    def test_transparency_and_states(self):
+        html = self.client.get("/transparency").get_data(as_text=True)
+        for x in ("How draws work", "Free entry", "Results archive", "Responsible play", "Who we are"):
+            self.assertIn(x, html)
+        tiny = self.make_comp("Tiny", max_tickets=1, max_per_user=1)
+        self.add(tiny, 1, client=self.p)
+        self.checkout(client=self.p)
+        page = self.client.get(f"/c/{self.slug(tiny)}").get_data(as_text=True)
+        self.assertIn("Sold out — every ticket has gone", page)
+        self.assertIn("Still open", page)
+        self.assertIn("Test Prize", page)                                   # an alternative, never added to the basket
+        self.close(tiny)
+        page = self.client.get(f"/c/{self.slug(tiny)}").get_data(as_text=True)
+        self.assertIn("draw pending", page)
+        self.assertIn('http-equiv="refresh"', page)
+
+    def test_support_centre(self):
+        self.add(self.cid, 1, client=self.p)
+        chk = self.checkout(client=self.p)
+        other = self.app.test_client()
+        self.signup("other@example.com", client=other)
+        self.add(self.cid, 1, client=other)
+        other_chk = self.checkout(client=other)
+        r = self.post("/support", {"topic": "Payment", "message": "I was charged twice I think", "checkout_id": str(chk),
+                                   "competition_id": str(self.cid)}, client=self.p)
+        case = self.q("SELECT id FROM cases ORDER BY id DESC")
+        self.assertEqual((self.q("SELECT checkout_id FROM cases WHERE id=?", case), self.q("SELECT priority FROM cases WHERE id=?", case)), (chk, "high"))
+        self.post("/support", {"topic": "Payment", "message": "Look at this other order", "checkout_id": str(other_chk)}, client=self.p)
+        self.assertIsNone(self.q("SELECT checkout_id FROM cases ORDER BY id DESC"))          # can't attach someone else's order
+        self.post(f"/admin/cases/{case}", {"action": "internal", "body": "SECRET staff note"})
+        self.post(f"/admin/cases/{case}", {"action": "reply", "body": "Only one charge — the other was released."})
+        view = self.p.get(f"/support/requests/{case}").get_data(as_text=True)
+        self.assertIn("Only one charge", view)
+        self.assertNotIn("SECRET", view)
+        self.assertIn("Our support team has replied", self.p.get("/account").get_data(as_text=True))
+        self.post(f"/support/requests/{case}", {"body": "Thanks!"}, client=self.p)
+        self.assertEqual(self.q("SELECT status FROM cases WHERE id=?", case), "open")
+        self.assertEqual(other.get(f"/support/requests/{case}").status_code, 404)
+        r = self.post("/support", {"topic": "", "message": "x"}, client=self.p)
+        self.assertEqual(r.status_code, 400)
 
 
 class MigrationTest(unittest.TestCase):

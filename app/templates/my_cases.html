@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}My support requests · {{ config.SITE_NAME }}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('public.account') }}">My account</a> › <span aria-current="page">Support requests</span></nav>
+<div class="row" style="flex-wrap:wrap"><h1 style="margin:0">My support requests</h1><a class="btn small" href="{{ url_for('public.support_centre') }}">New request</a></div>
+{% if rows %}
+<div class="panel table-scroll" tabindex="0" style="margin-top:var(--s4)"><table>
+  <thead><tr><th scope="col">Request</th><th scope="col">About</th><th scope="col">Status</th><th scope="col">Updated</th></tr></thead><tbody>
+  {% for k in rows %}<tr><td><a href="{{ url_for('public.case_view', case_id=k.id) }}">#{{ k.id }}</a></td><td>{{ k.topic }}</td>
+    <td><span class="pill {{ 'paid' if k.status == 'resolved' else ('new' if k.status == 'waiting' else 'pending') }}">{{ {'open':'With our team','waiting':'We replied','resolved':'Resolved'}[k.status] }}</span></td><td class="muted">{{ k.updated_at|ago }}</td></tr>{% endfor %}
+  </tbody></table></div>
+{% else %}<div class="empty"><p>When you contact us, your requests and our replies are kept here so you can follow them.</p><a class="btn" href="{{ url_for('public.support_centre') }}">Get help</a></div>{% endif %}
+{% endblock %}

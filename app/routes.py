@@ -15,6 +15,7 @@ from .notify import notify, tell, unread_count
 from .analytics import count as track, device_type
 from .security import device_name, end_session, revoke_others, start_session
 from .db import get_db, iso, parse_iso, utcnow, write_txn
+from . import UK
 from .services import (audit, entrant_count, CATEGORIES, CATEGORY_NAMES, check_promo, MIN_DEPOSIT, MAX_DEPOSIT, create_deposit, deposit_room,
                        fulfil_deposit, set_deposit_status, expire_stale_deposits, refundable_deposits, refund_deposits, MIN_WITHDRAWAL, REDEEM_BLOCK, TIERS, balances, claim_free_play, free_play_today,
                        redeem_points, tier_for, check_withdrawal, GAME_ICONS, GAME_NAMES, GAME_PRICES, GAME_TYPES, MAX_PICKS, game_info, reveal_ticket,
@@ -215,8 +216,8 @@ def competition(slug):
                               "WHERE competition_id=? ORDER BY id", (c["id"],)).fetchall()
     snapshot = db.execute("SELECT taken_at, entry_count, paid_count, postal_count, entries_hash FROM entry_snapshots "
                           "WHERE competition_id=? ORDER BY id DESC LIMIT 1", (c["id"],)).fetchone()
-    watching = bool(g.user and db.execute("SELECT 1 FROM watchlist WHERE user_id=? AND competition_id=?",
-                                          (g.user["id"], c["id"])).fetchone())
+    watching = db.execute("SELECT * FROM watchlist WHERE user_id=? AND competition_id=?",
+                          (g.user["id"], c["id"])).fetchone() if g.user else None
     share = current_app.config["SITE_URL"] + url_for("public.competition", slug=c["slug"])
     if g.user:
         share += "?ref=" + g.user["referral_code"]
@@ -346,12 +347,17 @@ def watch(slug):
     c = db.execute("SELECT id, title FROM competitions WHERE slug=?", (slug,)).fetchone()
     if c is None:
         abort(404)
-    if db.execute("DELETE FROM watchlist WHERE user_id=? AND competition_id=?", (g.user["id"], c["id"])).rowcount:
-        flash(f"Removed {c['title']} from your saved competitions.")
+    if request.form.get("action") == "remove":
+        db.execute("DELETE FROM watchlist WHERE user_id=? AND competition_id=?", (g.user["id"], c["id"]))
+        flash(f"Removed {c['title']} from your saved competitions. No reminders will be sent.")
     else:
-        db.execute("INSERT INTO watchlist (user_id, competition_id, created_at) VALUES (?,?,?)", (g.user["id"], c["id"], iso(utcnow())))
-        flash(f"Saved. Find {c['title']} under My account" + (" — we'll remind you before it closes." if g.user["marketing"]
-              else " — we'll remind you in your notifications before it closes."))
+        close, result = 1 if request.form.get("remind_close") else 0, 1 if request.form.get("remind_result") else 0
+        db.execute("INSERT INTO watchlist (user_id, competition_id, created_at, remind_close, remind_result) VALUES (?,?,?,?,?) "
+                   "ON CONFLICT(user_id, competition_id) DO UPDATE SET remind_close=excluded.remind_close, "
+                   "remind_result=excluded.remind_result", (g.user["id"], c["id"], iso(utcnow()), close, result))
+        what = " and ".join(x for x in ("before it closes" if close else "", "when the result is in" if result else "") if x)
+        how = "by email and in your notifications" if g.user["reminder_emails"] else "in your notifications"
+        flash(f"Saved {c['title']}." + (f" We'll remind you {what}, {how}." if what else " No reminders — you can find it in My account."))
     return redirect(url_for("public.competition", slug=slug))
 
 
@@ -982,9 +988,113 @@ def page(page):
     return render_template(PAGES[page])
 
 
+@bp.route("/transparency")
+def transparency():
+    """One place that points to the single authoritative page for each subject, with live facts."""
+    db = get_db()
+    facts = {
+        "draws": db.execute("SELECT COUNT(*) FROM draws WHERE method!='redraw'").fetchone()[0],
+        "redraws": db.execute("SELECT COUNT(*) FROM draws WHERE method='redraw'").fetchone()[0],
+        "entries": db.execute("SELECT COALESCE(SUM(entry_count),0) FROM entry_snapshots").fetchone()[0],
+        "postal": db.execute("SELECT COALESCE(SUM(postal_count),0) FROM entry_snapshots").fetchone()[0],
+        "postal_accepted": db.execute("SELECT COUNT(*) FROM postal_entries WHERE status='accepted'").fetchone()[0],
+        "last": db.execute("SELECT c.title, c.slug, c.drawn_at FROM competitions c WHERE status='drawn' AND game_type='' "
+                           "ORDER BY drawn_at DESC LIMIT 1").fetchone(),
+        "paid_out": db.execute("SELECT COALESCE(SUM(amount),0) FROM withdrawals WHERE status='paid'").fetchone()[0],
+    }
+    return render_template("transparency.html", facts=facts, stats=site_stats(db))
+
+
 @bp.route("/how-it-works")
 def how_it_works():
     return render_template("how.html")
+
+
+SUPPORT_TOPICS = [("Payment", "A payment or order", "high"), ("Entry", "My tickets or an entry", "normal"),
+                  ("Withdrawal", "Withdrawing winnings", "high"), ("Prize", "Claiming a prize", "high"),
+                  ("Account", "My account or log in", "normal"), ("Responsible play", "Limits, breaks or support", "high"),
+                  ("Other", "Something else", "low")]
+
+
+@bp.route("/support", methods=["GET", "POST"])
+def support_centre():
+    if g.user is None:
+        return redirect(url_for("public.contact"))
+    db = get_db()
+    uid = g.user["id"]
+    orders = db.execute("SELECT k.id, k.status, k.cash_due, k.created_at, (SELECT GROUP_CONCAT(c.title, ', ') FROM orders o JOIN "
+                        "competitions c ON c.id=o.competition_id WHERE o.checkout_id=k.id) AS titles FROM checkouts k "
+                        "WHERE k.user_id=? AND k.status!='pending' ORDER BY k.id DESC LIMIT 20", (uid,)).fetchall()
+    comps = db.execute("SELECT DISTINCT c.id, c.title FROM tickets t JOIN competitions c ON c.id=t.competition_id WHERE t.user_id=? "
+                       "ORDER BY c.id DESC LIMIT 30", (uid,)).fetchall()
+    wds = db.execute("SELECT id, amount, status, created_at FROM withdrawals WHERE user_id=? ORDER BY id DESC LIMIT 10", (uid,)).fetchall()
+    form = request.form if request.method == "POST" else {"topic": request.args.get("topic", ""),
+                                                           "checkout_id": request.args.get("order", ""),
+                                                           "competition_id": request.args.get("comp", "")}
+    errors = {}
+    if request.method == "POST":
+        topic = request.form.get("topic", "")
+        msg = request.form.get("message", "").strip()[:4000]
+        pr = dict((t, p) for t, _, p in SUPPORT_TOPICS).get(topic)
+        if not pr:
+            errors["topic"] = "Choose what your question is about."
+        if len(msg) < 10:
+            errors["message"] = "Tell us a little more (at least 10 characters)."
+        ids = {}
+        for field, rows in (("checkout_id", orders), ("competition_id", comps), ("withdrawal_id", wds)):
+            v = request.form.get(field, type=int)
+            if v and v in {r["id"] for r in rows}:          # only references that belong to this customer
+                ids[field] = v
+        key = "support:" + str(uid)
+        if not errors and _too_many(key, limit=5, window=3600):
+            errors["message"] = "You've sent several messages in the last hour — we'll reply to those first."
+        if errors:
+            return render_template("support.html", form=request.form, errors=errors, topics=SUPPORT_TOPICS, orders=orders,
+                                   comps=comps, wds=wds), 400
+        _fail(key)
+        from .control import open_case
+        case_id = open_case(g.user["name"], g.user["email"], topic, msg, uid, ids.get("competition_id"), ids.get("checkout_id"))
+        db.execute("UPDATE cases SET priority=?, withdrawal_id=? WHERE id=?", (pr, ids.get("withdrawal_id"), case_id))
+        tell(g.user["email"], f"We've got your message [case #{case_id}]", kind="support", key=f"case:{case_id}", user_id=uid,
+             link=url_for("public.case_view", case_id=case_id), title=f"Support request #{case_id} received",
+             body=f"Hi {g.user['name'].split()[0]},\n\nThanks — we've got your message about \"{topic.lower()}\" and we reply within "
+                  "1 working day. You can follow it, and reply, from your account.\n\nYour message:\n" + msg, heading="Message received")
+        if current_app.config["SUPPORT_EMAIL"]:
+            mailer.send(current_app.config["SUPPORT_EMAIL"], f"[{pr}] Support case #{case_id}: {topic}",
+                        f"{g.user['name']} <{g.user['email']}> (account #{uid})\nReferences: {ids or 'none'}\n\n{msg}")
+        flash(f"Thanks — your request #{case_id} is with our team. We'll reply within 1 working day.")
+        return redirect(url_for("public.case_view", case_id=case_id))
+    return render_template("support.html", form=form, errors=errors, topics=SUPPORT_TOPICS, orders=orders, comps=comps, wds=wds)
+
+
+@bp.route("/support/requests")
+@login_required
+def my_cases():
+    rows = get_db().execute("SELECT k.*, (SELECT MAX(created_at) FROM case_notes n WHERE n.case_id=k.id AND n.kind='reply') AS replied "
+                            "FROM cases k WHERE k.user_id=? ORDER BY k.updated_at DESC", (g.user["id"],)).fetchall()
+    return render_template("my_cases.html", rows=rows)
+
+
+@bp.route("/support/requests/<int:case_id>", methods=["GET", "POST"])
+@login_required
+def case_view(case_id):
+    db = get_db()
+    k = db.execute("SELECT * FROM cases WHERE id=? AND user_id=?", (case_id, g.user["id"])).fetchone()
+    if k is None:
+        abort(404)
+    if request.method == "POST":
+        body = request.form.get("body", "").strip()[:4000]
+        if len(body) < 2:
+            flash("Write your reply first.", "error")
+        else:
+            now = iso(utcnow())
+            db.execute("INSERT INTO case_notes (case_id, created_at, kind, body) VALUES (?,?, 'customer', ?)", (case_id, now, body))
+            db.execute("UPDATE cases SET status='open', updated_at=? WHERE id=?", (now, case_id))
+            flash("Reply sent.")
+        return redirect(url_for("public.case_view", case_id=case_id))
+    notes = db.execute("SELECT kind, body, created_at FROM case_notes WHERE case_id=? AND kind!='internal' ORDER BY id",
+                       (case_id,)).fetchall()       # internal staff notes are never shown to customers
+    return render_template("case_view.html", k=k, notes=notes)
 
 
 CONTACT_TOPICS = ["My entries or tickets", "A payment", "Withdrawing winnings", "Claiming a prize", "My account",
@@ -1122,6 +1232,13 @@ def signup():
             session["promo"] = promo_keep
         session["pwv"] = _pw_version(db, cur.lastrowid)
         start_session(db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone())
+        new_user = db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
+        for ch, field in (("email", "marketing"), ("sms", "marketing_sms")):
+            if f.get(field):
+                if ch == "sms":
+                    db.execute("UPDATE users SET marketing_sms=1 WHERE id=?", (cur.lastrowid,))
+                db.execute("INSERT INTO consent_log (user_id, channel, granted, source, created_at, ip) VALUES (?,?,1,'signup',?,?)",
+                           (cur.lastrowid, ch, iso(utcnow()), request.remote_addr))
         if ref:
             from .services import referral_problem
             new_u = db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
@@ -1215,11 +1332,43 @@ def reset(token):
     return render_template("reset.html")
 
 
-ACCOUNT_TABS = [("overview", "Overview"), ("entries", "My entries"), ("wins", "Wins & prizes"),
+ACCOUNT_TABS = [("overview", "Overview"), ("entries", "My tickets"), ("wins", "Wins & prizes"),
                 ("transactions", "Transactions"), ("wallet", "Wallet"), ("points", "DBX Points"),
                 ("safer", "Responsible play"), ("profile", "Profile & security")]
 OLD_TABS = {"tickets": "entries", "orders": "transactions", "rewards": "points", "refer": "points",
             "settings": "safer"}
+
+
+def _attention(db, user, bal):
+    """Things this customer should do or know now, most important first. (text, link, link label, level)"""
+    uid, out = user["id"], []
+    for c in db.execute("SELECT pc.status, c.title FROM prize_claims pc JOIN competitions c ON c.id=pc.competition_id "
+                        "WHERE pc.user_id=? AND pc.status IN ('selected','contacted','verification','chosen')", (uid,)):
+        out.append((f"You won {c['title']}! " + ("We need to verify a few details — please check your email and reply."
+                    if c["status"] in ("contacted", "verification") else "We'll be in touch shortly to arrange your prize."),
+                    url_for("public.support_centre", topic="Prize"), "Contact us about my prize", "good"))
+    n = db.execute("SELECT COUNT(*) FROM tickets t JOIN competitions c ON c.id=t.competition_id WHERE t.user_id=? "
+                   "AND t.status='issued' AND t.revealed_at IS NULL AND c.game_type!=''", (uid,)).fetchone()[0]
+    if n:
+        w = unplayed(db, uid)
+        out.append((f"You have {n} instant win play{'s' if n != 1 else ''} to reveal.", url_for("public.play", slug=w[0]["slug"]),
+                    "Reveal now", "good"))
+    if not user["email_verified"]:
+        out.append(("Confirm your email address to withdraw winnings and claim free plays.", url_for("public.account", tab="profile"),
+                    "Resend the link", "warn"))
+    for w in db.execute("SELECT * FROM withdrawals WHERE user_id=? AND status IN ('requested','processing') ORDER BY id", (uid,)):
+        out.append((f"Your withdrawal of £{w['amount'] / 100:.2f} is {'being processed' if w['status'] == 'processing' else 'requested'}.",
+                    url_for("public.withdrawal_detail", wid=w["id"]), "Track it", "info"))
+    if bal["cash"] >= MIN_WITHDRAWAL and not any(o[3] == "info" for o in out):
+        out.append((f"You have £{bal['cash'] / 100:.2f} of cash winnings you can withdraw.", url_for("public.account", tab="wallet") + "#withdraw",
+                    "Withdraw", "info"))
+    if user["pending_limit_at"]:
+        out.append((f"A spending limit increase you asked for starts {parse_iso(user['pending_limit_at']).astimezone(UK).strftime('%a %d %b, %H:%M')}.",
+                    url_for("public.account", tab="safer"), "Review limits", "info"))
+    cases = db.execute("SELECT COUNT(*) FROM cases WHERE user_id=? AND status='waiting'", (uid,)).fetchone()[0]
+    if cases:
+        out.append(("Our support team has replied to you.", url_for("public.my_cases"), "Read the reply", "info"))
+    return out
 
 
 def _entry_groups(db, uid):
@@ -1246,12 +1395,14 @@ def _entry_groups(db, uid):
     out = list(groups.values())
     for e in out:
         e["open"] = e["status"] == "live" and parse_iso(e["ends_at"]) > utcnow()
-        # Active: still open, or closed and waiting for its draw, or plays left to reveal.
-        e["section"] = ("won" if e["won"] or e["instant_wins"] else
-                        "active" if e["status"] == "live" and (e["open"] or not e["game"]) or e["unplayed"] else "previous")
-        if e["section"] == "won" and (e["status"] == "live" and e["open"] or e["unplayed"]):
-            e["section"] = "active"          # an instant win on an entry that's still in play stays under Active
-    out.sort(key=lambda e: (e["section"] != "active", e["ends_at"] if e["section"] == "active" else "", ))
+        e["f"] = {
+            "active": e["open"] or bool(e["unplayed"]),                                   # can still enter / plays to reveal
+            "upcoming": e["status"] == "live" and not e["open"] and not e["game"],        # closed, draw pending
+            "winner": e["won"] or e["instant_wins"] > 0,
+            "completed": e["status"] in ("drawn", "cancelled") or (e["game"] and not e["open"] and not e["unplayed"]),
+        }
+        e["section"] = "active" if (e["f"]["active"] or e["f"]["upcoming"]) else ("won" if e["f"]["winner"] else "previous")
+    out.sort(key=lambda e: (not (e["f"]["active"] or e["f"]["upcoming"]), e["ends_at"] if (e["f"]["active"] or e["f"]["upcoming"]) else "",))
     return out
 
 
@@ -1271,14 +1422,19 @@ def account():
            "excluded": is_excluded(user)}
     if tab in ("overview", "entries"):
         groups = _entry_groups(db, uid)
-        show = request.args.get("show", "active")
-        if show not in ("active", "won", "previous"):
+        show = {"won": "winner", "previous": "completed"}.get(request.args.get("show"), request.args.get("show", "active"))
+        if show not in ("active", "upcoming", "winner", "completed"):
             show = "active"
-        ctx.update(groups=groups, show=show, counts={k: sum(1 for e in groups if e["section"] == k)
-                                                     for k in ("active", "won", "previous")},
-                   live_groups=[e for e in groups if e["section"] == "active"], waiting=unplayed(db, uid))
-        ctx["upcoming"] = sorted([e for e in groups if e["section"] == "active" and not e["game"]],
+        ctx.update(groups=groups, show=show, counts={k: sum(1 for e in groups if e["f"][k])
+                                                     for k in ("active", "upcoming", "winner", "completed")},
+                   live_groups=[e for e in groups if e["f"]["active"] or e["f"]["upcoming"]], waiting=unplayed(db, uid))
+        ctx["upcoming"] = sorted([e for e in groups if (e["f"]["active"] or e["f"]["upcoming"]) and not e["game"]],
                                  key=lambda e: e["ends_at"])[:5]
+    if tab == "overview":
+        ctx["recent_results"] = [e for e in groups if e["status"] == "drawn" and e["drawn_at"]
+                                 and parse_iso(e["drawn_at"]) > utcnow() - timedelta(days=30)][:5]
+        ctx["attention"] = _attention(db, user, bal)
+        ctx["latest_notes"] = db.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 4", (uid,)).fetchall()
     if tab in ("overview", "wins"):
         wins = db.execute(
             "SELECT ip.title, ip.value, ip.prize_type, ip.credit_amount, ip.fulfilled, ip.won_at, t.number, c.title AS comp, c.slug "
@@ -1466,18 +1622,62 @@ def profile():
              body="Your password was just changed and every other device was signed out. If this wasn't you, reset your "
                   "password straight away and contact us.", heading="Password changed")
     phone = "".join(ch for ch in f.get("phone", "") if ch.isdigit() or ch == "+")[:20] or None
-    db.execute("UPDATE users SET marketing=?, phone=? WHERE id=?", (1 if f.get("marketing") else 0, phone, g.user["id"]))
+    db.execute("UPDATE users SET phone=? WHERE id=?", (phone, g.user["id"]))
     flash("Saved.")
     return redirect(url_for("public.account", tab="profile"))
+
+
+@bp.route("/account/tickets/<int:tid>")
+@login_required
+def ticket_detail(tid):
+    """One ticket, everything about it — the record customers use instead of searching their email."""
+    db = get_db()
+    t = db.execute(
+        "SELECT t.*, c.title, c.slug, c.status AS cstatus, c.ends_at, c.drawn_at, c.game_type, c.auto_draw, c.winner_ticket_id, "
+        "c.image, o.checkout_id, (SELECT w.number FROM tickets w WHERE w.id=c.winner_ticket_id) AS winning_number, "
+        "ip.title AS prize, ip.prize_type, ip.fulfilled FROM tickets t JOIN competitions c ON c.id=t.competition_id "
+        "LEFT JOIN orders o ON o.id=t.order_id LEFT JOIN instant_prizes ip ON ip.ticket_id=t.id "
+        "WHERE t.id=? AND t.user_id=? AND t.status='issued'", (tid, g.user["id"])).fetchone()
+    if t is None:
+        abort(404)
+    claim = db.execute("SELECT status FROM prize_claims WHERE ticket_id=? ORDER BY id DESC LIMIT 1", (tid,)).fetchone()
+    from .services import CLAIM_NAMES
+    return render_template("ticket.html", t=t, claim=claim, claim_names=CLAIM_NAMES,
+                           revealed=not t["game_type"] or bool(t["revealed_at"]))
+
+
+@bp.route("/account/notifications/<int:nid>/open")
+@login_required
+def notification_open(nid):
+    db = get_db()
+    n = db.execute("SELECT * FROM notifications WHERE id=? AND user_id=?", (nid, g.user["id"])).fetchone()
+    if n is None:
+        abort(404)
+    db.execute("UPDATE notifications SET read_at=COALESCE(read_at, ?) WHERE id=?", (iso(utcnow()), nid))
+    return redirect(n["link"] if n["link"] and n["link"].startswith("/") else url_for("public.notifications"))
+
+
+@bp.route("/account/notifications/read", methods=["POST"])
+@login_required
+def notifications_read():
+    db = get_db()
+    nid = request.form.get("nid", type=int)
+    if nid:
+        db.execute("UPDATE notifications SET read_at=COALESCE(read_at, ?) WHERE id=? AND user_id=?", (iso(utcnow()), nid, g.user["id"]))
+    else:
+        db.execute("UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL", (iso(utcnow()), g.user["id"]))
+        flash("All notifications marked as read.")
+    return redirect(url_for("public.notifications"))
 
 
 @bp.route("/account/notifications")
 @login_required
 def notifications():
     db = get_db()
-    rows = db.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 100", (g.user["id"],)).fetchall()
-    db.execute("UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL", (iso(utcnow()), g.user["id"]))
-    return render_template("notifications.html", rows=rows)
+    show = request.args.get("show", "all")
+    sql = "SELECT * FROM notifications WHERE user_id=?" + (" AND read_at IS NULL" if show == "unread" else "")
+    rows = db.execute(sql + " ORDER BY id DESC LIMIT 100", (g.user["id"],)).fetchall()
+    return render_template("notifications.html", rows=rows, show=show)
 
 
 @bp.route("/account/sessions/revoke", methods=["POST"])
@@ -1492,6 +1692,59 @@ def revoke_session():
         flash("Signed out of that device.")
     audit(get_db(), "account.sessions_revoked", f"user:{g.user['id']}", "Signed out other device(s)")
     return redirect(url_for("public.account", tab="profile") + "#devices")
+
+
+def set_consent(db, user, channel, granted, source):
+    col = {"email": "marketing", "sms": "marketing_sms", "reminders": "reminder_emails"}[channel]
+    if bool(user[col]) == bool(granted):
+        return False
+    db.execute(f"UPDATE users SET {col}=? WHERE id=?", (1 if granted else 0, user["id"]))
+    db.execute("INSERT INTO consent_log (user_id, channel, granted, source, created_at, ip) VALUES (?,?,?,?,?,?)",
+               (user["id"], channel, 1 if granted else 0, source, iso(utcnow()), request.remote_addr))
+    return True
+
+
+@bp.route("/account/preferences", methods=["POST"])
+@login_required
+def preferences():
+    db = get_db()
+    changed = [ch for ch, field in (("email", "marketing_email"), ("sms", "marketing_sms"), ("reminders", "reminder_emails"))
+               if set_consent(db, g.user, ch, request.form.get(field) == "1", "settings")]
+    if request.form.get("marketing_sms") == "1" and not g.user["phone"]:
+        flash("Add your mobile number above so we can text you.", "error")
+    flash("Communication preferences saved." if changed else "No changes.")
+    return redirect(url_for("public.account", tab="profile") + "#comms")
+
+
+def _unsub_signer():
+    return URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="unsubscribe")
+
+
+def unsubscribe_link(user_id):
+    return current_app.config["SITE_URL"] + url_for("public.unsubscribe", token=_unsub_signer().dumps(user_id))
+
+
+@bp.route("/unsubscribe/<token>", methods=["GET", "POST"])
+def unsubscribe(token):
+    """One click from any marketing or reminder email, no log-in needed."""
+    try:
+        uid = _unsub_signer().loads(token, max_age=365 * 24 * 3600)
+    except (BadSignature, SignatureExpired):
+        abort(404)
+    db = get_db()
+    u = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    if u is None:
+        abort(404)
+    done = False
+    if request.method == "POST":
+        set_consent(db, u, "email", False, "unsubscribe link")
+        u = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        set_consent(db, u, "sms", False, "unsubscribe link")
+        u = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        if request.form.get("reminders"):
+            set_consent(db, u, "reminders", False, "unsubscribe link")
+        done = True
+    return render_template("unsubscribe.html", u=u, done=done)
 
 
 @bp.route("/verify/<token>")

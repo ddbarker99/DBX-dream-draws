@@ -3,7 +3,8 @@
 {% block desc %}Get in touch with the {{ config.SITE_NAME }} team about entries, payments, withdrawals or prizes. We reply within 1 working day.{% endblock %}
 {% macro err(k) %}{% if errors.get(k) %}<span class="hint" id="{{ k }}-err" style="color:#ff8a95">{{ errors[k] }}</span>{% endif %}{% endmacro %}
 {% block content %}
-<div class="page-head"><h1>Contact us</h1><p>We reply within 1 working day. Many answers are already in the <a href="{{ url_for('public.page', page='faq') }}">FAQs</a>.</p></div>
+<div class="page-head"><h1>Contact us</h1>
+{% if user %}<p class="notice good"><span>You're logged in — use <a href="{{ url_for('public.support_centre') }}">Help &amp; support</a> instead so we can see your order or entry straight away and you can follow our reply in your account.</span></p>{% endif %}<p>We reply within 1 working day. Many answers are already in the <a href="{{ url_for('public.page', page='faq') }}">FAQs</a>.</p></div>
 <div class="detail" style="grid-template-areas:none">
   <div>
   {% if sent %}

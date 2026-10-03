@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Support request #{{ k.id }} · {{ config.SITE_NAME }}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+<div style="max-width:720px;margin:0 auto">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('public.my_cases') }}">My support requests</a> › <span aria-current="page">#{{ k.id }}</span></nav>
+<h1>{{ k.topic }} <span class="small muted">#{{ k.id }}</span></h1>
+<p class="muted">{{ {'open':'With our team — we reply within 1 working day.','waiting':'We\'ve replied. Reply below if you need anything else.','resolved':'Resolved.'}[k.status] }}{% if k.resolution %} {{ k.resolution }}{% endif %}</p>
+<div class="stack">{% for n in notes %}<section class="panel note-{{ 'reply' if n.kind == 'reply' else 'customer' }}"><div class="row"><b>{{ 'Our team' if n.kind == 'reply' else 'You' }}</b><span class="small muted">{{ n.created_at|uktime('%d %b %Y, %H:%M') }}</span></div><p style="white-space:pre-wrap;margin:6px 0 0">{{ n.body }}</p></section>{% endfor %}</div>
+<form class="panel" method="post" style="margin-top:var(--s4)"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <label for="body">{{ 'Reopen with a reply' if k.status == 'resolved' else 'Reply' }}</label><textarea id="body" name="body" rows="3" required></textarea>
+  <button class="btn" style="margin-top:var(--s3)">Send</button></form>
+</div>
+{% endblock %}

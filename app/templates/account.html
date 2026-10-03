@@ -6,7 +6,7 @@
   {%- if e.won %}<span class="pill hot">You won</span>
   {%- elif e.game and e.unplayed %}<a class="btn small" href="{{ url_for('public.play', slug=e.slug) }}">Reveal {{ e.unplayed }}</a>
   {%- elif e.open %}<span class="pill live">Open</span>
-  {%- elif e.status == 'live' and not e.game %}<span class="pill pending">Closed · draw due</span>
+  {%- elif e.status == 'live' and not e.game %}<span class="pill pending">Draw pending</span>
   {%- elif e.status == 'drawn' %}<span class="pill drawn">Drawn</span>
   {%- elif e.status == 'cancelled' %}<span class="pill cancelled">Cancelled · refunded</span>
   {%- else %}<span class="pill">Closed</span>{% endif %}
@@ -21,8 +21,8 @@
       {% elif e.status == 'drawn' %}drawn {{ e.drawn_at|uktime('%d %b %Y') }} · winning ticket #{{ e.winning_number }}
       {% elif e.status == 'cancelled' %}cancelled — refunded to your wallet
       {% elif e.open %}draw {{ e.ends_at|uktime('%a %d %b, %H:%M') }}
-      {% else %}closed {{ e.ends_at|uktime('%d %b, %H:%M') }} · draw due{% endif %}</p>
-    {% if not e.game %}<div class="tickets" aria-label="Your ticket numbers">{% for t in e.tickets[:40] %}<span class="{{ 'win' if t.winner_ticket_id == t.id else ('iw' if t.win) }}">#{{ t.number }}{% if t.winner_ticket_id == t.id %} · winner{% elif t.win %} · {{ t.win }}{% endif %}{% if t.postal_entry_id %} · post{% endif %}</span>{% endfor %}{% if e.tickets|length > 40 %}<span>+{{ e.tickets|length - 40 }} more</span>{% endif %}</div>{% endif %}
+      {% else %}closed {{ e.ends_at|uktime('%d %b, %H:%M') }} · draw pending{% endif %}</p>
+    {% if not e.game %}<div class="tickets" aria-label="Your ticket numbers">{% for t in e.tickets[:40] %}<a href="{{ url_for('public.ticket_detail', tid=t.id) }}" class="{{ 'win' if t.winner_ticket_id == t.id else ('iw' if t.win) }}">#{{ t.number }}{% if t.winner_ticket_id == t.id %} · winner{% elif t.win %} · {{ t.win }}{% endif %}{% if t.postal_entry_id %} · post{% endif %}</a>{% endfor %}{% if e.tickets|length > 40 %}<span>+{{ e.tickets|length - 40 }} more</span>{% endif %}</div>{% endif %}
   </div>
   <div>{{ entry_status(e) }}</div>
 </div>
@@ -40,27 +40,31 @@
 {% endmacro %}
 {% block content %}
 <div class="acct-head">
-  <div><h1>{% if tab == 'overview' %}Hi {{ u.name.split()[0] }}{% else %}{{ dict(tabs)[tab] }}{% endif %}</h1>
-    <p class="muted" style="margin:0">{{ u.email }}{% if not u.email_verified %} · <span class="pill pending">Email not confirmed</span>{% endif %}{% if excluded %} · <span class="pill hot">On a break until {{ u.excluded_until|uktime('%d %b %Y') }}</span>{% endif %}</p></div>
-</div>
-<nav class="tabs" aria-label="My account">
-  {% for key, label in tabs %}<a href="{{ url_for('public.account', tab=key if key != 'overview' else None) }}"{% if tab == key %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
-</nav>
-
-{% if tab == 'overview' %}
-  {% if waiting %}<div class="notice good" style="margin-bottom:var(--s4)"><span aria-hidden="true">▶</span><span>You have {{ waiting|length }} instant win play{{ 's' if waiting|length != 1 }} to reveal. <a href="{{ url_for('public.play', slug=waiting[0].slug) }}">Reveal now</a></span></div>{% endif %}
+  <div><h1>{% if tab == 'overview' %}
+  {% if attention %}
+  <section aria-labelledby="att-h" style="margin-bottom:var(--s5)"><h2 id="att-h" class="sr-only">Needs your attention</h2>
+    <ul class="youratt">{% for text, link, label, level in attention %}<li class="{{ level }}"><span>{{ text }}</span><a class="btn small {{ 'green' if level == 'good' else 'ghost' }}" href="{{ link }}">{{ label }}</a></li>{% endfor %}</ul>
+  </section>
+  {% endif %}
   <div class="quicklinks">
-    <a href="{{ url_for('public.account', tab='entries') }}"><b>{{ counts.active }}</b><span>Active entries</span></a>
+    <a href="{{ url_for('public.account', tab='entries') }}"><b>{{ counts.active + counts.upcoming }}</b><span>Live tickets · {{ counts.upcoming }} awaiting a draw</span></a>
     <a href="{{ url_for('public.account', tab='wallet') }}"><b>{{ bal.cash|gbp }}</b><span>Cash balance · withdrawable</span></a>
     <a href="{{ url_for('public.account', tab='wallet') }}"><b>{{ (bal.credit + bal.deposit)|gbp }}</b><span>Site credit &amp; funds · entries only</span></a>
     <a href="{{ url_for('public.account', tab='points') }}"><b>{{ '{:,}'.format(u.points) }}</b><span>DBX Points · {{ tier.name }}</span></a>
   </div>
 
   <section class="section" aria-labelledby="up-h">
-    <div class="section-head"><h2 id="up-h">Upcoming draws</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='entries') }}">All my entries</a></div>
+    <div class="section-head"><h2 id="up-h">Your upcoming draws</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='entries') }}">All my tickets</a></div>
     <div class="panel">{% for e in upcoming %}{{ entry_row(e) }}{% else %}
-      <div class="empty compact"><p>You don't have any entries waiting for a draw.</p><a class="btn" href="{{ url_for('public.competitions') }}">Browse competitions</a></div>{% endfor %}</div>
+      <div class="empty compact"><p>When you enter a competition, its draw date and your ticket numbers show up here.</p><a class="btn" href="{{ url_for('public.competitions') }}">Browse competitions</a></div>{% endfor %}</div>
   </section>
+
+  {% if recent_results %}
+  <section class="section" aria-labelledby="rr-h">
+    <div class="section-head"><h2 id="rr-h">Your recent results</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='entries', show='completed') }}">All results</a></div>
+    <div class="panel">{% for e in recent_results %}{{ entry_row(e) }}{% endfor %}</div>
+  </section>
+  {% endif %}
 
   {% if saved %}
   <section class="section" aria-labelledby="sv-h">
@@ -68,6 +72,12 @@
     <div class="grid">{% for it in saved[:4] %}{% if it.game %}{% include "_gamecard.html" %}{% else %}{% include "_card.html" %}{% endif %}{% endfor %}</div>
   </section>
   {% endif %}
+
+  <section class="section" aria-labelledby="nt-h">
+    <div class="section-head"><h2 id="nt-h">Latest notifications</h2><a class="btn ghost small" href="{{ url_for('public.notifications') }}">All notifications</a></div>
+    {% if latest_notes %}<ul class="notes">{% for n in latest_notes %}<li class="{{ 'unread' if not n.read_at }}"><div><b><a href="{{ url_for('public.notification_open', nid=n.id) }}">{{ n.title }}</a></b></div><time class="tiny muted">{{ n.created_at|ago }}</time></li>{% endfor %}</ul>
+    {% else %}<div class="panel"><p class="muted" style="margin:0">Confirmations, results and wins will appear here.</p></div>{% endif %}
+  </section>
 
   <section class="section" aria-labelledby="rt-h">
     <div class="section-head"><h2 id="rt-h">Recent transactions</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='transactions') }}">All transactions</a></div>
@@ -77,12 +87,12 @@
       {% for o in orders %}<tr><td class="muted">{{ (o.paid_at or o.created_at)|uktime('%d %b %Y') }}</td><td><a href="{{ url_for('public.order_detail', cid=o.id) }}">Order #{{ o.id }}</a> — {{ o.titles }}</td><td><span class="kind">Card</span></td><td class="num neg">−{{ o.cash_due|gbp }}</td></tr>{% endfor %}
       {{ ledger_rows(ledger) }}
     </tbody></table></div>
-    {% else %}<div class="panel"><p class="muted" style="margin:0">No transactions yet.</p></div>{% endif %}
+    {% else %}<div class="panel"><p class="muted" style="margin:0">Your orders, prizes and wallet movements will be listed here.</p></div>{% endif %}
   </section>
 
 {% elif tab == 'entries' %}
   <nav class="seg" aria-label="Filter entries">
-    {% for k, label in [('active','Active'),('won','Won'),('previous','Previous')] %}<a href="{{ url_for('public.account', tab='entries', show=k) }}"{% if show == k %} aria-current="true"{% endif %}>{{ label }} <span class="count">{{ counts[k] }}</span></a>{% endfor %}
+    {% for k, label in [('active','Active'),('upcoming','Upcoming draw'),('winner','Winner'),('completed','Completed')] %}<a href="{{ url_for('public.account', tab='entries', show=k) }}"{% if show == k %} aria-current="true"{% endif %}>{{ label }} <span class="count">{{ counts[k] }}</span></a>{% endfor %}
   </nav>
   <form class="inline-form" method="get" role="search" style="max-width:480px;margin-bottom:var(--s4)">
     <input type="hidden" name="tab" value="entries"><input type="hidden" name="show" value="{{ show }}">
@@ -96,12 +106,14 @@
     <p class="small muted" role="status">{% if hits %}{{ hits|length }} competition{{ 's' if hits|length != 1 }} with “{{ tq }}”:{% else %}You don't hold “{{ tq }}” in any competition.{% endif %}</p>
     {% if hits %}<div class="panel" style="margin-bottom:var(--s4)">{% for e in hits %}{{ entry_row(e) }}{% endfor %}</div>{% endif %}
   {% endif %}
-  {% set shown = groups|selectattr('section', 'equalto', show)|list %}
+  {% set shown = groups|selectattr('f.' ~ show)|list %}
   {% if shown %}
   <div class="panel">{% for e in shown %}{{ entry_row(e) }}{% endfor %}</div>
-  {% elif show == 'active' %}<div class="empty"><p>You don't have any active entries yet.</p><a class="btn" href="{{ url_for('public.competitions') }}">Browse competitions</a></div>
-  {% elif show == 'won' %}<div class="empty"><p>No wins yet — good luck!</p><a class="btn" href="{{ url_for('public.account', tab='entries') }}">See my active entries</a></div>
-  {% else %}<div class="empty"><p>Finished competitions you entered will appear here, with their results.</p></div>{% endif %}
+  <p class="small muted">Tap a ticket number to see its order reference, entry date, draw date and result.</p>
+  {% elif show == 'active' %}<div class="empty"><p>Tickets for competitions that are still open appear here.</p><a class="btn" href="{{ url_for('public.competitions') }}">Browse competitions</a></div>
+  {% elif show == 'upcoming' %}<div class="empty"><p>When a competition you entered closes, it waits here until the draw — nothing is waiting right now.</p></div>
+  {% elif show == 'winner' %}<div class="empty"><p>Any ticket that wins — a main prize or an instant win — appears here. No wins yet; good luck!</p><a class="btn" href="{{ url_for('public.account', tab='entries') }}">See my active tickets</a></div>
+  {% else %}<div class="empty"><p>Finished competitions you entered appear here with their results.</p><a class="btn ghost" href="{{ url_for('public.results') }}">See all results</a></div>{% endif %}
   <p class="small muted" style="margin-top:var(--s4)">Postal entries sent with your account's email address show here too, marked “post”.</p>
 
 {% elif tab == 'wins' %}
@@ -312,11 +324,22 @@
     {% if not u.email_verified %}{{ verify_notice() }}{% endif %}
     <p class="hint">To change your name or email, <a href="{{ url_for('public.contact') }}">contact us</a> — we check it's really you first.</p>
     <div class="field"><label for="phone">Mobile number</label><input id="phone" name="phone" type="tel" value="{{ u.phone or '' }}" autocomplete="tel" aria-describedby="phone-h"><span class="hint" id="phone-h">So we can call you when you win.</span></div>
-    <label class="check"><input type="checkbox" name="marketing" value="1" {{ 'checked' if u.marketing }}> Email me new competitions and offers</label>
     <h3 style="margin-top:var(--s5)">Change password</h3>
     <div class="field"><label for="cpw">Current password</label><input id="cpw" type="password" name="current_password" autocomplete="current-password"></div>
     <div class="field"><label for="npw">New password</label><input id="npw" type="password" name="new_password" minlength="10" autocomplete="new-password" aria-describedby="npw-h"><span class="hint" id="npw-h">At least 10 characters. Changing it signs you out on every other device. Leave blank to keep your current password.</span></div>
     <button class="btn block" style="margin-top:var(--s4)">Save changes</button>
+  </form>
+  <form class="panel" id="comms" method="post" action="{{ url_for('public.preferences') }}" style="max-width:640px;margin-top:var(--s4)">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <h2 style="font-size:20px">Communication preferences</h2>
+    <p class="small muted"><b>Always sent</b> (you can't turn these off because they're part of your account): entry confirmations, draw results for competitions you entered, wins, withdrawals, refunds, password and security messages. They're also kept in your <a href="{{ url_for('public.notifications') }}">notifications</a>.</p>
+    <fieldset><legend>Optional — you choose</legend>
+      <label class="check"><input type="checkbox" name="reminder_emails" value="1" {{ 'checked' if u.reminder_emails }}> Email me the reminders I ask for on competitions I save (closing soon, results)</label>
+      <label class="check"><input type="checkbox" name="marketing_email" value="1" {{ 'checked' if u.marketing }}> Email me about new competitions and offers</label>
+      <label class="check"><input type="checkbox" name="marketing_sms" value="1" {{ 'checked' if u.marketing_sms }}> Text me about new competitions and offers{% if not u.phone %} <span class="small muted">(add your mobile number above first)</span>{% endif %}</label>
+    </fieldset>
+    <p class="hint">We only send marketing if you've ticked the box, and every marketing email has a one-click unsubscribe link. We record when and how you change these choices.</p>
+    <button class="btn ghost" style="margin-top:var(--s3)">Save preferences</button>
   </form>
   <section class="panel" id="devices" style="max-width:640px;margin-top:var(--s4)">
     <h2 style="font-size:20px">Where you're signed in</h2>

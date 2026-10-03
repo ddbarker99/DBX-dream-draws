@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Transparency centre · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}How {{ config.SITE_NAME }} draws work, free entry, winners and results, responsible play, FAQs and who we are — all in one place.{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Transparency centre</h1>
+<p>Everything about how {{ config.SITE_NAME }} works, in one place. Each topic links to the one page that explains it fully.</p></div>
+<div class="statstrip">
+  <div><b>{{ '{:,}'.format(facts.draws) }}</b><span>Draws completed</span></div>
+  <div><b>{{ '{:,}'.format(facts.entries) }}</b><span>Entries in those draws</span></div>
+  <div><b>{{ '{:,}'.format(facts.postal_accepted) }}</b><span>Free postal entries accepted</span></div>
+  <div><b>{{ facts.paid_out|gbp }}</b><span>Cash winnings paid out</span></div>
+</div>
+{% if facts.last %}<p class="small muted">Latest draw: <a href="{{ url_for('public.competition', slug=facts.last.slug) }}">{{ facts.last.title }}</a>, {{ facts.last.drawn_at|uktime('%d %b %Y') }}.{% if facts.redraws %} {{ facts.redraws }} redraw{{ 's' if facts.redraws != 1 }} so far, each with its reason published on the competition page.{% endif %}</p>{% endif %}
+<div class="tgrid">
+  <a class="tcard" href="{{ url_for('public.page', page='fair-draws') }}"><b>How draws work</b><span>The final entry list is frozen at closing. The winner is picked using a seed we lock in before sales, so anyone can check it.</span></a>
+  <a class="tcard" href="{{ url_for('public.page', page='free-entry') }}"><b>Free entry</b><span>Enter any competition by post, with the same chance as a paid entry. What to write, where to send it, and the deadlines.</span></a>
+  <a class="tcard" href="{{ url_for('public.results') }}"><b>Results archive</b><span>Every completed draw, its winning ticket and the record to check it. Nothing is ever removed.</span></a>
+  <a class="tcard" href="{{ url_for('public.winners') }}"><b>Winners</b><span>Recent main-draw and instant winners (first name and initial, and photos only with permission).</span></a>
+  <a class="tcard" href="{{ url_for('public.page', page='responsible-play') }}"><b>Responsible play</b><span>Spending limits, breaks, and free confidential support.</span></a>
+  <a class="tcard" href="{{ url_for('public.how_it_works') }}"><b>How it works</b><span>Entering, paying, prizes, withdrawals and refunds in plain English.</span></a>
+  <a class="tcard" href="{{ url_for('public.page', page='faq') }}"><b>FAQs</b><span>Quick answers to common questions.</span></a>
+  <a class="tcard" href="{{ url_for('public.page', page='terms') }}"><b>Terms &amp; conditions</b><span>The full rules: eligibility, entry, draws, prizes, payments and refunds.</span></a>
+  <a class="tcard" href="{{ url_for('public.page', page='privacy') }}"><b>Privacy &amp; cookies</b><span>What we keep, why, for how long, and your rights. One essential cookie; no tracking.</span></a>
+  <a class="tcard" href="{{ url_for('public.page', page='complaints') }}"><b>Complaints</b><span>How to raise a complaint and what happens next.</span></a>
+  <a class="tcard" href="{{ url_for('public.page', page='about') }}"><b>Who we are</b><span>{{ config.COMPANY_DETAILS or 'The company behind ' ~ config.SITE_NAME }}.</span></a>
+  <a class="tcard" href="{{ url_for('public.support_centre') if user else url_for('public.contact') }}"><b>Contact &amp; support</b><span>Questions about an order, entry, withdrawal or prize — we reply within 1 working day.</span></a>
+</div>
+{% endblock %}

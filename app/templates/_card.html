@@ -2,7 +2,7 @@
 <a class="card" href="{{ url_for('public.competition', slug=it.c.slug) }}">
   <div class="thumb">{% if it.c.image %}<img src="{{ it.c.image|thumb }}" alt="" loading="lazy" width="400" height="300">{% else %}<span aria-hidden="true">🏆</span>{% endif %}
     <div class="badges">
-      {% if st == 'soldout' %}<span class="pill soldout">Sold out</span>{% elif st == 'ended' %}<span class="pill ended">Closed · draw soon</span>{% elif st == 'drawn' %}<span class="pill drawn">Drawn</span>{% endif %}
+      {% if st == 'soldout' %}<span class="pill soldout">Sold out</span>{% elif st == 'ended' %}<span class="pill ended">Draw pending</span>{% elif st == 'drawn' %}<span class="pill drawn">Completed</span>{% endif %}
       {% for kind, text in it.badges[:2] %}<span class="pill {{ kind }}">{{ text }}</span>{% endfor %}
     </div>
     {% if st == 'live' %}<span class="timer"><span class="sr-only">Closes in </span><span data-ends="{{ it.c.ends_at|epoch }}">{{ it.c.ends_at|uktime('%d %b') }}</span></span>{% endif %}

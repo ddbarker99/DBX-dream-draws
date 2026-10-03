@@ -18,7 +18,10 @@
   <div class="field"><label for="phone">Mobile number <span class="dim">(optional)</span></label><input id="phone" name="phone" type="tel" value="{{ form.get('phone','') }}" autocomplete="tel" aria-describedby="phone-h"><span class="hint" id="phone-h">So we can call you if you win.</span></div>
   <div class="field"><label for="pw">Password</label><input id="pw" type="password" name="password" minlength="10" required autocomplete="new-password" {{ aria('password', 'pw-h') }}><span class="hint" id="pw-h">At least 10 characters. A few random words together works well.</span>{{ err('password') }}</div>
   <label class="check"><input type="checkbox" name="agree" value="1" required id="agree" {{ 'checked' if form.get('agree') }} {{ aria('agree') }}> <span>I'm 18 or over, live in the UK and accept the <a href="{{ url_for('public.page', page='terms') }}" target="_blank">terms</a> and <a href="{{ url_for('public.page', page='privacy') }}" target="_blank">privacy policy</a>.</span></label>{{ err('agree') }}
-  <label class="check"><input type="checkbox" name="marketing" value="1" {{ 'checked' if form.get('marketing') }}> <span>Email me new competitions and offers (optional).</span></label>
+  <fieldset><legend class="small">Optional marketing — leave unticked if you'd rather not</legend>
+  <label class="check"><input type="checkbox" name="marketing" value="1" {{ 'checked' if form.get('marketing') }}> <span>Email me about new competitions and offers.</span></label>
+  <label class="check"><input type="checkbox" name="marketing_sms" value="1" {{ 'checked' if form.get('marketing_sms') }}> <span>Text me about new competitions and offers (needs your mobile number).</span></label>
+  <p class="hint">You'll always get messages about your account, entries and wins. Change your choices any time in My account.</p></fieldset>
   <button class="btn block lg" style="margin-top:var(--s4)" data-busy="Creating your account…">Create account</button>
   <p class="small muted center" style="margin:var(--s3) 0 0">Already have an account? <a href="{{ url_for('public.login', next=request.args.get('next')) }}">Log in</a></p>
 </form>

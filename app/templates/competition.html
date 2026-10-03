@@ -14,6 +14,7 @@
 <meta property="og:url" content="{{ config.SITE_URL }}{{ url_for('public.competition', slug=c.slug) }}">
 <meta name="twitter:card" content="summary_large_image">
 {% endblock %}
+{% block head %}{% if st == 'ended' and not c.game_type %}<meta http-equiv="refresh" content="60">{% endif %}{% endblock %}
 {% block bodyclass %}{{ 'has-mobile-buy' if live and not c.free_daily }}{% endblock %}
 {% block content %}
 <nav class="crumbs" aria-label="Breadcrumb">
@@ -30,11 +31,18 @@
   <div class="d-buy"><div class="stack">
     <section class="panel buybox" aria-labelledby="comp-title">
       <div class="actions">
-        <span class="pill {{ st }}">{{ {'live':'Open','soldout':'Sold out','ended':'Closed · draw soon','drawn':'Drawn','cancelled':'Cancelled'}.get(st, st) }}</span>
+        <span class="pill {{ st }}">{{ {'live':'Open','soldout':'Sold out','ended':('Closed' if c.game_type else 'Draw pending'),'drawn':'Completed','cancelled':'Cancelled'}.get(st, st) }}</span>
         {% for kind, text in d.badges %}<span class="pill {{ kind }}">{{ text }}</span>{% endfor %}
       </div>
       <h1 id="comp-title">{{ c.title }}</h1>
-      {% if user and live and not c.free_daily %}<form method="post" action="{{ url_for('public.watch', slug=c.slug) }}" class="watchform"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="linkbtn small" aria-pressed="{{ 'true' if watching else 'false' }}">{{ '♥ Saved' if watching else '♡ Save for later' }}</button></form>{% endif %}
+      {% if user and (live or st in ('soldout', 'ended')) and not c.free_daily %}
+      <details class="watchbox"{% if watching %} open{% endif %}><summary>{{ '♥ Saved — reminders' if watching else '♡ Save & remind me' }}</summary>
+        <form method="post" action="{{ url_for('public.watch', slug=c.slug) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+          {% if live %}<label class="check"><input type="checkbox" name="remind_close" value="1" {{ 'checked' if not watching or watching.remind_close }}> Remind me the day before it closes</label>{% endif %}
+          {% if not c.game_type %}<label class="check"><input type="checkbox" name="remind_result" value="1" {{ 'checked' if watching and watching.remind_result }}> Tell me when the result is in</label>{% endif %}
+          <p class="hint">Reminders appear in your notifications{% if user.reminder_emails %} and by email (change this in <a href="{{ url_for('public.account', tab='profile') }}#comms">preferences</a>){% endif %}. We only send the ones you tick.</p>
+          <div class="actions"><button class="btn small">{{ 'Update' if watching else 'Save' }}</button>{% if watching %}<button class="btn ghost small" name="action" value="remove">Remove</button>{% endif %}</div>
+        </form></details>{% endif %}
       {% if c.cash_alternative %}<p class="muted" style="margin:0 0 var(--s2)">Cash alternative: <b>{{ c.cash_alternative }}</b></p>{% endif %}
       <div class="price">{% if c.free_daily %}Free{% else %}{{ c.ticket_price|pp }} <small>per {{ unit }}</small>{% endif %}</div>
       {% if tiers %}<div class="tiers" aria-label="Multi-buy discounts">{% for q, p in tiers %}<span>{{ q }}+ {{ unit }}s: {{ p }}% off</span>{% endfor %}</div>{% endif %}
@@ -68,11 +76,19 @@
     {% endif %}
 
     {% if c.status == 'drawn' %}
-      <div class="winner-banner" role="status">Winning ticket <b>#{{ winner_number }}</b><br>Congratulations {{ winner_name }}! <a href="{{ url_for('public.page', page='fair-draws') }}">Check this draw</a></div>
-    {% elif st == 'ended' or st == 'soldout' %}
-      <div class="notice">{% if st == 'soldout' %}All {{ unit }}s have sold. {% endif %}{% if c.game_type %}This game is closed.{% else %}The draw takes place {{ c.ends_at|uktime('%a %d %b at %H:%M') }}. Results appear on this page and on <a href="{{ url_for('public.results') }}">Draw results</a>.{% endif %}</div>
+      <div class="winner-banner" role="status"><span class="small" style="text-transform:uppercase;letter-spacing:.08em">Completed · drawn {{ c.drawn_at|uktime('%d %b %Y, %H:%M') }}</span><br>Winning ticket <b>#{{ winner_number }}</b><br>Congratulations {{ winner_name }}! <a href="#draw-h">See the draw record</a> · <a href="{{ url_for('public.page', page='fair-draws') }}">check it yourself</a></div>
+    {% elif st == 'ended' %}
+      <div class="notice" role="status">{% if c.game_type %}<span>This game has closed. Any prizes not revealed are paid to winners automatically.</span>{% else %}<span><b>Entries have closed — draw pending.</b> The draw takes place {{ 'automatically' if c.auto_draw else 'live' }} at {{ c.ends_at|uktime('%H:%M on %a %d %b') }}{% if not c.auto_draw and c.live_url %} (<a href="{{ c.live_url }}" target="_blank" rel="noopener">watch</a>){% endif %}, as soon as any last payments and postal entries are processed. The result will appear right here — this page updates by itself.</span>{% endif %}</div>
+    {% elif st == 'soldout' %}
+      <div class="notice warn" role="status"><span><b>Sold out — every {{ unit }} has gone.</b>{% if not c.game_type %} The draw still takes place at {{ c.ends_at|uktime('%H:%M on %a %d %b') }} and the result will appear on this page.{% endif %}</span></div>
     {% elif st == 'cancelled' %}
       <div class="notice warn">This competition was cancelled and every entrant was refunded in full.</div>
+    {% endif %}
+
+    {% if st in ('soldout', 'ended', 'drawn', 'cancelled') and others %}
+    <section class="panel" aria-labelledby="still-h"><h2 id="still-h" style="font-size:18px">Still open</h2>
+      <ul class="stillopen">{% for it in others[:3] %}<li><a href="{{ url_for('public.competition', slug=it.c.slug) }}">{{ it.c.title }}</a> <span class="small muted">{{ it.c.ticket_price|pp }} · closes {{ it.c.ends_at|uktime('%d %b') }}</span></li>{% endfor %}</ul>
+      <a class="small" href="{{ url_for('public.competitions') }}">See every live competition</a></section>
     {% endif %}
 
     {% if waiting %}

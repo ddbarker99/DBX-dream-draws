@@ -141,21 +141,28 @@ def _alerts():
 
 
 def _watch():
-    """Saved competitions closing within 24 hours: an in-account reminder for everyone, an email only for those
-    who opted in to marketing emails."""
+    """Closing-soon reminders, only for competitions a customer saved and asked to be reminded about. Always in
+    their account; by email only if they keep reminder emails switched on."""
     from .notify import notify, send_one
+    from .routes import unsubscribe_link
     db = get_db()
     n = 0
-    for r in db.execute("SELECT w.user_id, c.id, c.title, c.slug, c.ends_at, u.email, u.marketing FROM watchlist w "
+    for r in db.execute("SELECT w.user_id, c.id, c.title, c.slug, c.ends_at, u.email, u.reminder_emails FROM watchlist w "
                         "JOIN competitions c ON c.id=w.competition_id JOIN users u ON u.id=w.user_id WHERE c.status='live' "
-                        "AND c.ends_at>? AND c.ends_at<?", (iso(utcnow()), iso(utcnow() + timedelta(hours=24)))).fetchall():
+                        "AND w.remind_close=1 AND c.ends_at>? AND c.ends_at<?",
+                        (iso(utcnow()), iso(utcnow() + timedelta(hours=24)))).fetchall():
         link = url_for("public.competition", slug=r["slug"])
-        nid = notify(r["user_id"], "reminder", f"Closing soon: {r['title']}", "A competition you saved closes within 24 hours.",
-                     link=link, dedupe_key=f"watch:{r['id']}:{r['user_id']}", email=r["email"] if r["marketing"] else None,
-                     mail={"button": ("Take a look", current_app.config["SITE_URL"] + link), "heading": "Closing soon"})
+        from . import UK
+        closes = parse_iso(r["ends_at"]).astimezone(UK).strftime("%a %d %b at %H:%M")
+        nid = notify(r["user_id"], "reminder", f"Closing soon: {r['title']}", f"A competition you asked us to remind you about closes {closes}.",
+                     link=link, dedupe_key=f"watch:{r['id']}:{r['user_id']}", email=r["email"] if r["reminder_emails"] else None,
+                     mail={"button": ("Take a look", current_app.config["SITE_URL"] + link), "heading": "Closing soon",
+                           "subject": f"Closing soon: {r['title']}"})
         if nid:
             n += 1
-            if r["marketing"]:
+            if r["reminder_emails"]:
+                db.execute("UPDATE notifications SET body=body || ? WHERE id=?",
+                           (f"\n\nDon't want reminders by email? Unsubscribe: {unsubscribe_link(r['user_id'])}", nid))
                 send_one(nid)
     return f"{n} reminder(s)" if n else ""
 

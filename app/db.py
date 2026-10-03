@@ -123,6 +123,15 @@ MIGRATIONS = [
     ("draws", "snapshot_id", "INTEGER"),
     ("checkouts", "device", "TEXT"),                         # mobile | tablet | desktop, for journey counts only
     ("competitions", "question_mode", "TEXT NOT NULL DEFAULT 'multiple_choice'"),  # multiple_choice | none
+    # v10: communication preferences, reminders, support desk
+    ("users", "marketing_sms", "INTEGER NOT NULL DEFAULT 0"),      # opt-in only
+    ("users", "reminder_emails", "INTEGER NOT NULL DEFAULT 1"),    # reminders the customer asked for, by email
+    ("watchlist", "remind_close", "INTEGER NOT NULL DEFAULT 1"),
+    ("watchlist", "remind_result", "INTEGER NOT NULL DEFAULT 0"),
+    ("cases", "priority", "TEXT NOT NULL DEFAULT 'normal'"),        # high | normal | low
+    ("cases", "withdrawal_id", "INTEGER"),
+    ("cases", "locked_by", "INTEGER"),                             # staff member currently working on it
+    ("cases", "locked_at", "TEXT"),
 ]
 
 # Triggers that use columns added by MIGRATIONS, so they're created after them.

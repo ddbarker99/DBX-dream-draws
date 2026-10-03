@@ -698,6 +698,18 @@ def announce_draw(cid):
                              "AND user_id IS NOT ?", (cid, wuid)).fetchall():
         notify(uid, "result", f"Draw result: {c['title']}", f"The winning ticket was #{w['number']}. Your tickets didn't win "
                "this time — thanks for entering.", link=link, dedupe_key=f"result:{d['id'] if d else cid}:{uid}")
+    entrants = {r[0] for r in db.execute("SELECT DISTINCT user_id FROM tickets WHERE competition_id=? AND user_id IS NOT NULL", (cid,))}
+    for r in db.execute("SELECT w.user_id, u.email, u.reminder_emails FROM watchlist w JOIN users u ON u.id=w.user_id "
+                        "WHERE w.competition_id=? AND w.remind_result=1", (cid,)).fetchall():
+        if r["user_id"] in entrants:
+            continue                       # entrants already hear the result
+        nid = notify(r["user_id"], "result", f"Result: {c['title']}", f"The draw has taken place — the winning ticket was #{w['number']}.",
+                     link=link, dedupe_key=f"watch-result:{d['id'] if d else cid}:{r['user_id']}",
+                     email=r["email"] if r["reminder_emails"] else None,
+                     mail={"button": ("See the result", full), "heading": "Draw completed", "subject": f"Result: {c['title']}"})
+        if nid and r["reminder_emails"]:
+            from .notify import send_one
+            send_one(nid)
     if current_app.config["SUPPORT_EMAIL"]:
         mailer.send(current_app.config["SUPPORT_EMAIL"], f"Draw result: {c['title']}",
                     f"Winning ticket #{w['number']}: {w['name']} <{w['email']}>. Arrange the prize from Admin → Winners.\n{full}")
