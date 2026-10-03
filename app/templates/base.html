@@ -108,6 +108,7 @@
 {% endfor %}</div>
 
 <main id="main" tabindex="-1"><div class="wrap">
+{% block back %}{% if back %}<a class="backbtn" href="{{ back[0] }}" data-back><span aria-hidden="true">←</span> Back</a>{% endif %}{% endblock %}
 {% block content %}{% endblock %}
 </div></main>
 
@@ -176,6 +177,13 @@
     });
   });
   window.addEventListener('pageshow',function(e){if(e.persisted)location.reload()});
+  // Back button: return to the page you came from on this site; otherwise (email link, bookmark) go to the parent page.
+  (function(){var prev=null;
+    try{prev=sessionStorage.getItem('dbxPrev');sessionStorage.setItem('dbxPrev',location.href)}catch(e){}
+    var btn=document.querySelector('[data-back]');
+    if(btn)btn.addEventListener('click',function(e){
+      if(prev&&prev!==location.href&&history.length>1&&prev.indexOf(location.origin+'/')===0){e.preventDefault();history.back()}});
+  })();
   if('serviceWorker' in navigator)navigator.serviceWorker.register('{{ url_for("public.service_worker") }}').catch(function(){});
 })();
 </script>

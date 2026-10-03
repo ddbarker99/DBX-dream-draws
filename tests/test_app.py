@@ -3563,3 +3563,14 @@ class CreateFormTests(PlatformBase):
         self.assertIn("cash and credit prizes need a value", html)
         self.assertIn('value="£5 Cash"', html)
         self.assertEqual(self.q("SELECT COUNT(*) FROM competitions WHERE title='Bad Game'"), 0)
+
+    def test_back_button_on_every_page_with_a_sensible_fallback(self):
+        self.assertNotIn('class="backbtn"', self.client.get("/").get_data(as_text=True))         # not on the homepage
+        self.assertNotIn('class="backbtn"', self.client.get("/admin/").get_data(as_text=True))   # nor the Control Centre
+        slug = self.slug(self.cid)
+        for url, parent in ((f"/c/{slug}", "/competitions"), ("/competitions", "/"), ("/faq", "/"),
+                            (f"/admin/competitions/{self.cid}", "/admin/competitions"),
+                            (f"/admin/competitions/{self.cid}/edit", f"/admin/competitions/{self.cid}"),
+                            ("/admin/settings", "/admin/"), ("/admin/competitions/new?kind=draw", "/admin/competitions")):
+            html = self.client.get(url).get_data(as_text=True)
+            self.assertIn(f'<a class="backbtn" href="{parent}" data-back>', html, url)
