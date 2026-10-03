@@ -1,108 +1,189 @@
 {% extends "base.html" %}
 {% block title %}{{ dict(tabs)[tab] }} · My account · {{ config.SITE_NAME }}{% endblock %}
 {% block robots %}<meta name="robots" content="noindex">{% endblock %}
-{% macro win_kind(w) %}{% set k = w.prize_type or ('credit' if w.credit_amount else 'physical') %}<span class="kind {{ k }}">{{ {'cash':'Cash','credit':'Credit','physical':'Prize'}[k] }}</span>{% endmacro %}
+{% macro win_kind(w) %}{% set k = w.prize_type or ('credit' if w.credit_amount else 'physical') %}<span class="kind {{ k }}">{{ {'cash':'Cash','credit':'Site credit','physical':'Prize'}[k] }}</span>{% endmacro %}
+{% macro entry_status(e) %}
+  {%- if e.won %}<span class="pill hot">You won</span>
+  {%- elif e.game and e.unplayed %}<a class="btn small" href="{{ url_for('public.play', slug=e.slug) }}">Reveal {{ e.unplayed }}</a>
+  {%- elif e.open %}<span class="pill live">Open</span>
+  {%- elif e.status == 'live' and not e.game %}<span class="pill pending">Closed · draw due</span>
+  {%- elif e.status == 'drawn' %}<span class="pill drawn">Drawn</span>
+  {%- elif e.status == 'cancelled' %}<span class="pill cancelled">Cancelled · refunded</span>
+  {%- else %}<span class="pill">Closed</span>{% endif %}
+{% endmacro %}
 {% macro entry_row(e) %}
 <div class="entry">
   <div class="thumb">{% if e.image %}<img src="{{ url_for('public.uploads', name=e.image) }}" alt="" width="64" height="64" loading="lazy">{% else %}<span aria-hidden="true">{{ '⚡' if e.game else '🏆' }}</span>{% endif %}</div>
   <div>
     <h3><a href="{{ url_for('public.competition', slug=e.slug) }}">{{ e.title }}</a></h3>
     <p class="tiny muted" style="margin:2px 0 6px">{{ e.tickets|length }} {{ 'play' if e.game else 'ticket' }}{{ 's' if e.tickets|length != 1 }} ·
-      {% if e.game %}{{ e.unplayed }} to reveal{% elif e.status == 'drawn' %}drawn{% else %}draw {{ e.ends_at|uktime('%d %b, %H:%M') }}{% endif %}</p>
-    {% if not e.game %}<div class="tickets">{% for t in e.tickets[:40] %}<span class="{{ 'win' if t.winner_ticket_id == t.id else ('iw' if t.win) }}">#{{ t.number }}{% if t.winner_ticket_id == t.id %} · winner{% elif t.win %} · {{ t.win }}{% endif %}</span>{% endfor %}{% if e.tickets|length > 40 %}<span>+{{ e.tickets|length - 40 }} more</span>{% endif %}</div>{% endif %}
+      {% if e.game %}{% if e.unplayed %}{{ e.unplayed }} to reveal{% else %}all revealed{% endif %}
+      {% elif e.status == 'drawn' %}drawn {{ e.drawn_at|uktime('%d %b %Y') }} · winning ticket #{{ e.winning_number }}
+      {% elif e.status == 'cancelled' %}cancelled — refunded to your wallet
+      {% elif e.open %}draw {{ e.ends_at|uktime('%a %d %b, %H:%M') }}
+      {% else %}closed {{ e.ends_at|uktime('%d %b, %H:%M') }} · draw due{% endif %}</p>
+    {% if not e.game %}<div class="tickets" aria-label="Your ticket numbers">{% for t in e.tickets[:40] %}<span class="{{ 'win' if t.winner_ticket_id == t.id else ('iw' if t.win) }}">#{{ t.number }}{% if t.winner_ticket_id == t.id %} · winner{% elif t.win %} · {{ t.win }}{% endif %}{% if t.postal_entry_id %} · post{% endif %}</span>{% endfor %}{% if e.tickets|length > 40 %}<span>+{{ e.tickets|length - 40 }} more</span>{% endif %}</div>{% endif %}
   </div>
-  <div>{% if e.won %}<span class="pill hot">You won</span>{% elif e.game and e.unplayed %}<a class="btn small" href="{{ url_for('public.play', slug=e.slug) }}">Play</a>{% elif e.open %}<span class="pill live">Open</span>{% else %}<span class="pill {{ e.status }}">{{ {'drawn':'Drawn','live':'Closed','cancelled':'Refunded'}.get(e.status, e.status) }}</span>{% endif %}</div>
+  <div>{{ entry_status(e) }}</div>
 </div>
+{% endmacro %}
+{% macro ledger_rows(rows) %}
+  {% for l in rows %}<tr><td class="muted">{{ l.created_at|uktime('%d %b %Y') }}</td>
+    <td>{{ l.reason }}{% if l.ref and l.ref.startswith('c') and l.ref[1:].isdigit() %} · <a href="{{ url_for('public.order_detail', cid=l.ref[1:]|int) }}">order #{{ l.ref[1:] }}</a>{% elif l.ref and l.ref.startswith('w') and l.ref[1:].isdigit() %} · <a href="{{ url_for('public.withdrawal_detail', wid=l.ref[1:]|int) }}">details</a>{% endif %}</td>
+    <td><span class="kind {{ l.kind }}">{{ {'cash':'Cash balance','credit':'Site credit','deposit':'Deposited funds'}.get(l.kind, l.kind) }}</span></td>
+    <td class="num {{ 'pos' if l.amount > 0 else 'neg' }}">{{ '+' if l.amount > 0 }}{{ l.amount|gbp }}</td></tr>
+  {% endfor %}
+{% endmacro %}
+{% macro verify_notice() %}
+  <div class="notice warn"><span>Confirm your email address first — we sent a link to <b>{{ u.email }}</b>.</span>
+    <form method="post" action="{{ url_for('public.resend_verification') }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn small">Resend link</button></form></div>
 {% endmacro %}
 {% block content %}
 <div class="acct-head">
-  <div><h1>Hi {{ u.name.split()[0] }}</h1><p class="muted" style="margin:0">{{ u.email }}{% if not u.email_verified %} · <span class="pill pending">Email not confirmed</span>{% endif %}</p></div>
-  <div class="actions">
-    <a class="pill paid" style="font-size:13px;padding:8px 12px;text-decoration:none" href="{{ url_for('public.account', tab='wallet') }}">Cash {{ bal.cash|gbp }}</a>
-    {% if bal.deposit %}<a class="pill deposit" style="font-size:13px;padding:8px 12px;text-decoration:none" href="{{ url_for('public.account', tab='wallet') }}">Deposited {{ bal.deposit|gbp }}</a>{% endif %}
-    <a class="pill" style="font-size:13px;padding:8px 12px;text-decoration:none" href="{{ url_for('public.account', tab='wallet') }}">Credit {{ bal.credit|gbp }}</a>
-    <a class="btn green small" href="{{ url_for('public.account', tab='wallet') }}#deposit">+ Add funds</a>
-    <a class="pill tier-{{ tier.name }}" style="font-size:13px;padding:8px 12px;text-decoration:none" href="{{ url_for('public.account', tab='rewards') }}">{{ tier.name }} · {{ u.points }} pts</a>
-    <form method="post" action="{{ url_for('public.logout') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn ghost small logoutbtn">Log out</button></form>
-  </div>
+  <div><h1>{% if tab == 'overview' %}Hi {{ u.name.split()[0] }}{% else %}{{ dict(tabs)[tab] }}{% endif %}</h1>
+    <p class="muted" style="margin:0">{{ u.email }}{% if not u.email_verified %} · <span class="pill pending">Email not confirmed</span>{% endif %}{% if excluded %} · <span class="pill hot">On a break until {{ u.excluded_until|uktime('%d %b %Y') }}</span>{% endif %}</p></div>
 </div>
 <nav class="tabs" aria-label="My account">
   {% for key, label in tabs %}<a href="{{ url_for('public.account', tab=key if key != 'overview' else None) }}"{% if tab == key %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
 </nav>
 
 {% if tab == 'overview' %}
-  {% if waiting %}<div class="notice good" style="margin-bottom:var(--s4)"><span aria-hidden="true">▶</span><span>You have {{ waiting|length }} instant win play{{ 's' if waiting|length != 1 }} to reveal. <a href="{{ url_for('public.play', slug=waiting[0].slug) }}">Play now</a></span></div>{% endif %}
+  {% if waiting %}<div class="notice good" style="margin-bottom:var(--s4)"><span aria-hidden="true">▶</span><span>You have {{ waiting|length }} instant win play{{ 's' if waiting|length != 1 }} to reveal. <a href="{{ url_for('public.play', slug=waiting[0].slug) }}">Reveal now</a></span></div>{% endif %}
   <div class="quicklinks">
-    <a href="{{ url_for('public.account', tab='entries') }}"><b>{{ live_groups|length }}</b><span>Open entries</span></a>
-    <a href="{{ url_for('public.account', tab='wins') }}"><b>{{ total_won|gbp }}</b><span>Total won</span></a>
-    <a href="{{ url_for('public.account', tab='wallet') }}"><b>{{ bal.cash|gbp }}</b><span>Cash to withdraw</span></a>
-    <a href="{{ url_for('public.account', tab='rewards') }}"><b>{{ u.points }}</b><span>DBX Points</span></a>
+    <a href="{{ url_for('public.account', tab='entries') }}"><b>{{ counts.active }}</b><span>Active entries</span></a>
+    <a href="{{ url_for('public.account', tab='wallet') }}"><b>{{ bal.cash|gbp }}</b><span>Cash balance · withdrawable</span></a>
+    <a href="{{ url_for('public.account', tab='wallet') }}"><b>{{ (bal.credit + bal.deposit)|gbp }}</b><span>Site credit &amp; funds · entries only</span></a>
+    <a href="{{ url_for('public.account', tab='points') }}"><b>{{ '{:,}'.format(u.points) }}</b><span>DBX Points · {{ tier.name }}</span></a>
   </div>
-  <section class="section" aria-labelledby="open-h">
-    <div class="section-head"><h2 id="open-h">Open entries</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='entries') }}">All entries</a></div>
-    <div class="panel">{% for e in live_groups[:5] %}{{ entry_row(e) }}{% else %}<p class="muted" style="margin:0">No open entries. <a href="{{ url_for('public.competitions') }}">See what's live</a>.</p>{% endfor %}</div>
+
+  <section class="section" aria-labelledby="up-h">
+    <div class="section-head"><h2 id="up-h">Upcoming draws</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='entries') }}">All my entries</a></div>
+    <div class="panel">{% for e in upcoming %}{{ entry_row(e) }}{% else %}
+      <div class="empty compact"><p>You don't have any entries waiting for a draw.</p><a class="btn" href="{{ url_for('public.competitions') }}">Browse competitions</a></div>{% endfor %}</div>
   </section>
-  <section class="section" aria-labelledby="ro-h">
-    <div class="section-head"><h2 id="ro-h">Recent orders</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='orders') }}">All orders</a></div>
+
+  <section class="section" aria-labelledby="rt-h">
+    <div class="section-head"><h2 id="rt-h">Recent transactions</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='transactions') }}">All transactions</a></div>
+    {% if orders or ledger %}
     <div class="panel table-scroll"><table>
-      <thead><tr><th scope="col">Order</th><th scope="col">Date</th><th scope="col">Items</th><th scope="col" class="num">Total</th></tr></thead><tbody>
-      {% for o in orders[:3] %}<tr><td><a href="{{ url_for('public.order_detail', cid=o.id) }}">#{{ o.id }}</a></td><td>{{ (o.paid_at or o.created_at)|uktime('%d %b %Y') }}</td><td>{{ o.titles }}</td><td class="num">{{ o.subtotal|gbp }}</td></tr>
-      {% else %}<tr><td colspan="4" class="muted">No orders yet.</td></tr>{% endfor %}</tbody></table></div>
+      <thead><tr><th scope="col">Date</th><th scope="col">Details</th><th scope="col">Paid with</th><th scope="col" class="num">Amount</th></tr></thead><tbody>
+      {% for o in orders %}<tr><td class="muted">{{ (o.paid_at or o.created_at)|uktime('%d %b %Y') }}</td><td><a href="{{ url_for('public.order_detail', cid=o.id) }}">Order #{{ o.id }}</a> — {{ o.titles }}</td><td><span class="kind">Card</span></td><td class="num neg">−{{ o.cash_due|gbp }}</td></tr>{% endfor %}
+      {{ ledger_rows(ledger) }}
+    </tbody></table></div>
+    {% else %}<div class="panel"><p class="muted" style="margin:0">No transactions yet.</p></div>{% endif %}
   </section>
 
 {% elif tab == 'entries' %}
-  {% if groups %}
-  <div class="panel">{% for e in groups %}{{ entry_row(e) }}{% endfor %}</div>
-  {% else %}<div class="empty"><p>You haven't entered anything yet.</p><a class="btn" href="{{ url_for('public.competitions') }}">See what's live</a></div>{% endif %}
+  <nav class="seg" aria-label="Filter entries">
+    {% for k, label in [('active','Active'),('won','Won'),('previous','Previous')] %}<a href="{{ url_for('public.account', tab='entries', show=k) }}"{% if show == k %} aria-current="true"{% endif %}>{{ label }} <span class="count">{{ counts[k] }}</span></a>{% endfor %}
+  </nav>
+  {% set shown = groups|selectattr('section', 'equalto', show)|list %}
+  {% if shown %}
+  <div class="panel">{% for e in shown %}{{ entry_row(e) }}{% endfor %}</div>
+  {% elif show == 'active' %}<div class="empty"><p>You don't have any active entries yet.</p><a class="btn" href="{{ url_for('public.competitions') }}">Browse competitions</a></div>
+  {% elif show == 'won' %}<div class="empty"><p>No wins yet — good luck!</p><a class="btn" href="{{ url_for('public.account', tab='entries') }}">See my active entries</a></div>
+  {% else %}<div class="empty"><p>Finished competitions you entered will appear here, with their results.</p></div>{% endif %}
+  <p class="small muted" style="margin-top:var(--s4)">Postal entries sent with your account's email address show here too, marked “post”.</p>
 
 {% elif tab == 'wins' %}
   <div class="statstrip">
     <div><b>{{ total_won|gbp }}</b><span>Total won</span></div>
-    <div><b>{{ wins|length }}</b><span>Instant wins</span></div>
     <div><b>{{ draws_won|length }}</b><span>Main draws won</span></div>
+    <div><b>{{ wins|length }}</b><span>Instant wins</span></div>
     <div><b>{{ bal.cash|gbp }}</b><span>Cash to withdraw</span></div>
   </div>
   {% if draws_won %}<section class="section" aria-labelledby="dw-h"><h2 id="dw-h">Main draws</h2>
-  <div class="panel table-scroll"><table><thead><tr><th scope="col">Competition</th><th scope="col">Ticket</th><th scope="col">Drawn</th></tr></thead><tbody>
-    {% for d in draws_won %}<tr><td><a href="{{ url_for('public.competition', slug=d.slug) }}">{{ d.title }}</a></td><td>#{{ d.number }}</td><td>{{ d.drawn_at|uktime('%d %b %Y') }}</td></tr>{% endfor %}</tbody></table>
-    <p class="small muted" style="margin:var(--s3) 0 0">We'll contact you by email and phone to arrange your prize.</p></div></section>{% endif %}
+  <div class="panel table-scroll"><table><thead><tr><th scope="col">Prize</th><th scope="col">Winning ticket</th><th scope="col">Drawn</th><th scope="col">Next step</th></tr></thead><tbody>
+    {% for d in draws_won %}<tr><td><a href="{{ url_for('public.competition', slug=d.slug) }}">{{ d.title }}</a>{% if d.cash_alternative %}<div class="tiny muted">Cash alternative: {{ d.cash_alternative }}</div>{% endif %}</td><td>#{{ d.number }}</td><td>{{ d.drawn_at|uktime('%d %b %Y') }}</td><td class="small">We'll contact you by email and phone to arrange it. We'll never ask you to pay to claim a prize.</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
   <section class="section" aria-labelledby="iwn-h"><h2 id="iwn-h">Instant wins</h2>
+  {% if wins %}
   <div class="panel table-scroll"><table><thead><tr><th scope="col">Prize</th><th scope="col">Competition or game</th><th scope="col">Ticket</th><th scope="col">Status</th><th scope="col">When</th></tr></thead><tbody>
     {% for w in wins %}{% set k = w.prize_type or ('credit' if w.credit_amount else 'physical') %}
-    <tr><td><b>{{ w.title }}</b>{{ win_kind(w) }}</td>
+    <tr><td><b>{{ w.title }}</b> {{ win_kind(w) }}</td>
       <td><a href="{{ url_for('public.competition', slug=w.slug) }}">{{ w.comp }}</a></td><td>#{{ w.number }}</td>
-      <td>{% if k == 'physical' %}{{ 'Sent' if w.fulfilled else 'Being arranged' }}{% else %}{{ ('Paid to ' ~ ('cash balance' if k == 'cash' else 'site credit')) if w.fulfilled else 'Paid when revealed' }}{% endif %}</td>
-      <td class="muted">{{ w.won_at|ago }}</td></tr>
-    {% else %}<tr><td colspan="5" class="muted">No wins yet. <a href="{{ url_for('public.instant_wins') }}">Try an instant win game</a>.</td></tr>{% endfor %}</tbody></table></div></section>
+      <td>{% if k == 'physical' %}{{ 'Sent' if w.fulfilled else 'Being arranged — we\'ll contact you' }}{% else %}{{ ('Paid to your ' ~ ('cash balance' if k == 'cash' else 'site credit')) if w.fulfilled else 'Being paid' }}{% endif %}</td>
+      <td class="muted">{{ w.won_at|uktime('%d %b %Y') }}</td></tr>
+    {% endfor %}</tbody></table></div>
+  {% else %}<div class="empty"><p>No instant wins yet.</p><a class="btn" href="{{ url_for('public.instant_wins') }}">Try Instant Wins</a></div>{% endif %}
+  </section>
+
+{% elif tab == 'transactions' %}
+  <section class="section" aria-labelledby="ord-h" style="margin-top:0"><h2 id="ord-h">Orders</h2>
+  {% if orders %}
+  <div class="panel table-scroll"><table>
+    <thead><tr><th scope="col">Order</th><th scope="col">Date</th><th scope="col">Entries</th><th scope="col">Status</th><th scope="col" class="num">Paid by card</th><th scope="col" class="num">From balance</th></tr></thead><tbody>
+    {% for o in orders %}<tr><td><a href="{{ url_for('public.order_detail', cid=o.id) }}">#{{ o.id }}</a></td><td>{{ (o.paid_at or o.created_at)|uktime('%d %b %Y') }}</td><td>{{ o.entries }} · {{ o.titles }}</td>
+      <td><span class="pill {{ o.status }}">{{ {'paid':'Confirmed','credit_refused':'Refunded','needs_refund':'Refund due'}.get(o.status, o.status) }}</span></td>
+      <td class="num">{{ o.cash_due|gbp }}</td><td class="num">{{ (o.credit_used + o.cash_used + o.deposit_used)|gbp }}</td></tr>
+    {% endfor %}</tbody></table></div>
+  {% else %}<div class="empty"><p>No orders yet.</p><a class="btn" href="{{ url_for('public.competitions') }}">Browse competitions</a></div>{% endif %}
+  </section>
+  <section class="section" aria-labelledby="tx-h"><h2 id="tx-h">Wallet activity</h2>
+  {% if ledger %}
+  <div class="panel table-scroll"><table>
+    <thead><tr><th scope="col">Date</th><th scope="col">Details</th><th scope="col">Balance</th><th scope="col" class="num">Amount</th></tr></thead><tbody>
+    {{ ledger_rows(ledger) }}
+  </tbody></table></div>
+  {% else %}<div class="panel"><p class="muted" style="margin:0">Nothing yet — prizes, refunds, deposits and bonuses appear here.</p></div>{% endif %}
+  </section>
 
 {% elif tab == 'wallet' %}
   <div class="three balgrid3">
-    <div class="balcard deposit"><p class="label">Deposited funds · spend or refund</p><b>{{ bal.deposit|gbp }}</b>
-      <p>Money you've added by card. Spend it on entries, or get unspent funds refunded to your card.</p></div>
-    <div class="balcard cash"><p class="label">Cash winnings · withdrawable</p><b>{{ bal.cash|gbp }}</b>
-      <p>Cash prizes and refunds. Withdraw to your bank or PayPal, or spend them on entries.</p></div>
-    <div class="balcard credit"><p class="label">Site credit · spend only</p><b>{{ bal.credit|gbp }}</b>
-      <p>From referrals, points and promotions. Used first at checkout.</p></div>
+    <div class="balcard cash"><p class="label">Cash balance</p><b>{{ bal.cash|gbp }}</b>
+      <p><span class="pill paid">Withdrawable</span> Cash prizes and refunds. Withdraw to your bank or PayPal, or spend on entries.</p></div>
+    <div class="balcard credit"><p class="label">Site credit</p><b>{{ bal.credit|gbp }}</b>
+      <p><span class="pill">Entries only · not withdrawable</span> From referrals, DBX Points and promotions.</p></div>
+    <div class="balcard deposit"><p class="label">Deposited funds</p><b>{{ bal.deposit|gbp }}</b>
+      <p><span class="pill deposit">Entries only · refundable to card</span> Money you've added by debit card.</p></div>
   </div>
-  <p class="hint">At checkout your balance is used in this order: site credit, then deposited funds, then cash winnings. You can untick "Use my balance" to pay by card instead.</p>
+  <p class="hint">At checkout your balance is used in this order: site credit, then deposited funds, then cash. You can untick “Use my balance” to pay by card instead.</p>
+
+  <section class="section" id="withdraw" aria-labelledby="wd-h"><h2 id="wd-h">Withdraw cash</h2>
+  <ol class="steps-inline" aria-label="How withdrawals work"><li>Amount</li><li>Where to</li><li>Check details</li><li>Requested</li><li>Paid</li></ol>
+  <p class="small muted">Minimum {{ min_withdrawal|gbp }}. Only your <b>cash balance</b> can be withdrawn. You need a confirmed email address, and the account must be in your own name. For larger amounts we may ask for ID before paying — we'll email you if so. We aim to pay within 24 hours.</p>
+  {% if not u.email_verified %}
+    {{ verify_notice() }}
+  {% elif bal.cash < min_withdrawal %}
+    <div class="notice"><span>You can withdraw once your cash balance reaches {{ min_withdrawal|gbp }}. You have {{ bal.cash|gbp }}.</span></div>
+  {% else %}
+  <form class="panel" method="post" action="{{ url_for('public.withdraw') }}" style="max-width:640px">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="step" value="review">
+    <div class="two">
+      <div class="field"><label for="w-amount">Amount (£)</label><input id="w-amount" name="amount" type="number" inputmode="decimal" min="{{ min_withdrawal/100 }}" step="0.01" max="{{ (bal.cash/100)|round(2) }}" value="{{ (bal.cash/100)|round(2) }}" required aria-describedby="w-amount-h"><span class="hint" id="w-amount-h">{{ min_withdrawal|gbp }} to {{ bal.cash|gbp }}</span></div>
+      <div class="field" style="margin-top:0"><label for="wmethod">Pay to</label><select name="method" id="wmethod" onchange="document.getElementById('wbank').hidden=this.value!='bank';document.getElementById('wpp').hidden=this.value!='paypal'">
+        <option value="bank">UK bank account</option><option value="paypal">PayPal</option></select></div>
+    </div>
+    <div id="wbank">
+      <div class="field"><label for="w-name">Account holder name</label><input id="w-name" name="account_name" autocomplete="name" value="{{ u.name }}"></div>
+      <div class="two"><div class="field"><label for="w-sort">Sort code</label><input id="w-sort" name="sort_code" inputmode="numeric" placeholder="12-34-56" maxlength="8" autocomplete="off"></div>
+      <div class="field"><label for="w-acc">Account number</label><input id="w-acc" name="account_number" inputmode="numeric" placeholder="8 digits" maxlength="8" autocomplete="off"></div></div>
+    </div>
+    <div id="wpp" hidden><div class="field"><label for="w-pp">PayPal email</label><input id="w-pp" name="paypal_email" type="email" value="{{ u.email }}"></div></div>
+    <button class="btn block" style="margin-top:var(--s4)">Continue — check details</button>
+  </form>
+  {% endif %}
+  {% if withdrawals %}<div class="panel table-scroll" style="margin-top:var(--s4)"><table>
+    <thead><tr><th scope="col">Requested</th><th scope="col">To</th><th scope="col" class="num">Amount</th><th scope="col">Status</th></tr></thead><tbody>
+    {% for w in withdrawals %}<tr><td><a href="{{ url_for('public.withdrawal_detail', wid=w.id) }}">{{ w.created_at|uktime('%d %b %Y') }}</a></td><td>{{ 'PayPal' if w.method == 'paypal' else ('Bank ••' ~ (w.account_number or '')[-4:] if w.account_number else 'Bank') }}</td><td class="num">{{ w.amount|gbp }}</td><td><span class="pill {{ w.status }}">{{ {'requested':'Requested','processing':'Processing','paid':'Paid','rejected':'Returned to balance'}.get(w.status, w.status) }}</span></td></tr>{% endfor %}
+  </tbody></table></div>{% endif %}
+  </section>
 
   <section class="section" id="deposit" aria-labelledby="dep-h"><h2 id="dep-h">Add funds</h2>
   {% if excluded %}
     <div class="notice warn"><span>Your account is on a break, so you can't add funds until {{ u.excluded_until|uktime }}.</span></div>
   {% elif not u.email_verified %}
-    <div class="notice warn"><span>Confirm your email address first — we sent a link to <b>{{ u.email }}</b>.</span>
-      <form method="post" action="{{ url_for('public.resend_verification') }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn small">Resend link</button></form></div>
+    {{ verify_notice() }}
   {% elif deposit_room < min_deposit %}
-    <div class="notice"><span>You've reached your spending limit for now (deposits count towards it). You can review your limits in <a href="{{ url_for('public.account', tab='settings') }}#limits">Settings</a>.</span></div>
+    <div class="notice"><span>You've reached your spending limit for now (deposits count towards it). You can review your limits under <a href="{{ url_for('public.account', tab='safer') }}#limits">Responsible play</a>.</span></div>
   {% else %}
-  <form class="panel" method="post" action="{{ url_for('public.deposit') }}" style="max-width:640px" id="depform">
+  <form class="panel" method="post" action="{{ url_for('public.deposit') }}" style="max-width:640px" id="depform" data-once>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <fieldset><legend>How much would you like to add?</legend>
     <div class="quick deposit-quick">{% for v in [5, 10, 20, 50, 100] if v * 100 <= deposit_room %}<button type="button" data-v="{{ v }}" aria-pressed="{{ 'true' if v == 10 else 'false' }}">£{{ v }}</button>{% endfor %}</div></fieldset>
     <div class="field"><label for="dep-amount">Amount (£)</label>
       <input id="dep-amount" name="amount" type="number" inputmode="decimal" min="{{ min_deposit / 100 }}" max="{{ (deposit_room / 100)|round(2, 'floor') }}" step="0.01" value="{{ 10 if deposit_room >= 1000 else (min_deposit / 100)|int }}" required aria-describedby="dep-h2">
       <span class="hint" id="dep-h2">£{{ (min_deposit / 100)|int }} to £{{ '%.2f'|format(deposit_room / 100) }}{% if deposit_room < max_deposit %} (your spending limit){% endif %}. Deposits count towards your spending limits.</span></div>
-    <button class="btn block" style="margin-top:var(--s4)">Add funds by debit card</button>
+    <button class="btn block" style="margin-top:var(--s4)" data-busy="Taking you to payment…">Add funds by debit card</button>
     <p class="hint">Secure payment by Stripe. Debit cards, Apple Pay and Google Pay (linked to a debit card) only — credit card payments are refunded automatically.</p>
   </form>
   {% endif %}
@@ -119,67 +200,24 @@
       <td><span class="pill {{ d.status }}">{{ {'paid':'Added','pending':'Waiting for payment','credit_refused':'Refunded — credit card','needs_refund':'Refund due'}.get(d.status, d.status) }}</span></td></tr>{% endfor %}
   </tbody></table></div>{% endif %}
   </section>
+  <p class="small"><a href="{{ url_for('public.account', tab='transactions') }}">See all wallet activity →</a></p>
 
-  <section class="section" aria-labelledby="wd-h"><h2 id="wd-h">Withdraw cash winnings</h2>
-  {% if not u.email_verified %}
-    <div class="notice warn"><span>Confirm your email address first — we sent a link to <b>{{ u.email }}</b>.</span>
-      <form method="post" action="{{ url_for('public.resend_verification') }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn small">Resend link</button></form></div>
-  {% elif bal.cash < min_withdrawal %}
-    <div class="notice"><span>You can withdraw once your cash balance reaches {{ min_withdrawal|gbp }}. You have {{ bal.cash|gbp }}.</span></div>
-  {% else %}
-  <form class="panel" method="post" action="{{ url_for('public.withdraw') }}" style="max-width:640px">
-    <input type="hidden" name="csrf" value="{{ csrf_token }}">
-    <div class="two">
-      <div class="field"><label for="w-amount">Amount (£)</label><input id="w-amount" name="amount" type="number" inputmode="decimal" min="{{ min_withdrawal/100 }}" step="0.01" max="{{ (bal.cash/100)|round(2) }}" value="{{ (bal.cash/100)|round(2) }}" required aria-describedby="w-amount-h"><span class="hint" id="w-amount-h">Minimum {{ min_withdrawal|gbp }}, up to {{ bal.cash|gbp }}</span></div>
-      <div class="field" style="margin-top:0"><label for="wmethod">Pay to</label><select name="method" id="wmethod" onchange="document.getElementById('wbank').hidden=this.value!='bank';document.getElementById('wpp').hidden=this.value!='paypal'">
-        <option value="bank">UK bank account</option><option value="paypal">PayPal</option></select></div>
-    </div>
-    <div id="wbank">
-      <div class="field"><label for="w-name">Account holder name</label><input id="w-name" name="account_name" autocomplete="name" value="{{ u.name }}"></div>
-      <div class="two"><div class="field"><label for="w-sort">Sort code</label><input id="w-sort" name="sort_code" inputmode="numeric" placeholder="12-34-56" maxlength="8"></div>
-      <div class="field"><label for="w-acc">Account number</label><input id="w-acc" name="account_number" inputmode="numeric" placeholder="8 digits" maxlength="8"></div></div>
-    </div>
-    <div id="wpp" hidden><div class="field"><label for="w-pp">PayPal email</label><input id="w-pp" name="paypal_email" type="email" value="{{ u.email }}"></div></div>
-    <button class="btn block" style="margin-top:var(--s4)">Withdraw cash</button>
-    <p class="hint">We aim to pay within 24 hours. Bank details are only used for this payment and are hidden once it's paid.</p>
-  </form>
-  {% endif %}</section>
-  {% if withdrawals %}<section class="section" aria-labelledby="wds-h"><h2 id="wds-h">Withdrawals</h2><div class="panel table-scroll"><table>
-    <thead><tr><th scope="col">Date</th><th scope="col">To</th><th scope="col" class="num">Amount</th><th scope="col">Status</th></tr></thead><tbody>
-    {% for w in withdrawals %}<tr><td>{{ w.created_at|uktime('%d %b %Y') }}</td><td>{{ 'PayPal' if w.method == 'paypal' else ('Bank ••' ~ (w.account_number or '')[-4:] if w.account_number else 'Bank') }}</td><td class="num">{{ w.amount|gbp }}</td><td><span class="pill {{ w.status }}">{{ {'requested':'Requested','paid':'Paid','rejected':'Returned to balance'}.get(w.status, w.status) }}</span></td></tr>{% endfor %}
-  </tbody></table></div></section>{% endif %}
-  <section class="section" aria-labelledby="tx-h"><h2 id="tx-h">Transactions</h2>
-  <div class="panel table-scroll"><table>
-    <thead><tr><th scope="col">Date</th><th scope="col">Details</th><th scope="col">Balance</th><th scope="col" class="num">Amount</th></tr></thead><tbody>
-    {% for l in ledger %}<tr><td class="muted">{{ l.created_at|uktime('%d %b %Y') }}</td><td>{{ l.reason }}</td><td><span class="kind {{ l.kind }}">{{ {'cash':'Cash','credit':'Credit','deposit':'Deposit'}.get(l.kind, l.kind) }}</span></td><td class="num {{ 'pos' if l.amount > 0 else 'neg' }}">{{ '+' if l.amount > 0 }}{{ l.amount|gbp }}</td></tr>
-    {% else %}<tr><td colspan="4" class="muted">Nothing yet — prizes, refunds and bonuses appear here.</td></tr>{% endfor %}
-  </tbody></table></div></section>
-
-{% elif tab == 'orders' %}
-  <div class="panel table-scroll"><table>
-    <thead><tr><th scope="col">Order</th><th scope="col">Date</th><th scope="col">Items</th><th scope="col">Status</th><th scope="col" class="num">Card</th><th scope="col" class="num">Balance used</th></tr></thead><tbody>
-    {% for o in orders %}<tr><td><a href="{{ url_for('public.order_detail', cid=o.id) }}">#{{ o.id }}</a></td><td>{{ (o.paid_at or o.created_at)|uktime('%d %b %Y') }}</td><td>{{ o.titles }}</td>
-      <td><span class="pill {{ o.status }}">{{ {'paid':'Paid','credit_refused':'Refunded','needs_refund':'Refund due'}.get(o.status, o.status) }}</span></td>
-      <td class="num">{{ o.cash_due|gbp }}</td><td class="num">{{ (o.credit_used + o.cash_used + o.deposit_used)|gbp }}</td></tr>
-    {% else %}<tr><td colspan="6" class="muted">No orders yet.</td></tr>{% endfor %}
-  </tbody></table></div>
-
-{% elif tab == 'rewards' %}
+{% elif tab == 'points' %}
   <div class="two">
     <section class="panel" aria-labelledby="pts-h">
-      <h2 id="pts-h" style="font-size:20px">DBX Points</h2>
+      <h2 id="pts-h" style="font-size:20px">Your points</h2>
       <span class="tierbadge tier-{{ tier.name }}">{{ tier.name }}</span>
-      <p style="margin:var(--s3) 0 0"><b style="font-size:28px">{{ u.points }}</b> points to spend · {{ u.points_lifetime }} earned in total</p>
+      <p style="margin:var(--s3) 0 0"><b style="font-size:28px">{{ '{:,}'.format(u.points) }}</b> points to spend · {{ '{:,}'.format(u.points_lifetime) }} earned in total</p>
       {% if tier.next %}<div class="tierbar" role="img" aria-label="{{ tier.pct }}% of the way to {{ tier.next }}"><i style="width:{{ tier.pct }}%"></i></div>
       <p class="small muted" style="margin:0">{{ tier.to_next }} more points to reach <b>{{ tier.next }}</b>.</p>
       {% else %}<p class="small muted">You're at the top tier.</p>{% endif %}
       <form method="post" action="{{ url_for('public.redeem') }}" style="margin-top:var(--s4)">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         {% set maxb = (u.points // redeem_block) %}
-        <label for="blocks">Redeem points for site credit ({{ redeem_block }} points = £1)</label>
+        <label for="blocks">Pounds of site credit to redeem ({{ redeem_block }} points = £1)</label>
         <div class="inline-form"><input id="blocks" name="blocks" type="number" min="1" max="{{ maxb if maxb else 1 }}" value="{{ maxb if maxb else 1 }}" style="max-width:110px" aria-describedby="blocks-h">
         <button class="btn" {{ 'disabled' if maxb < 1 }}>Redeem</button></div>
-        <span class="hint" id="blocks-h">{% if maxb %}Up to £{{ maxb }} available.{% else %}You need {{ redeem_block }} points to redeem.{% endif %}</span>
+        <span class="hint" id="blocks-h">{% if maxb %}Up to £{{ maxb }} available. Site credit can be spent on entries but not withdrawn.{% else %}You need {{ redeem_block }} points to redeem.{% endif %}</span>
       </form>
     </section>
     <section class="panel" aria-labelledby="ref-h">
@@ -194,49 +232,55 @@
   <section class="section" aria-labelledby="tiers-h"><h2 id="tiers-h">How points work</h2>
   <div class="panel table-scroll"><table><thead><tr><th scope="col">Tier</th><th scope="col">Reached at</th><th scope="col">Points per £1 paid by card</th></tr></thead><tbody>
     {% for name, at, mult in tiers %}<tr><td><b class="tier-{{ name }}">{{ name }}</b>{% if name == tier.name %} <span class="pill">Your tier</span>{% endif %}</td><td>{{ at }} lifetime points</td><td>{{ mult }}×</td></tr>{% endfor %}</tbody></table>
-    <p class="hint">Points don't expire while your account is active and have no cash value.</p></div></section>
+    <p class="hint">You earn points on money paid by card or from deposited funds. Points have no cash value.</p></div></section>
 
-{% elif tab == 'settings' %}
+{% elif tab == 'safer' %}
   <div class="two">
-    <form class="panel" method="post" action="{{ url_for('public.profile') }}" id="profile">
+    <form class="panel" method="post" action="{{ url_for('public.set_limits') }}" id="limits">
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
-      <h2 style="font-size:20px">Profile</h2>
-      <dl class="facts"><div><dt>Name</dt><dd>{{ u.name }}</dd></div><div><dt>Email</dt><dd>{{ u.email }} {% if u.email_verified %}<span class="pill paid">Confirmed</span>{% else %}<span class="pill pending">Not confirmed</span>{% endif %}</dd></div></dl>
-      <p class="hint">To change your name or email, <a href="{{ url_for('public.contact') }}">contact us</a>.</p>
-      <div class="field"><label for="phone">Mobile number</label><input id="phone" name="phone" type="tel" value="{{ u.phone or '' }}" autocomplete="tel" aria-describedby="phone-h"><span class="hint" id="phone-h">So we can call you when you win.</span></div>
-      <label class="check"><input type="checkbox" name="marketing" value="1" {{ 'checked' if u.marketing }}> Email me new competitions and offers</label>
-      <h3 style="margin-top:var(--s5)">Change password</h3>
-      <div class="field"><label for="cpw">Current password</label><input id="cpw" type="password" name="current_password" autocomplete="current-password"></div>
-      <div class="field"><label for="npw">New password</label><input id="npw" type="password" name="new_password" minlength="10" autocomplete="new-password" aria-describedby="npw-h"><span class="hint" id="npw-h">At least 10 characters. Leave blank to keep your current password.</span></div>
-      <button class="btn block" style="margin-top:var(--s4)">Save changes</button>
+      <h2 style="font-size:20px">Spending limits</h2>
+      <p class="small muted">Lowering a limit applies <b>straight away</b>. Raising or removing one only starts after <b>72 hours</b> — and saving lower limits in the meantime cancels it. Monthly spending is capped at {{ config.MAX_MONTHLY_LIMIT|gbp }} for everyone. Card payments and deposits count; spending your wallet balance doesn't count twice.</p>
+      {% for k in ['daily','weekly','monthly'] %}
+        <div class="field"><label for="lim-{{ k }}">{{ k|capitalize }} limit (£)</label>
+        <input id="lim-{{ k }}" name="{{ k }}" type="number" inputmode="numeric" min="0" max="{{ (config.MAX_MONTHLY_LIMIT/100)|int }}" step="1" value="{{ ((limits[k]/100)|int) if limits[k] is not none else '' }}" {{ 'required' if k == 'monthly' }} aria-describedby="lim-{{ k }}-h">
+        <span class="hint" id="lim-{{ k }}-h">Spent this {{ {'daily':'day','weekly':'week','monthly':'month'}[k] }}: {{ spent[k]|gbp }}{% if limits[k] is not none %} of {{ limits[k]|gbp }}{% endif %}{% if k != 'monthly' %} · leave blank for no limit{% endif %}</span></div>
+      {% endfor %}
+      {% if u.pending_limit_at %}{% set pend = [] %}{% if u.pending_daily is not none %}{% set _ = pend.append('daily ' ~ ('no limit' if u.pending_daily < 0 else u.pending_daily|gbp)) %}{% endif %}{% if u.pending_weekly is not none %}{% set _ = pend.append('weekly ' ~ ('no limit' if u.pending_weekly < 0 else u.pending_weekly|gbp)) %}{% endif %}{% if u.pending_limit is not none %}{% set _ = pend.append('monthly ' ~ u.pending_limit|gbp) %}{% endif %}
+      <p class="notice warn" style="margin-top:var(--s3)" role="status">Waiting to go up: {{ pend|join(', ') }} — from {{ u.pending_limit_at|uktime }}.</p>{% endif %}
+      <button class="btn block" style="margin-top:var(--s4)">Save limits</button>
     </form>
-    <div class="stack">
-      <form class="panel" method="post" action="{{ url_for('public.set_limits') }}" id="limits">
-        <input type="hidden" name="csrf" value="{{ csrf_token }}">
-        <h2 style="font-size:20px">Spending limits</h2>
-        <p class="small muted">Lower limits apply straight away. Raising or removing one takes 72 hours. Monthly spending is capped at {{ config.MAX_MONTHLY_LIMIT|gbp }}.</p>
-        {% for k in ['daily','weekly','monthly'] %}
-          <div class="field"><label for="lim-{{ k }}">{{ k|capitalize }} limit (£)</label>
-          <input id="lim-{{ k }}" name="{{ k }}" type="number" inputmode="numeric" min="0" max="{{ (config.MAX_MONTHLY_LIMIT/100)|int }}" step="1" value="{{ ((limits[k]/100)|int) if limits[k] is not none else '' }}" {{ 'required' if k == 'monthly' }} aria-describedby="lim-{{ k }}-h">
-          <span class="hint" id="lim-{{ k }}-h">Spent this {{ {'daily':'day','weekly':'week','monthly':'month'}[k] }}: {{ spent[k]|gbp }}{% if k != 'monthly' %} · leave blank for no limit{% endif %}</span></div>
-        {% endfor %}
-        {% if u.pending_limit_at %}<p class="notice warn" style="margin-top:var(--s3)">Your requested increase applies {{ u.pending_limit_at|uktime }}.</p>{% endif %}
-        <button class="btn block" style="margin-top:var(--s4)">Save limits</button>
-      </form>
-      <form class="panel" method="post" action="{{ url_for('public.self_exclude') }}" id="break">
-        <input type="hidden" name="csrf" value="{{ csrf_token }}">
-        <h2 style="font-size:20px">Take a break</h2>
-        {% if excluded %}<p>You're on a break until <b>{{ u.excluded_until|uktime }}</b>.</p>
-        {% else %}
-        <p class="small muted">Stop yourself buying entries for a set time. A break can't be ended early.</p>
-        <label for="days">Length of break</label>
-        <select id="days" name="days"><option value="1">24 hours</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option><option value="180">6 months</option><option value="365">1 year</option></select>
-        <button class="btn block danger" style="margin-top:var(--s4)" onclick="return confirm('Start your break now? It cannot be ended early.')">Start break</button>
-        {% endif %}
-        <p class="small muted" style="margin:var(--s3) 0 0">Need support? <a href="{{ url_for('public.page', page='responsible-play') }}">Free help and advice</a>.</p>
-      </form>
-    </div>
+    <form class="panel" method="post" action="{{ url_for('public.self_exclude') }}" id="break">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <h2 style="font-size:20px">Take a break</h2>
+      {% if excluded %}<p>You're on a break until <b>{{ u.excluded_until|uktime }}</b>. You can't buy entries, add funds or claim free plays until then. You can still see your entries and withdraw your cash balance.</p>
+      {% else %}
+      <p class="small muted">Stop yourself buying entries, adding funds and claiming free plays for a set time. It starts immediately, cancels any payment in progress, and <b>can't be ended early</b>.</p>
+      <label for="days">Length of break</label>
+      <select id="days" name="days"><option value="1">24 hours</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option><option value="180">6 months</option><option value="365">1 year</option></select>
+      <button class="btn block danger" style="margin-top:var(--s4)" onclick="return confirm('Start your break now? It cannot be ended early.')">Start break</button>
+      {% endif %}
+      <p class="small muted" style="margin:var(--s3) 0 0">Need support? <a href="{{ url_for('public.page', page='responsible-play') }}">Free, confidential help and advice</a>.</p>
+    </form>
   </div>
+
+{% elif tab == 'profile' %}
+  <form class="panel" method="post" action="{{ url_for('public.profile') }}" id="profile" style="max-width:640px">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <h2 style="font-size:20px">Profile</h2>
+    <dl class="facts"><div><dt>Name</dt><dd>{{ u.name }}</dd></div><div><dt>Email</dt><dd>{{ u.email }} {% if u.email_verified %}<span class="pill paid">Confirmed</span>{% else %}<span class="pill pending">Not confirmed</span>{% endif %}</dd></div></dl>
+    {% if not u.email_verified %}{{ verify_notice() }}{% endif %}
+    <p class="hint">To change your name or email, <a href="{{ url_for('public.contact') }}">contact us</a> — we check it's really you first.</p>
+    <div class="field"><label for="phone">Mobile number</label><input id="phone" name="phone" type="tel" value="{{ u.phone or '' }}" autocomplete="tel" aria-describedby="phone-h"><span class="hint" id="phone-h">So we can call you when you win.</span></div>
+    <label class="check"><input type="checkbox" name="marketing" value="1" {{ 'checked' if u.marketing }}> Email me new competitions and offers</label>
+    <h3 style="margin-top:var(--s5)">Change password</h3>
+    <div class="field"><label for="cpw">Current password</label><input id="cpw" type="password" name="current_password" autocomplete="current-password"></div>
+    <div class="field"><label for="npw">New password</label><input id="npw" type="password" name="new_password" minlength="10" autocomplete="new-password" aria-describedby="npw-h"><span class="hint" id="npw-h">At least 10 characters. Changing it signs you out on every other device. Leave blank to keep your current password.</span></div>
+    <button class="btn block" style="margin-top:var(--s4)">Save changes</button>
+  </form>
+  <section class="panel" style="max-width:640px;margin-top:var(--s4)">
+    <h2 style="font-size:20px">Your data</h2>
+    <p class="small muted" style="margin:0">To get a copy of your data or close your account, <a href="{{ url_for('public.contact') }}">contact us</a>. We'll pay out any cash balance first. Some records (entries, draws and payments) are kept as long as the law requires — see our <a href="{{ url_for('public.page', page='privacy') }}">privacy policy</a>.</p>
+  </section>
   <form method="post" action="{{ url_for('public.logout') }}" style="margin-top:var(--s5)"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn ghost">Log out</button></form>
 {% endif %}
 {% endblock %}

@@ -1,22 +1,27 @@
 {% extends "base.html" %}
 {% block title %}Create an account · {{ config.SITE_NAME }}{% endblock %}
 {% block desc %}Join {{ config.SITE_NAME }} free to enter prize draws, play instant win games and claim a free play every day.{% endblock %}
+{% macro err(k) %}{% if errors.get(k) %}<span class="field-error" id="{{ k }}-err">{{ errors[k] }}</span>{% endif %}{% endmacro %}
+{% macro aria(k, hint=None) %}{% if errors.get(k) %}aria-invalid="true" aria-describedby="{{ k }}-err{{ ' ' ~ hint if hint }}"{% elif hint %}aria-describedby="{{ hint }}"{% endif %}{% endmacro %}
 {% block content %}
 <div class="form-narrow">
-<form class="panel" method="post">
+<form class="panel" method="post" novalidate data-once>
   <h1>Create your account</h1>
-  <p class="muted">Free to join. You'll get a daily free play once your email is confirmed.</p>
+  <p class="muted">Free to join. We only ask for what we need to run competitions fairly and pay prizes.</p>
   {% if session.get('ref') %}<p class="notice good">You were invited by a friend.</p>{% endif %}
+  {% if errors %}<div class="notice bad" role="alert" tabindex="-1" id="err-summary"><div><b>Please fix {{ 'this' if errors|length == 1 else 'these ' ~ errors|length ~ ' things' }}:</b>
+    <ul style="margin:6px 0 0;padding-left:18px">{% for k, v in errors.items() %}<li><a href="#{{ 'pw' if k == 'password' else k }}">{{ v }}</a></li>{% endfor %}</ul></div></div>{% endif %}
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
-  <div class="field"><label for="name">Full name</label><input id="name" name="name" value="{{ form.get('name','') }}" required autocomplete="name"></div>
-  <div class="field"><label for="email">Email</label><input id="email" type="email" name="email" value="{{ form.get('email','') }}" required autocomplete="email"></div>
-  <div class="field"><label for="dob">Date of birth</label><input id="dob" type="date" name="dob" value="{{ form.get('dob','') }}" required autocomplete="bday" aria-describedby="dob-h"><span class="hint" id="dob-h">You must be 18 or over.</span></div>
-  <div class="field"><label for="phone">Mobile number <span class="dim">(optional)</span></label><input id="phone" name="phone" type="tel" value="{{ form.get('phone','') }}" autocomplete="tel" aria-describedby="phone-h"><span class="hint" id="phone-h">So we can call you when you win.</span></div>
-  <div class="field"><label for="pw">Password</label><input id="pw" type="password" name="password" minlength="10" required autocomplete="new-password" aria-describedby="pw-h"><span class="hint" id="pw-h">At least 10 characters.</span></div>
-  <label class="check"><input type="checkbox" name="agree" value="1" required> <span>I'm 18 or over, live in the UK and accept the <a href="{{ url_for('public.page', page='terms') }}" target="_blank">terms</a> and <a href="{{ url_for('public.page', page='privacy') }}" target="_blank">privacy policy</a>.</span></label>
+  <div class="field"><label for="name">Full name</label><input id="name" name="name" value="{{ form.get('name','') }}" required autocomplete="name" {{ aria('name') }}>{{ err('name') }}</div>
+  <div class="field"><label for="email">Email</label><input id="email" type="email" name="email" value="{{ form.get('email','') }}" required autocomplete="email" {{ aria('email') }}>{{ err('email') }}</div>
+  <div class="field"><label for="dob">Date of birth</label><input id="dob" type="date" name="dob" value="{{ form.get('dob','') }}" required autocomplete="bday" {{ aria('dob', 'dob-h') }}><span class="hint" id="dob-h">You must be 18 or over.</span>{{ err('dob') }}</div>
+  <div class="field"><label for="phone">Mobile number <span class="dim">(optional)</span></label><input id="phone" name="phone" type="tel" value="{{ form.get('phone','') }}" autocomplete="tel" aria-describedby="phone-h"><span class="hint" id="phone-h">So we can call you if you win.</span></div>
+  <div class="field"><label for="pw">Password</label><input id="pw" type="password" name="password" minlength="10" required autocomplete="new-password" {{ aria('password', 'pw-h') }}><span class="hint" id="pw-h">At least 10 characters. A few random words together works well.</span>{{ err('password') }}</div>
+  <label class="check"><input type="checkbox" name="agree" value="1" required id="agree" {{ 'checked' if form.get('agree') }} {{ aria('agree') }}> <span>I'm 18 or over, live in the UK and accept the <a href="{{ url_for('public.page', page='terms') }}" target="_blank">terms</a> and <a href="{{ url_for('public.page', page='privacy') }}" target="_blank">privacy policy</a>.</span></label>{{ err('agree') }}
   <label class="check"><input type="checkbox" name="marketing" value="1" {{ 'checked' if form.get('marketing') }}> <span>Email me new competitions and offers (optional).</span></label>
-  <button class="btn block" style="margin-top:var(--s4)">Create account</button>
+  <button class="btn block lg" style="margin-top:var(--s4)" data-busy="Creating your account…">Create account</button>
   <p class="small muted center" style="margin:var(--s3) 0 0">Already have an account? <a href="{{ url_for('public.login', next=request.args.get('next')) }}">Log in</a></p>
 </form>
 </div>
 {% endblock %}
+{% block scripts %}{% if errors %}<script>document.getElementById('err-summary').focus()</script>{% endif %}{% endblock %}

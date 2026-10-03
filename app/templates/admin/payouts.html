@@ -27,7 +27,8 @@
 <div class="panel table-scroll"><table><tr><th>Date</th><th>User</th><th class="num">Amount</th><th>Status</th><th></th></tr>
   {% for w in withdrawals %}<tr><td>{{ w.created_at|uktime('%d %b %Y') }}</td><td>{{ w.name }}<div class="tiny muted">{{ w.email }}</div>
     <div class="tiny">{% if w.method == 'paypal' %}PayPal: <b>{{ w.paypal_email }}</b>{% elif w.method == 'bank' %}{{ w.account_name }} · <b>{{ w.sort_code }}</b> · <b>{{ w.account_number }}</b>{% endif %}</div></td><td class="num"><b>{{ w.amount|gbp }}</b></td><td><span class="pill {{ w.status }}">{{ w.status }}</span>{% if w.note %}<div class="tiny muted">{{ w.note }}</div>{% endif %}</td>
-  <td>{% if w.status == 'requested' %}<form class="actions" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="wid" value="{{ w.id }}">
-    <input name="note" placeholder="Note (optional)" style="max-width:180px;padding:7px 10px"><button class="btn small good" name="action" value="paid">Paid</button><button class="btn small danger" name="action" value="reject">Return to wallet</button></form>{% endif %}</td></tr>
+  <td>{% if w.status in ('requested', 'processing') %}<form class="actions" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="wid" value="{{ w.id }}">
+    {% if w.status == 'requested' %}<button class="btn small ghost" name="action" value="processing">Processing</button>{% endif %}
+    <input name="note" placeholder="Note (optional)" aria-label="Note for withdrawal {{ w.id }}" style="max-width:180px;padding:7px 10px"><button class="btn small good" name="action" value="paid" onclick="return confirm('Only mark this as paid once the money has actually been sent. Continue?')">Paid — money sent</button><button class="btn small danger" name="action" value="reject">Return to wallet</button></form>{% endif %}</td></tr>
   {% else %}<tr><td colspan="5" class="muted">No requests.</td></tr>{% endfor %}</table></div>
 {% endblock %}

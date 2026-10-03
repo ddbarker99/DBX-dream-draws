@@ -14,7 +14,7 @@
   <li><strong>Take a break.</strong> Stop yourself from buying entries for 24 hours, 7 days, 30 days, 90 days, 6 months or a year. A break can't be ended early. During a break you can't buy entries or claim the daily free play, and your basket is cleared. You can still log in to see your entries and results, receive prizes you've already won, and withdraw your cash balance.</li>
   <li><strong>Your history.</strong> Every order, prize and wallet transaction is listed in your account.</li>
 </ul>
-{% if user %}<p><a class="btn" href="{{ url_for('public.account', tab='settings') }}#limits">Set my limits</a></p>{% else %}<p>Limits and breaks are in <b>My account → Settings</b> once you're logged in.</p>{% endif %}
+{% if user %}<p><a class="btn" href="{{ url_for('public.account', tab='safer') }}#limits">Set my limits</a></p>{% else %}<p>Limits and breaks are in <b>My account → Responsible play</b> once you're logged in.</p>{% endif %}
 
 <h2>When to take a break</h2>
 <p>Consider taking a break if you find yourself:</p>

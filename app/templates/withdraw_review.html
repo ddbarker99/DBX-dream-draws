@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Check your withdrawal · {{ config.SITE_NAME }}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+<div style="max-width:620px;margin:0 auto">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('public.account') }}">My account</a> › <a href="{{ url_for('public.account', tab='wallet') }}">Wallet</a> › <span aria-current="page">Withdraw</span></nav>
+  <h1>Check your withdrawal</h1>
+  <p class="muted">Please check these details carefully — money sent to the wrong account can be hard to get back.</p>
+  <section class="panel">
+    <dl class="facts">
+      <div><dt>Amount</dt><dd><b>{{ amount|gbp }}</b> from your cash balance</dd></div>
+      {% if v.method == 'bank' %}
+      <div><dt>Pay to</dt><dd>UK bank account</dd></div>
+      <div><dt>Account holder</dt><dd>{{ v.account_name }}</dd></div>
+      <div><dt>Sort code</dt><dd>{{ v.sort_code[:2] }}-{{ v.sort_code[2:4] }}-{{ v.sort_code[4:] }}</dd></div>
+      <div><dt>Account number</dt><dd>{{ v.account_number }}</dd></div>
+      {% else %}
+      <div><dt>Pay to</dt><dd>PayPal — {{ v.paypal_email }}</dd></div>
+      {% endif %}
+    </dl>
+    <p class="small muted">The account must be in your own name. We aim to pay within 24 hours; for larger amounts we may email you to ask for ID first.</p>
+    <form method="post" action="{{ url_for('public.withdraw') }}" data-once>
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="step" value="confirm">
+      <input type="hidden" name="amount" value="{{ '%.2f'|format(amount / 100) }}">
+      {% for k in ('method', 'account_name', 'sort_code', 'account_number', 'paypal_email') %}<input type="hidden" name="{{ k }}" value="{{ v[k] or '' }}">{% endfor %}
+      <button class="btn block lg" data-busy="Sending your request…">Confirm withdrawal of {{ amount|gbp }}</button>
+    </form>
+    <p class="center small" style="margin:var(--s3) 0 0"><a href="{{ url_for('public.account', tab='wallet') }}#withdraw">Change details</a></p>
+  </section>
+</div>
+{% endblock %}

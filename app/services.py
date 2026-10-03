@@ -172,8 +172,8 @@ def _clean_digits(s):
     return "".join(ch for ch in (s or "") if ch.isdigit())
 
 
-def request_withdrawal(user, amount, details):
-    """Cash winnings only. details: method 'bank' (account_name, sort_code, account_number) or 'paypal' (paypal_email)."""
+def check_withdrawal(user, amount, details):
+    """Validate a withdrawal without making it (for the review step). Returns the cleaned details."""
     if not user["email_verified"]:
         raise PurchaseError("Please verify your email address before withdrawing — check your inbox or resend it from your account.")
     if amount < MIN_WITHDRAWAL:
@@ -188,10 +188,19 @@ def request_withdrawal(user, amount, details):
             raise PurchaseError("Enter the account holder name, a 6-digit sort code and an 8-digit account number.")
     elif method == "paypal":
         vals["paypal_email"] = (details.get("paypal_email") or "").strip()[:120]
-        if "@" not in vals["paypal_email"]:
-            raise PurchaseError("Enter your PayPal email address.")
+        if "@" not in vals["paypal_email"] or "." not in vals["paypal_email"].split("@")[-1]:
+            raise PurchaseError("Enter the email address of your PayPal account.")
     else:
         raise PurchaseError("Choose bank transfer or PayPal.")
+    if amount > balance(get_db(), user["id"], "cash"):
+        raise PurchaseError("That's more than your cash balance.")
+    return vals
+
+
+def request_withdrawal(user, amount, details):
+    """Cash winnings only. details: method 'bank' (account_name, sort_code, account_number) or 'paypal' (paypal_email)."""
+    vals = check_withdrawal(user, amount, details)
+    method = vals["method"]
     with write_txn() as db:
         if amount > balance(db, user["id"], "cash"):
             raise PurchaseError("That's more than your cash balance.")
@@ -206,10 +215,16 @@ def request_withdrawal(user, amount, details):
         return cur.lastrowid
 
 
+def mark_withdrawal_processing(wid):
+    with write_txn() as db:
+        if db.execute("UPDATE withdrawals SET status='processing' WHERE id=? AND status='requested'", (wid,)).rowcount:
+            audit(db, "withdrawal.processing", f"withdrawal:{wid}", "Marked as processing")
+
+
 def settle_withdrawal(wid, paid, note=""):
     with write_txn() as db:
         w = db.execute("SELECT * FROM withdrawals WHERE id=?", (wid,)).fetchone()
-        if not w or w["status"] != "requested":
+        if not w or w["status"] not in ("requested", "processing"):
             raise PurchaseError("Already handled.")
         db.execute("UPDATE withdrawals SET status=?, note=?, done_at=? WHERE id=?",
                    ("paid" if paid else "rejected", note, iso(utcnow()), wid))

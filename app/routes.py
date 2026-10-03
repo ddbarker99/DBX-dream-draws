@@ -14,7 +14,7 @@ from . import mailer, payments
 from .db import get_db, iso, parse_iso, utcnow, write_txn
 from .services import (audit, entrant_count, CATEGORIES, CATEGORY_NAMES, check_promo, MIN_DEPOSIT, MAX_DEPOSIT, create_deposit, deposit_room,
                        fulfil_deposit, set_deposit_status, expire_stale_deposits, refundable_deposits, refund_deposits, MIN_WITHDRAWAL, REDEEM_BLOCK, TIERS, balances, claim_free_play, free_play_today,
-                       redeem_points, tier_for, GAME_ICONS, GAME_NAMES, GAME_PRICES, GAME_TYPES, MAX_PICKS, game_info, reveal_ticket,
+                       redeem_points, tier_for, check_withdrawal, GAME_ICONS, GAME_NAMES, GAME_PRICES, GAME_TYPES, MAX_PICKS, game_info, reveal_ticket,
                        unplayed, PurchaseError, balance, checkout_summary, comp_state,
                        effective_limits, expire_checkout, fulfil_checkout, instant_board, is_excluded, is_new,
                        line_price, parse_tiers, public_name, request_withdrawal, reserve_checkout, refuse_checkout, site_stats, start_break,
@@ -197,6 +197,12 @@ def competition(slug):
     tiers = sorted(parse_tiers(c["discount_tiers"]))
     waiting = unplayed(db, g.user["id"], c["id"]) if g.user and c["game_type"] else []
     claimed = bool(c["free_daily"] and g.user and free_play_today(db, g.user["id"], c["id"]))
+    held = entrant_count(db, c["id"], g.user["id"], g.user["email"]) if g.user else 0
+    allowance = max(0, c["max_per_user"] - held)
+    if data["state"] == "live":
+        allowance = min(allowance, c["max_tickets"] - sold_count(db, c["id"]))
+    draw_rec = db.execute("SELECT entry_count, drawn_at, method FROM draws WHERE competition_id=? ORDER BY id DESC LIMIT 1",
+                          (c["id"],)).fetchone()
     share = current_app.config["SITE_URL"] + url_for("public.competition", slug=c["slug"])
     if g.user:
         share += "?ref=" + g.user["referral_code"]
@@ -209,7 +215,7 @@ def competition(slug):
                            winner_name=public_name(winner["name"]) if winner else None,
                            winner_number=winner["number"] if winner else None, others=others, tiers=tiers,
                            category=CATEGORY_NAMES.get(c["category"], "Other"), max_picks=MAX_PICKS,
-                           tiers_json=json.dumps(tiers))
+                           tiers_json=json.dumps(tiers), held=held, allowance=allowance, draw_rec=draw_rec)
 
 
 @bp.route("/c/<slug>/numbers")
@@ -971,30 +977,31 @@ def signup():
     if request.method == "POST":
         f = request.form
         email, name, pw = f.get("email", "").strip().lower(), " ".join(f.get("name", "").split()), f.get("password", "")
-        error = None
         key = "signup:" + (request.remote_addr or "?")
         if _too_many(key, limit=10, window=3600):
             flash("Too many sign-ups from this connection — please try again in an hour.", "error")
-            return render_template("signup.html", form=f), 429
+            return render_template("signup.html", form=f, errors={}), 429
         try:
             dob = date.fromisoformat(f.get("dob", ""))
         except ValueError:
             dob = None
-        if not email or "@" not in email or not name:
-            error = "Fill in your full name and a valid email."
-        elif len(pw) < 10:
-            error = "Use a password of at least 10 characters."
-        elif dob is None:
-            error = "Enter your date of birth."
-        elif _age(dob) < 18:
-            error = "You must be 18 or over to enter."
-        elif not f.get("agree"):
-            error = "Please accept the terms."
+        errors = {}
+        if not name or len(name.split()) < 2:
+            errors["name"] = "Enter your first name and surname."
+        if not email or "@" not in email or "." not in email.split("@")[-1]:
+            errors["email"] = "Enter a valid email address, like name@example.com."
         elif get_db().execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
-            error = "An account with that email already exists."
-        if error:
-            flash(error, "error")
-            return render_template("signup.html", form=f)
+            errors["email"] = "There's already an account with this email. Log in, or reset your password if you've forgotten it."
+        if len(pw) < 10:
+            errors["password"] = "Your password needs at least 10 characters."
+        if dob is None:
+            errors["dob"] = "Enter your date of birth."
+        elif _age(dob) < 18:
+            errors["dob"] = "You must be 18 or over to join."
+        if not f.get("agree"):
+            errors["agree"] = "Tick the box to confirm you're 18+, live in the UK and accept the terms."
+        if errors:
+            return render_template("signup.html", form=f, errors=errors), 400
         db = get_db()
         ref = db.execute("SELECT id FROM users WHERE referral_code=?", (session.get("ref", ""),)).fetchone()
         cur = db.execute(
@@ -1011,7 +1018,7 @@ def signup():
         send_verification(db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone())
         flash("Welcome! We've emailed you a link to confirm your email address.")
         return redirect(safe_next(request.args.get("next")))
-    return render_template("signup.html", form={})
+    return render_template("signup.html", form={}, errors={})
 
 
 @bp.route("/login", methods=["GET", "POST"])
@@ -1035,7 +1042,8 @@ def login():
             session["pwv"] = u["password_hash"][-16:]
             session["basket"] = basket_keep
             return redirect(safe_next(request.args.get("next")))
-        flash("Wrong email or password.", "error")
+        flash("That email and password don't match an account. Check them and try again, or reset your password.", "error")
+        return render_template("login.html"), 400
     return render_template("login.html")
 
 
@@ -1091,15 +1099,18 @@ def reset(token):
     return render_template("reset.html")
 
 
-ACCOUNT_TABS = [("overview", "Overview"), ("entries", "My entries"), ("wins", "Wins"), ("wallet", "Wallet"),
-                ("orders", "Orders"), ("rewards", "Rewards"), ("settings", "Settings")]
-OLD_TABS = {"tickets": "entries", "points": "rewards", "refer": "rewards", "safer": "settings", "profile": "settings"}
+ACCOUNT_TABS = [("overview", "Overview"), ("entries", "My entries"), ("wins", "Wins & prizes"),
+                ("transactions", "Transactions"), ("wallet", "Wallet"), ("points", "DBX Points"),
+                ("safer", "Responsible play"), ("profile", "Profile & security")]
+OLD_TABS = {"tickets": "entries", "orders": "transactions", "rewards": "points", "refer": "points",
+            "settings": "safer"}
 
 
 def _entry_groups(db, uid):
     tickets = db.execute(
-        "SELECT c.title, c.slug, c.status, c.ends_at, c.winner_ticket_id, c.game_type, c.image, c.max_tickets, "
-        "t.id, t.number, t.revealed_at, "
+        "SELECT c.title, c.slug, c.status, c.ends_at, c.winner_ticket_id, c.game_type, c.image, c.max_tickets, c.drawn_at, "
+        "c.auto_draw, (SELECT w.number FROM tickets w WHERE w.id=c.winner_ticket_id) AS winning_number, "
+        "t.id, t.number, t.revealed_at, t.postal_entry_id, "
         "CASE WHEN c.game_type='' OR t.revealed_at IS NOT NULL THEN ip.title END AS win "
         "FROM tickets t JOIN competitions c ON c.id=t.competition_id LEFT JOIN instant_prizes ip ON ip.ticket_id=t.id "
         "WHERE t.user_id=? AND t.status='issued' ORDER BY c.ends_at DESC, t.number", (uid,)).fetchall()
@@ -1107,15 +1118,24 @@ def _entry_groups(db, uid):
     for t in tickets:
         e = groups.setdefault(t["slug"], {"title": t["title"], "slug": t["slug"], "status": t["status"], "image": t["image"],
                                           "ends_at": t["ends_at"], "game": t["game_type"], "tickets": [], "won": False,
-                                          "unplayed": 0})
+                                          "unplayed": 0, "instant_wins": 0, "drawn_at": t["drawn_at"],
+                                          "winning_number": t["winning_number"], "auto_draw": t["auto_draw"]})
         e["tickets"].append(t)
         if t["winner_ticket_id"] == t["id"]:
             e["won"] = True
+        if t["win"]:
+            e["instant_wins"] += 1
         if t["game_type"] and not t["revealed_at"]:
             e["unplayed"] += 1
     out = list(groups.values())
     for e in out:
         e["open"] = e["status"] == "live" and parse_iso(e["ends_at"]) > utcnow()
+        # Active: still open, or closed and waiting for its draw, or plays left to reveal.
+        e["section"] = ("won" if e["won"] or e["instant_wins"] else
+                        "active" if e["status"] == "live" and (e["open"] or not e["game"]) or e["unplayed"] else "previous")
+        if e["section"] == "won" and (e["status"] == "live" and e["open"] or e["unplayed"]):
+            e["section"] = "active"          # an instant win on an entry that's still in play stays under Active
+    out.sort(key=lambda e: (e["section"] != "active", e["ends_at"] if e["section"] == "active" else "", ))
     return out
 
 
@@ -1131,44 +1151,53 @@ def account():
     user = db.execute("SELECT * FROM users WHERE id=?", (g.user["id"],)).fetchone()
     uid = user["id"]
     bal = balances(db, uid)
-    ctx = {"u": user, "tab": tab, "tabs": ACCOUNT_TABS, "bal": bal, "tier": tier_for(user["points_lifetime"])}
+    ctx = {"u": user, "tab": tab, "tabs": ACCOUNT_TABS, "bal": bal, "tier": tier_for(user["points_lifetime"]),
+           "excluded": is_excluded(user)}
     if tab in ("overview", "entries"):
         groups = _entry_groups(db, uid)
-        ctx["groups"] = groups
-        ctx["live_groups"] = [e for e in groups if e["open"]]
-        ctx["waiting"] = unplayed(db, uid)
+        show = request.args.get("show", "active")
+        if show not in ("active", "won", "previous"):
+            show = "active"
+        ctx.update(groups=groups, show=show, counts={k: sum(1 for e in groups if e["section"] == k)
+                                                     for k in ("active", "won", "previous")},
+                   live_groups=[e for e in groups if e["section"] == "active"], waiting=unplayed(db, uid))
+        ctx["upcoming"] = sorted([e for e in groups if e["section"] == "active" and not e["game"]],
+                                 key=lambda e: e["ends_at"])[:5]
     if tab in ("overview", "wins"):
         wins = db.execute(
             "SELECT ip.title, ip.value, ip.prize_type, ip.credit_amount, ip.fulfilled, ip.won_at, t.number, c.title AS comp, c.slug "
             "FROM instant_prizes ip JOIN tickets t ON t.id=ip.ticket_id JOIN competitions c ON c.id=ip.competition_id "
             "WHERE t.user_id=? AND (c.game_type='' OR t.revealed_at IS NOT NULL) ORDER BY ip.won_at DESC LIMIT 100",
             (uid,)).fetchall()
-        draws_won = db.execute("SELECT c.title, c.slug, c.drawn_at, c.prize_value, t.number FROM competitions c "
+        draws_won = db.execute("SELECT c.title, c.slug, c.drawn_at, c.prize_value, c.cash_alternative, t.number FROM competitions c "
                                "JOIN tickets t ON t.id=c.winner_ticket_id WHERE t.user_id=? ORDER BY c.drawn_at DESC",
                                (uid,)).fetchall()
         ctx.update(wins=wins, draws_won=draws_won, total_won=sum(w["value"] for w in wins) + sum(d["prize_value"] or 0 for d in draws_won))
+    if tab in ("overview", "transactions"):
+        ctx["ledger"] = db.execute("SELECT * FROM credit_ledger WHERE user_id=? ORDER BY id DESC LIMIT ?",
+                                   (uid, 6 if tab == "overview" else 200)).fetchall()
+        ctx["orders"] = db.execute(
+            "SELECT k.*, (SELECT COUNT(*) FROM orders o WHERE o.checkout_id=k.id) AS lines, "
+            "(SELECT SUM(o.quantity) FROM orders o WHERE o.checkout_id=k.id) AS entries, "
+            "(SELECT GROUP_CONCAT(c.title, ', ') FROM orders o JOIN competitions c ON c.id=o.competition_id "
+            " WHERE o.checkout_id=k.id) AS titles FROM checkouts k "
+            "WHERE k.user_id=? AND k.status IN ('paid','credit_refused','needs_refund') ORDER BY k.id DESC LIMIT ?",
+            (uid, 3 if tab == "overview" else 100)).fetchall()
     if tab == "wallet":
         expire_stale_deposits(db, uid)
         ctx.update(deposits=db.execute("SELECT * FROM deposits WHERE user_id=? AND status!='expired' ORDER BY id DESC LIMIT 20",
                                        (uid,)).fetchall(),
                    deposit_room=deposit_room(db, user), min_deposit=MIN_DEPOSIT, max_deposit=MAX_DEPOSIT,
                    refundable=sum(t for _, t in refundable_deposits(db, uid)),
-                   excluded=is_excluded(user))
-        ctx.update(ledger=db.execute("SELECT * FROM credit_ledger WHERE user_id=? ORDER BY id DESC LIMIT 50", (uid,)).fetchall(),
                    withdrawals=db.execute("SELECT * FROM withdrawals WHERE user_id=? ORDER BY id DESC LIMIT 20", (uid,)).fetchall(),
                    min_withdrawal=MIN_WITHDRAWAL)
-    if tab in ("overview", "orders"):
-        ctx["orders"] = db.execute(
-            "SELECT k.*, (SELECT COUNT(*) FROM orders o WHERE o.checkout_id=k.id) AS lines, "
-            "(SELECT GROUP_CONCAT(c.title, ', ') FROM orders o JOIN competitions c ON c.id=o.competition_id "
-            " WHERE o.checkout_id=k.id) AS titles FROM checkouts k "
-            "WHERE k.user_id=? AND k.status IN ('paid','credit_refused','needs_refund') ORDER BY k.id DESC LIMIT 50",
-            (uid,)).fetchall()
-    if tab == "rewards":
+    if tab == "points":
         ctx.update(tiers=TIERS, redeem_block=REDEEM_BLOCK,
                    referred=db.execute("SELECT COUNT(*) FROM users WHERE referred_by=?", (uid,)).fetchone()[0])
-    if tab == "settings":
-        ctx.update(limits=effective_limits(user), spent=spend_summary(db, uid), excluded=is_excluded(user))
+    if tab == "safer":
+        ctx.update(limits=effective_limits(user), spent=spend_summary(db, uid))
+        user = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()   # limits may have just come into force
+        ctx["u"] = user
     return render_template("account.html", **ctx)
 
 
@@ -1198,10 +1227,10 @@ def set_limits():
             v = round(float(raw) * 100)
         except ValueError:
             flash(f"Enter a number for your {k} limit.", "error")
-            return redirect(url_for("public.account", tab="settings"))
+            return redirect(url_for("public.account", tab="safer"))
         if v < 0 or v > cap:
             flash(f"Limits must be between £0 and £{cap/100:.0f}.", "error")
-            return redirect(url_for("public.account", tab="settings"))
+            return redirect(url_for("public.account", tab="safer"))
         new[k] = v
     sets, pend, raised = [], {}, False
     for k, col, pcol in (("daily", "daily_limit", "pending_daily"), ("weekly", "weekly_limit", "pending_weekly"),
@@ -1232,7 +1261,7 @@ def set_limits():
         flash("Lower limits apply now. Any increase takes 72 hours to start.")
     else:
         flash("Limits updated. They apply straight away.")
-    return redirect(url_for("public.account", tab="settings"))
+    return redirect(url_for("public.account", tab="safer"))
 
 
 @bp.route("/account/exclude", methods=["POST"])
@@ -1245,23 +1274,44 @@ def self_exclude():
     session["basket"] = []
     session.pop("held", None)
     flash(f"You're on a break for {days} day{'s' if days > 1 else ''}. You won't be able to buy tickets until then.")
-    return redirect(url_for("public.account", tab="settings"))
+    return redirect(url_for("public.account", tab="safer"))
 
 
 @bp.route("/account/withdraw", methods=["POST"])
 @login_required
 def withdraw():
+    """Two steps: 'review' checks everything and shows the details back; 'confirm' makes the request."""
+    back = url_for("public.account", tab="wallet") + "#withdraw"
     try:
-        amount = round(float(request.form.get("amount", "0")) * 100)
-        request_withdrawal(g.user, amount, request.form)
-    except (ValueError, PurchaseError) as e:
-        flash(str(e) if isinstance(e, PurchaseError) else "Enter an amount.", "error")
-    else:
-        flash(f"Withdrawal of £{amount/100:.2f} requested — we aim to pay out within 24 hours.")
-        if current_app.config["SUPPORT_EMAIL"]:
-            mailer.send(current_app.config["SUPPORT_EMAIL"], "Withdrawal request",
-                        f"{g.user['name']} ({g.user['email']}) requested £{amount/100:.2f}. Pay it from Admin → Payouts.")
-    return redirect(url_for("public.account", tab="wallet"))
+        amount = round(float(request.form.get("amount", "").replace("£", "").strip()) * 100)
+    except ValueError:
+        flash("Enter the amount you'd like to withdraw, e.g. 25.", "error")
+        return redirect(back)
+    try:
+        if request.form.get("step") != "confirm":
+            vals = check_withdrawal(g.user, amount, request.form)
+            return render_template("withdraw_review.html", amount=amount, v=vals)
+        wid = request_withdrawal(g.user, amount, request.form)
+    except PurchaseError as e:
+        flash(str(e), "error")
+        return redirect(back)
+    if current_app.config["SUPPORT_EMAIL"]:
+        mailer.send(current_app.config["SUPPORT_EMAIL"], "Withdrawal request",
+                    f"{g.user['name']} ({g.user['email']}) requested £{amount/100:.2f}. Pay it from Admin → Payouts.")
+    mailer.send(g.user["email"], "We've received your withdrawal request",
+                f"Hi {g.user['name'].split()[0]},\n\nWe've received your request to withdraw £{amount/100:.2f}. "
+                "We aim to pay within 24 hours and we'll email you as soon as it's been sent.",
+                heading="Withdrawal requested", highlight=f"£{amount/100:.2f}")
+    return redirect(url_for("public.withdrawal_detail", wid=wid))
+
+
+@bp.route("/account/withdrawals/<int:wid>")
+@login_required
+def withdrawal_detail(wid):
+    w = get_db().execute("SELECT * FROM withdrawals WHERE id=? AND user_id=?", (wid, g.user["id"])).fetchone()
+    if w is None:
+        abort(404)
+    return render_template("withdrawal.html", w=w)
 
 
 @bp.route("/account/profile", methods=["POST"])
@@ -1272,10 +1322,10 @@ def profile():
     if f.get("new_password"):
         if not check_password_hash(g.user["password_hash"], f.get("current_password", "")):
             flash("Your current password is wrong.", "error")
-            return redirect(url_for("public.account", tab="settings"))
+            return redirect(url_for("public.account", tab="profile"))
         if len(f["new_password"]) < 10:
             flash("Use a password of at least 10 characters.", "error")
-            return redirect(url_for("public.account", tab="settings"))
+            return redirect(url_for("public.account", tab="profile"))
         new_hash = generate_password_hash(f["new_password"])
         db.execute("UPDATE users SET password_hash=? WHERE id=?", (new_hash, g.user["id"]))
         session["pwv"] = new_hash[-16:]          # this device stays logged in; every other one is signed out
@@ -1283,7 +1333,7 @@ def profile():
     phone = "".join(ch for ch in f.get("phone", "") if ch.isdigit() or ch == "+")[:20] or None
     db.execute("UPDATE users SET marketing=?, phone=? WHERE id=?", (1 if f.get("marketing") else 0, phone, g.user["id"]))
     flash("Saved.")
-    return redirect(url_for("public.account", tab="settings"))
+    return redirect(url_for("public.account", tab="profile"))
 
 
 @bp.route("/verify/<token>")
@@ -1327,7 +1377,7 @@ def redeem():
         flash(str(e) if isinstance(e, PurchaseError) else "Choose an amount.", "error")
     else:
         flash(f"Redeemed {blocks * REDEEM_BLOCK} points for £{blocks} site credit.")
-    return redirect(url_for("public.account", tab="rewards"))
+    return redirect(url_for("public.account", tab="points"))
 
 
 @bp.route("/robots.txt")

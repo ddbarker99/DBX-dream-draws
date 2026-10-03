@@ -58,7 +58,7 @@
           {% if c.prize_value %}<div><dt>Prize value</dt><dd>{{ c.prize_value|gbp }}</dd></div>{% endif %}
           <div><dt>How it's drawn</dt><dd>{{ 'Automatically at close' if c.auto_draw else 'Live on our socials' }}</dd></div>
         {% endif %}
-        {% if not c.free_daily %}<div><dt>Limit per person</dt><dd>{{ c.max_per_user }}</dd></div>{% endif %}
+        {% if not c.free_daily %}<div><dt>Limit per person</dt><dd>{{ c.max_per_user }}{% if user and held %} · you have {{ held }}{% endif %}</dd></div>{% endif %}
       </dl>
     </section>
 
@@ -90,6 +90,10 @@
       {% elif claimed %}<p class="small">You've had today's free play. Come back tomorrow.</p><a class="btn ghost block" href="{{ url_for('public.play', slug=c.slug) }}">See my result</a>
       {% else %}<form method="post" action="{{ url_for('public.free_play', slug=c.slug) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn green block">Play free now</button></form>{% endif %}
     </div>
+    {% elif live and user and allowance < 1 %}
+    <div class="panel center" id="enter"><h2 style="font-size:20px">You've reached the limit</h2>
+      <p class="small muted">You have {{ held }} {{ unit }}{{ 's' if held != 1 }} — the most one person can hold in this {{ 'game' if c.game_type else 'competition' }}.{% if c.game_type and waiting %} Reveal your plays above.{% endif %}</p>
+      <a class="btn ghost block" href="{{ url_for('public.instant_wins' if c.game_type else 'public.competitions') }}">Find another {{ 'game' if c.game_type else 'competition' }}</a></div>
     {% elif live %}
     <form class="panel" id="enter" method="post" action="{{ url_for('public.basket_add') }}" novalidate>
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
@@ -115,10 +119,11 @@
           <label class="sr-only" for="qty">Number of {{ unit }}s</label>
           <div class="qty">
             <button type="button" class="btn ghost" onclick="step(-1)" aria-label="One fewer">−</button>
-            <input id="qty" name="quantity" type="number" inputmode="numeric" min="1" max="{{ c.max_per_user }}" value="1" oninput="upd()">
+            <input id="qty" name="quantity" type="number" inputmode="numeric" min="1" max="{{ allowance if user else c.max_per_user }}" value="1" oninput="upd()" aria-describedby="qty-h">
             <button type="button" class="btn ghost" onclick="step(1)" aria-label="One more">+</button>
           </div>
-          <div class="quick">{% for n in [5, 10, 25, 50, 100] if n <= c.max_per_user %}<button type="button" onclick="setQty({{ n }})" aria-label="{{ n }} {{ unit }}s">{{ n }}</button>{% endfor %}</div>
+          <div class="quick">{% for n in [5, 10, 25, 50, 100] if n <= (allowance if user else c.max_per_user) %}<button type="button" onclick="setQty({{ n }})" aria-label="{{ n }} {{ unit }}s">{{ n }}</button>{% endfor %}</div>
+          <p class="hint" id="qty-h">{% if user and held %}You have {{ held }} already — you can add up to {{ allowance }} more.{% else %}Up to {{ c.max_per_user }} per person.{% endif %}{% if not c.game_type %} Numbers are chosen at random for you.{% endif %}</p>
         </div>
         <div id="pick" class="picker" hidden style="margin-top:var(--s3)">
           <div class="pnav">
@@ -128,16 +133,16 @@
           </div>
           <div class="pgrid" id="pgrid"></div>
           <div class="picked" id="picked" aria-live="polite"></div>
-          <p class="hint">Tap numbers to pick them (up to {{ [max_picks, c.max_per_user]|min }}). Crossed-out numbers are taken.</p>
+          <p class="hint">Tap numbers to pick them (up to {{ [max_picks, allowance if user else c.max_per_user]|min }}). Crossed-out numbers are already taken. We check again when you add them, so you'll know straight away if one has just gone.</p>
           <p class="hint" style="color:#ff8a95" id="pick-err" role="alert" hidden>Pick at least one number, or switch to Lucky dip.</p>
         </div>
       </fieldset>
 
-      <div class="total"><span class="muted">Total</span><span aria-live="polite"><s id="was" hidden></s> <b id="total">{{ c.ticket_price|gbp }}</b></span></div>
+      <div class="total"><span class="muted" id="calc">1 × {{ c.ticket_price|pp }}</span><span aria-live="polite"><s id="was" hidden></s> <b id="total">{{ c.ticket_price|gbp }}</b></span></div>
       <p class="hint" id="tiermsg" aria-live="polite"></p>
-      <button class="btn block" name="go" value="checkout" style="margin-top:var(--s3)">{{ 'Buy plays' if c.game_type else 'Enter now' }}</button>
-      <button class="btn ghost block" name="go" value="basket" style="margin-top:var(--s2);font-size:var(--fs-md);min-height:46px">Add to basket and keep browsing</button>
-      <p class="tiny muted" style="margin:var(--s3) 0 0">18+ UK residents. Debit cards only. Or <a href="{{ url_for('public.page', page='free-entry') }}">enter free by post</a>. <a href="{{ url_for('public.page', page='terms') }}">Terms apply</a>.</p>
+      <button class="btn block lg" name="go" value="checkout" style="margin-top:var(--s3)">{{ 'Play now' if c.game_type else 'Enter now' }}</button>
+      <button class="btn ghost block" name="go" value="basket" style="margin-top:var(--s2)">Add to basket and keep browsing</button>
+      <p class="tiny muted" style="margin:var(--s3) 0 0">You'll see the full total before you pay. At checkout your numbers are reserved for 30 minutes. 18+ UK residents, debit cards only. Or <a href="{{ url_for('public.page', page='free-entry') }}">enter free by post</a>. <a href="{{ url_for('public.page', page='terms') }}">Terms apply</a>.</p>
     </form>
     {% endif %}
 
@@ -149,14 +154,21 @@
   </div></div>
 
   <div class="d-info stack">
+    <section aria-labelledby="about-h">
+      <h2 id="about-h">{{ 'About this game' if c.game_type else 'Prize details' }}</h2>
+      {% if c.description and c.description.strip() %}<div class="prose">{% for para in c.description.split('\n') if para.strip() %}<p>{{ para }}</p>{% endfor %}</div>{% endif %}
+      {% if c.cash_alternative %}<p class="small">Prefer cash? The winner can choose <b>{{ c.cash_alternative }}</b> instead.</p>{% endif %}
+      {% if not c.game_type %}<p class="small muted">Physical prizes are delivered free within the UK.</p>{% endif %}
+    </section>
+
     {% if board %}
     <section id="instant" aria-labelledby="board-h">
       <h2 id="board-h">{{ 'Prizes in this game' if c.game_type else 'Instant prizes' }}</h2>
-      <p class="small muted">{% if c.game_type %}Every play is either a winner or not. Results are sealed before the game goes live and shown when you play.{% else %}If one of your ticket numbers matches an instant prize, you win it straight away — on top of your chance in the main draw.{% endif %}</p>
+      <p class="small muted">{% if c.game_type %}Every play is either a winner or not. Which plays win was decided at random and sealed before the game went live — revealing a play just shows you the result.{% else %}If one of your ticket numbers matches an instant prize, you win it straight away — on top of your chance in the main draw.{% endif %}</p>
       <div class="iwgrid">
         {% for g in board %}
         <div class="iw">
-          <div class="row"><b>{{ g.title }}<span class="kind {{ g.kind }}">{{ {'cash':'Cash','credit':'Credit','physical':'Prize'}[g.kind] }}</span></b>{% if g.value %}<span class="muted small">{{ g.value|gbp }}</span>{% endif %}</div>
+          <div class="row"><b>{{ g.title }}<span class="kind {{ g.kind }}">{{ {'cash':'Cash','credit':'Site credit','physical':'Prize'}[g.kind] }}</span></b>{% if g.value %}<span class="muted small">{{ g.value|gbp }}</span>{% endif %}</div>
           <div class="left">{{ g.total - g.won|length }} of {{ g.total }} left</div>
           {% if g.won or g.hidden %}<div class="won">
             {% for w in g.won %}<span>Won: <b>#{{ w.number }}</b> — {{ w.winner }}</span>{% endfor %}
@@ -168,48 +180,88 @@
     </section>
     {% endif %}
 
-    {% if not c.game_type %}
-    <section aria-labelledby="about-h">
-      <h2 id="about-h">About this prize</h2>
-      <div class="prose">{% for para in c.description.split('\n') if para.strip() %}<p>{{ para }}</p>{% endfor %}</div>
+    <section aria-labelledby="how-h">
+      <h2 id="how-h">How to enter</h2>
+      <ol class="howlist">
+        <li><b>Answer the question</b> — one correct answer is needed per entry.</li>
+        <li><b>Choose your {{ unit }}s</b> — {% if c.game_type %}how many plays you'd like{% else %}a lucky dip, or pick your own numbers{% endif %} (up to {{ c.max_per_user }} per person).</li>
+        <li><b>Check out</b> — pay by debit card, Apple Pay or Google Pay, or use your wallet balance. Your {{ unit }} numbers are confirmed on screen and by email.</li>
+        {% if c.game_type %}<li><b>Reveal your plays</b> — any prize is paid to your wallet when you reveal it, or automatically after 24 hours.</li>{% endif %}
+      </ol>
     </section>
-    {% elif c.description and c.description.strip() %}
-    <section aria-labelledby="about-h"><h2 id="about-h">About this game</h2>
-      <div class="prose">{% for para in c.description.split('\n') if para.strip() %}<p>{{ para }}</p>{% endfor %}</div></section>
-    {% endif %}
 
-    <section aria-labelledby="rules-h">
-      <h2 id="rules-h">Rules and fairness</h2>
+    {% if not c.game_type %}
+    <section aria-labelledby="draw-h">
+      <h2 id="draw-h">Draw information</h2>
       <div class="panel">
-        <ul class="checklist">
-          <li><span aria-hidden="true">✓</span><span>Open to UK residents aged 18 or over. One correct answer needed per entry.</span></li>
-          <li><span aria-hidden="true">✓</span><span>Free entry: <a href="{{ url_for('public.page', page='free-entry') }}">enter by post</a> with the same chance of winning.</span></li>
-          {% if c.game_type %}
-          <li><span aria-hidden="true">✓</span><span>Prizes you don't reveal are paid automatically after 24 hours or when the game closes.</span></li>
-          {% else %}
-          <li><span aria-hidden="true">✓</span><span>The draw goes ahead on the date shown even if not every ticket sells.</span></li>
-          <li><span aria-hidden="true">✓</span><span>Every ticket is listed publicly: <a href="{{ url_for('public.entry_list', slug=c.slug) }}">view the {{ '{:,}'.format(d.sold) }} entries</a>.</span></li>
-          {% if c.live_url %}<li><span aria-hidden="true">✓</span><span>Watch the draw: <a href="{{ c.live_url }}" target="_blank" rel="noopener">live stream</a>.</span></li>{% endif %}
-          {% endif %}
-          <li><span aria-hidden="true">✓</span><span>Refunds: if a competition is cancelled, everyone is refunded in full. See the <a href="{{ url_for('public.page', page='terms') }}">terms</a>.</span></li>
-        </ul>
-        <details class="faq" style="margin:var(--s4) 0 0">
+        <dl class="facts">
+          <div><dt>Draw</dt><dd>{% if c.status == 'drawn' %}Drawn {{ c.drawn_at|uktime }}{% else %}{{ c.ends_at|uktime('%a %d %b %Y, %H:%M') }} UK time — {{ 'automatically at closing time' if c.auto_draw else 'live on our socials after closing' }}{% endif %}</dd></div>
+          <div><dt>Entries</dt><dd>{% if draw_rec %}{{ '{:,}'.format(draw_rec.entry_count) }} eligible entries in the draw{% else %}{{ '{:,}'.format(d.sold) }} so far, of a maximum {{ '{:,}'.format(c.max_tickets) }}{% endif %} · <a href="{{ url_for('public.entry_list', slug=c.slug) }}">see the public entry list</a></dd></div>
+          {% if c.status == 'drawn' %}<div><dt>Winning ticket</dt><dd><b>#{{ winner_number }}</b> — {{ winner_name }}</dd></div>{% endif %}
+          {% if c.live_url %}<div><dt>Watch</dt><dd><a href="{{ c.live_url }}" target="_blank" rel="noopener">Live stream</a></dd></div>{% endif %}
+        </dl>
+        <p class="small muted">The draw goes ahead at the time shown even if not every ticket sells, and selling out doesn't bring it forward. The winner is picked from every paid and free entry using a method anyone can check — <a href="{{ url_for('public.page', page='fair-draws') }}">how our draws work</a>.</p>
+        <details class="faq" style="margin:var(--s3) 0 0">
           <summary>Proof of fairness</summary>
           <div>
-            {% if not c.game_type %}
-            <p class="small">Draw seed hash, published before sales opened (<a href="{{ url_for('public.page', page='fair-draws') }}">how it works</a>):</p>
+            <p class="small">Draw seed hash, published before sales opened:</p>
             <div class="hash">{{ c.seed_hash }}</div>
             {% if c.status == 'drawn' %}<p class="small" style="margin-top:var(--s3)">Seed revealed after the draw:</p><div class="hash">{{ c.seed }}</div>
             <p class="small" style="margin-top:var(--s3)">Entries hash:</p><div class="hash">{{ c.entries_hash }}</div>{% endif %}
-            {% endif %}
-            {% if c.instant_hash %}<p class="small" style="margin-top:var(--s3)">{{ 'Winning plays' if c.game_type else 'Instant prize numbers' }} sealed before launch:</p><div class="hash">{{ c.instant_hash }}</div>
+            {% if c.instant_hash %}<p class="small" style="margin-top:var(--s3)">Instant prize numbers sealed before launch:</p><div class="hash">{{ c.instant_hash }}</div>
             {% if st in ('ended','drawn','cancelled') %}<p class="small" style="margin-top:var(--s3)">Salt revealed:</p><div class="hash">{{ c.instant_salt }}</div>{% endif %}{% endif %}
           </div>
         </details>
       </div>
     </section>
+    {% elif c.instant_hash %}
+    <section aria-labelledby="draw-h">
+      <h2 id="draw-h">How results are decided</h2>
+      <div class="panel">
+        <p class="small">This game has {{ '{:,}'.format(c.max_tickets) }} plays and {{ '{:,}'.format(gi.prizes) }} winning plays. Which plays win was chosen at random and sealed with this fingerprint before launch, so it can't be changed afterwards — refreshing or replaying an animation always shows the same result.</p>
+        <div class="hash">{{ c.instant_hash }}</div>
+        {% if st in ('ended','drawn','cancelled') %}<p class="small" style="margin-top:var(--s3)">Salt revealed:</p><div class="hash">{{ c.instant_salt }}</div>{% endif %}
+      </div>
+    </section>
+    {% endif %}
 
     {% if not c.free_daily %}
+    <section aria-labelledby="free-h">
+      <h2 id="free-h">Free entry</h2>
+      <div class="panel">
+        <p class="small" style="margin-top:0">You can enter this {{ 'game' if c.game_type else 'competition' }} <b>free by post</b>, with exactly the same chance of winning. Write the name “{{ c.title }}”, your answer to the question, your name, address, email, phone number and date of birth, and post it{% if config.POSTAL_ADDRESS %} to <b>{{ config.POSTAL_ADDRESS }}</b>{% endif %}. It must arrive before {{ c.ends_at|uktime('%d %b %Y, %H:%M') }}.</p>
+        <a href="{{ url_for('public.page', page='free-entry') }}">Full free entry instructions</a>
+      </div>
+    </section>
+    {% endif %}
+
+    <section aria-labelledby="rules-h">
+      <h2 id="rules-h">Important terms</h2>
+      <div class="panel">
+        <ul class="checklist">
+          <li><span aria-hidden="true">✓</span><span>UK residents aged 18 or over only. One account per person.</span></li>
+          <li><span aria-hidden="true">✓</span><span>Up to {{ c.max_per_user }} {{ unit }}s per person, paid and postal entries combined.</span></li>
+          <li><span aria-hidden="true">✓</span><span>Debit cards only — credit card payments are refunded automatically and no {{ unit }}s are issued.</span></li>
+          {% if c.game_type %}<li><span aria-hidden="true">✓</span><span>Prizes you don't reveal are paid automatically after 24 hours or when the game closes.</span></li>{% endif %}
+          <li><span aria-hidden="true">✓</span><span>Confirmed entries can't be cancelled. If we cancel a {{ 'game' if c.game_type else 'competition' }}, everyone is refunded in full automatically.</span></li>
+        </ul>
+        <p class="small muted" style="margin:var(--s3) 0 0">Full <a href="{{ url_for('public.page', page='terms') }}">terms and conditions</a>.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="cfaq-h">
+      <h2 id="cfaq-h">FAQs</h2>
+      {% if c.game_type %}
+      <details class="faq"><summary>Does the animation decide whether I win?</summary><div><p class="small">No. Results were decided and sealed before the game went live. The scratch, spin or box just reveals the result already linked to your play.</p></div></details>
+      <details class="faq"><summary>What if I close the page before revealing?</summary><div><p class="small">Nothing is lost. Your plays wait in your account, and any prize is paid automatically after 24 hours.</p></div></details>
+      {% else %}
+      <details class="faq"><summary>When will I know if I've won?</summary><div><p class="small">Instant prizes show as soon as your numbers are confirmed. The main draw result appears on this page at the draw time and we email the winner straight away.</p></div></details>
+      <details class="faq"><summary>What if it doesn't sell out?</summary><div><p class="small">The draw still goes ahead at the time shown — your odds are simply better.</p></div></details>
+      {% endif %}
+      <details class="faq"><summary>Where can I see my {{ unit }}s?</summary><div><p class="small">On your confirmation page, in your confirmation email, and any time under My account → My entries.</p></div></details>
+    </section>
+
+    {% if not c.free_daily and live %}
     <section aria-labelledby="share-h">
       <h2 id="share-h">Share</h2>
       <p class="small muted">{% if user %}Your link includes your referral code — you get {{ config.REFERRAL_BONUS|gbp }} credit when a friend joins and makes their first purchase.{% else %}Know someone who'd love this?{% endif %}</p>
@@ -234,20 +286,21 @@
 {% if live and not c.free_daily %}
 <div class="mobile-buy" aria-hidden="false">
   <div><div class="price">{{ c.ticket_price|pp }}<small> /{{ unit }}</small></div><div class="tiny muted">{{ '{:,}'.format(c.max_tickets - d.sold) }} left</div></div>
-  <a class="btn" href="#enter">{{ 'Buy plays' if c.game_type else 'Enter now' }}</a>
+  <a class="btn" href="#enter">{{ 'Play now' if c.game_type else 'Enter now' }}</a>
 </div>
 {% endif %}
 {% endblock %}
 
 {% block scripts %}{% if live and not c.free_daily %}
 <script>
-var PRICE={{ c.ticket_price }},TIERS={{ tiers_json }},MAXP={{ [max_picks, c.max_per_user]|min }},MAXT={{ c.max_tickets }},UNIT='{{ unit }}',
+var PRICE={{ c.ticket_price }},TIERS={{ tiers_json }},MAXP={{ [max_picks, allowance if user else c.max_per_user]|min }},MAXT={{ c.max_tickets }},UNIT='{{ unit }}',
     URL='{{ url_for("public.numbers", slug=c.slug) }}',mode='lucky',sel=new Set(),start=1,
     q=document.getElementById('qty'),form=document.getElementById('enter');
 function gbp(p){return '£'+(p/100).toFixed(2).replace(/\.00$/,'')}
 function count(){return mode==='pick'?sel.size:Math.max(1,Math.min(+q.max,+q.value||1))}
 function upd(){var n=count(),gross=n*PRICE,pct=0,next=null;TIERS.forEach(function(t){if(n>=t[0])pct=t[1];else if(!next)next=t});
   var net=gross-Math.floor(gross*pct/100);document.getElementById('total').textContent=gbp(net);
+  document.getElementById('calc').textContent=n+' '+UNIT+(n!==1?'s':'')+' × '+(PRICE<100?PRICE+'p':gbp(PRICE))+(mode==='pick'&&n?' · numbers '+Array.from(sel).sort(function(a,b){return a-b}).slice(0,8).map(function(x){return '#'+x}).join(', ')+(n>8?'…':''):'');
   var w=document.getElementById('was');w.hidden=!pct;w.textContent=gbp(gross);
   document.getElementById('tiermsg').textContent=pct?('Multi-buy discount: '+pct+'% off applied.'):(next?('Add '+(next[0]-n)+' more '+UNIT+(next[0]-n>1?'s':'')+' for '+next[1]+'% off.'):'')}
 function step(d){q.value=Math.max(1,Math.min(+q.max,(+q.value||1)+d));upd()}

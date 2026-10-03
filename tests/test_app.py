@@ -282,8 +282,19 @@ class Tests(Base):
         self.assertIn("more than your cash balance", r.get_data(as_text=True))  # credit isn't withdrawable
         self.post("/account/withdraw", dict(bank, sort_code="123"), follow_redirects=True)
         self.assertEqual(self.q("SELECT COUNT(*) FROM withdrawals"), 0)       # bad sort code rejected
-        self.post("/account/withdraw", bank)
+        r = self.post("/account/withdraw", bank)                              # step 1: review, nothing taken yet
+        self.assertIn("Check your withdrawal", r.get_data(as_text=True))
+        self.assertIn("12-34-56", r.get_data(as_text=True))
+        self.assertEqual(self.q("SELECT COUNT(*) FROM withdrawals"), 0)
+        r = self.post("/account/withdraw", dict(bank, step="confirm"))      # step 2: request
         self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger WHERE user_id=? AND kind='cash'", uid), 500)
+        detail = self.client.get(r.headers["Location"]).get_data(as_text=True)
+        self.assertIn("Withdrawal requested", detail)
+        other = self.app.test_client()
+        self.signup("nosy@example.com", client=other)
+        self.assertEqual(other.get(r.headers["Location"]).status_code, 404)   # nobody else can see it
+        self.post("/admin/payouts", {"wid": str(self.q("SELECT id FROM withdrawals")), "action": "processing"})
+        self.assertEqual(self.q("SELECT status FROM withdrawals"), "processing")
         csv_ = self.client.get("/admin/payouts/export.csv").get_data(as_text=True)
         self.assertIn("123456", csv_)
         self.assertIn("12345678", csv_)
@@ -366,7 +377,8 @@ class Tests(Base):
         for url in ["/", "/competitions", "/competitions?tab=instant", "/competitions?tab=ending", "/competitions?tab=tech", f"/c/{s}", f"/c/{s}/entries", "/basket",
                     "/winners", "/winners?tab=results", "/winners?tab=live", "/how-it-works", "/contact", "/cookies", "/free-entry", "/terms", "/fair-draws", "/faq",
                     "/responsible-play", "/complaints", "/privacy", "/manifest.webmanifest", "/sw.js",
-                    "/account", "/account?tab=entries", "/account?tab=wins", "/account?tab=wallet", "/account?tab=orders", "/account?tab=rewards", "/account?tab=settings",
+                    "/account", "/account?tab=entries", "/account?tab=wins", "/account?tab=wallet", "/account?tab=transactions", "/account?tab=points", "/account?tab=safer",
+                    "/account?tab=profile", "/account?tab=entries&show=won", "/account?tab=entries&show=previous",
                     "/admin/", f"/admin/competitions/{self.cid}", f"/admin/competitions/{self.cid}/edit",
                     f"/admin/competitions/{self.cid}/export.csv", "/admin/promos", "/admin/users",
                     f"/admin/users/{uid}", "/admin/payouts", "/admin/settings", f"/admin/competitions/new?copy={self.cid}"]:
@@ -698,8 +710,8 @@ class OverhaulTests(Base):
         for old, new in [("/games", "/instant-wins"), ("/games?price=10", "/instant-wins?price=10"),
                          ("/results", "/winners?tab=results"), ("/live", "/winners?tab=live"),
                          ("/?tab=ending", "/competitions?tab=ending"), ("/?q=abc", "/competitions?q=abc"),
-                         ("/account?tab=tickets", "/account?tab=entries"), ("/account?tab=safer", "/account?tab=settings"),
-                         ("/account?tab=points", "/account?tab=rewards")]:
+                         ("/account?tab=tickets", "/account?tab=entries"), ("/account?tab=settings", "/account?tab=safer"),
+                         ("/account?tab=rewards", "/account?tab=points"), ("/account?tab=orders", "/account?tab=transactions")]:
             r = self.client.get(old)
             self.assertEqual(r.status_code, 301, old)
             self.assertTrue(r.headers["Location"].endswith(new), (old, r.headers["Location"]))
@@ -770,7 +782,7 @@ class OverhaulTests(Base):
         page = self.client.get(f"/account/orders/{chk}").get_data(as_text=True)
         self.assertIn(f"Order #{chk}", page)
         self.assertIn("Test Prize", page)
-        self.assertIn(f"/account/orders/{chk}", self.client.get("/account?tab=orders").get_data(as_text=True))
+        self.assertIn(f"/account/orders/{chk}", self.client.get("/account?tab=transactions").get_data(as_text=True))
         other = self.app.test_client()
         self.signup("other@example.com", client=other)
         self.assertEqual(other.get(f"/account/orders/{chk}").status_code, 404)
@@ -843,7 +855,7 @@ class DeleteTests(Base):
             self.assertEqual(db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0], 0, t)
         pid = self.q("SELECT id FROM users WHERE email='p@example.com'")
         self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger WHERE user_id=? AND reason LIKE 'Refund%'", pid), 500)
-        self.assertIn("p@example.com", self.player.get("/account?tab=orders").get_data(as_text=True))  # still works
+        self.assertIn("p@example.com", self.player.get("/account?tab=transactions").get_data(as_text=True))  # still works
 
     def test_bulk_delete_and_start_fresh(self):
         a, b = self.make_comp("A"), self.make_comp("B")

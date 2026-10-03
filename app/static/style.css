@@ -178,7 +178,7 @@ tr:last-child td{border-bottom:0}
 .facts div{display:flex;justify-content:space-between;gap:var(--s3);padding:10px 0;border-bottom:1px solid var(--line)}
 .facts div:last-child{border-bottom:0}
 .facts dt{color:var(--text-2);margin:0}
-.facts dd{margin:0;font-weight:700;text-align:right}
+.facts dd{margin:0;font-weight:700;text-align:right;min-width:0;overflow-wrap:anywhere}
 
 /* stats */
 .statstrip{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s3)}
@@ -344,7 +344,7 @@ a.winner{text-decoration:none;color:inherit}a.winner:hover{border-color:var(--re
 
 /* ---------- 8. Competition page ---------- */
 .detail{display:grid;grid-template-columns:1.1fr .9fr;grid-template-areas:"gallery buy" "info buy";grid-template-rows:auto 1fr;column-gap:var(--s6);row-gap:var(--s5);align-items:start}
-.d-gallery{grid-area:gallery}.d-buy{grid-area:buy}.d-info{grid-area:info;min-width:0}
+.d-gallery{grid-area:gallery;min-width:0}.d-buy{grid-area:buy;min-width:0}.d-info{grid-area:info;min-width:0}
 .d-info h2{font-size:22px}
 .d-info.stack>*+*{margin-top:var(--s6)}
 .nocase{text-transform:none}
@@ -498,6 +498,59 @@ a.winner{text-decoration:none;color:inherit}a.winner:hover{border-color:var(--re
 .checklist li{display:flex;gap:var(--s2);align-items:baseline;padding:6px 0;border-bottom:1px solid var(--line);font-size:var(--fs-sm)}
 .checklist li:last-child{border-bottom:0}
 
+/* ---------- 12b. Journeys: forms, steps, states ---------- */
+.btn.lg{min-height:56px;font-size:var(--fs-lg);font-weight:800}
+.btn.busy,.btn[aria-disabled="true"]{opacity:.7;cursor:progress;pointer-events:none}
+.btn.busy::before{content:"";width:16px;height:16px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.field-error{display:block;margin-top:6px;font-size:var(--fs-sm);font-weight:600;color:#ff9aa4}
+.field-error::before{content:"⚠ ";}
+input[aria-invalid="true"],select[aria-invalid="true"]{border-color:var(--red)!important;box-shadow:0 0 0 1px var(--red)}
+.notice.bad a{color:#fff}
+/* segmented filter (My entries: Active / Won / Previous) */
+.seg{display:flex;gap:var(--s2);flex-wrap:wrap;margin:0 0 var(--s4)}
+.seg a{display:inline-flex;align-items:center;gap:var(--s2);min-height:44px;padding:0 var(--s4);border-radius:99px;border:1px solid var(--line-2);
+  background:var(--surface);color:var(--text-2);text-decoration:none;font-weight:600}
+.seg a:hover{color:#fff;border-color:var(--red)}
+.seg a[aria-current="true"]{background:var(--red);border-color:var(--red);color:#fff}
+.seg .count{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:99px;background:rgba(0,0,0,.35);font-size:var(--fs-xs)}
+/* empty state */
+.empty.compact{padding:var(--s4);text-align:center}
+.empty.compact p{margin-bottom:var(--s3);color:var(--text-2)}
+/* confirmation */
+.confirm-head{display:flex;gap:var(--s4);align-items:center;margin-bottom:var(--s5)}
+.confirm-head h1{margin:0 0 4px}
+.confirm-head p{margin:0}
+.confirm-head .tick{flex:none;display:grid;place-items:center;width:56px;height:56px;border-radius:50%;background:var(--green-bg);
+  border:2px solid var(--green);color:var(--green);font-size:28px;font-weight:800}
+/* withdrawal steps & timeline */
+.steps-inline{display:flex;flex-wrap:wrap;gap:var(--s2);list-style:none;padding:0;margin:0 0 var(--s3);counter-reset:st}
+.steps-inline li{counter-increment:st;font-size:var(--fs-xs);color:var(--text-2);padding:4px 10px;border-radius:99px;background:var(--surface-2);border:1px solid var(--line)}
+.steps-inline li::before{content:counter(st) ". ";color:var(--text-3)}
+.timeline{list-style:none;padding:0;margin:var(--s5) 0;display:grid;gap:0}
+.timeline li{position:relative;padding:0 0 var(--s5) 40px;color:var(--text-3)}
+.timeline li::before{content:"";position:absolute;left:10px;top:4px;width:18px;height:18px;border-radius:50%;border:2px solid var(--line-2);background:var(--bg)}
+.timeline li::after{content:"";position:absolute;left:19px;top:24px;bottom:0;width:2px;background:var(--line-2)}
+.timeline li:last-child::after{display:none}
+.timeline li b{display:block;color:var(--text-2)}
+.timeline li span{font-size:var(--fs-sm)}
+.timeline li.done::before{background:var(--green);border-color:var(--green)}
+.timeline li.done::after{background:var(--green)}
+.timeline li.now::before{border-color:var(--amber);box-shadow:0 0 0 4px var(--amber-bg)}
+.timeline li.done b,.timeline li.now b{color:#fff}
+/* how-to list on competition pages */
+.howlist{margin:0;padding-left:22px;color:var(--text-2)}
+.howlist li+li{margin-top:var(--s2)}
+.howlist b{color:#fff}
+.address{padding:var(--s3) var(--s4);border-left:3px solid var(--red);background:var(--surface);border-radius:0 var(--r) var(--r) 0;color:#fff;font-weight:600}
+.lead{font-size:var(--fs-lg);color:var(--text)}
+.checklist{list-style:none;padding:0;margin:0}
+.prose .checklist li{position:relative;padding-left:26px}
+.prose .checklist li::before{content:"✓";position:absolute;left:0;color:var(--green);font-weight:800}
+dl.facts>dt,dl.facts>dd{margin:0}
+dl.facts>dd{padding-bottom:10px;border-bottom:1px solid var(--line);color:var(--text)}
+dl.facts>dt{padding-top:10px;color:var(--text-2);font-size:var(--fs-sm)}
+
 /* ---------- 13. Responsive ---------- */
 @media (max-width:1080px){
   .nav a{padding:0 9px}
@@ -506,7 +559,7 @@ a.winner{text-decoration:none;color:inherit}a.winner:hover{border-color:var(--re
 @media (max-width:960px){
   .nav,.header-right .hide-md{display:none}
   .menu-toggle{display:inline-flex}
-  .detail,.basket,.playwrap{grid-template-columns:1fr}
+  .detail,.basket,.playwrap{grid-template-columns:minmax(0,1fr)}
   .detail{grid-template-areas:"gallery" "buy" "info"}
   .sticky{position:static}
   .feature{grid-template-columns:1fr}

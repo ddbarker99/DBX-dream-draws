@@ -12,7 +12,7 @@ from flask import (Blueprint, Response, abort, current_app, flash, g, redirect, 
 
 from . import UK, mailer
 from .db import get_db, iso, utcnow, write_txn
-from .services import (audit, cancel_competition, CATEGORIES, CATEGORY_NAMES, balances, prize_kind, refund_competition, GAME_NAMES, GAME_TYPES, game_info, PurchaseError, add_credit, add_instant_prizes, add_postal_entry,
+from .services import (audit, cancel_competition, mark_withdrawal_processing, CATEGORIES, CATEGORY_NAMES, balances, prize_kind, refund_competition, GAME_NAMES, GAME_TYPES, game_info, PurchaseError, add_credit, add_instant_prizes, add_postal_entry,
                        balance, comp_state, get_setting, instant_board, new_seed, public_name,
                        remove_instant_prize_group, run_draw, set_setting, settle_withdrawal, site_stats, sold_count,
                        taken_count, winner_details, delete_competition, paid_unrefunded, start_fresh, publish_problem)
@@ -105,7 +105,7 @@ def dashboard():
         "credit": db.execute("SELECT COALESCE(SUM(amount),0) FROM credit_ledger").fetchone()[0],
     }
     todo = {
-        "withdrawals": db.execute("SELECT COUNT(*) FROM withdrawals WHERE status='requested'").fetchone()[0],
+        "withdrawals": db.execute("SELECT COUNT(*) FROM withdrawals WHERE status IN ('requested','processing')").fetchone()[0],
         "refunds": db.execute("SELECT COUNT(*) FROM checkouts WHERE status='needs_refund'").fetchone()[0]
                    + db.execute("SELECT COUNT(*) FROM deposits WHERE status='needs_refund'").fetchone()[0],
         "prizes": db.execute("SELECT COUNT(*) FROM instant_prizes WHERE ticket_id IS NOT NULL AND fulfilled=0").fetchone()[0],
@@ -459,7 +459,7 @@ def reset():
         "players": db.execute("SELECT COUNT(*) FROM users WHERE is_admin=0").fetchone()[0],
         "promos": db.execute("SELECT COUNT(*) FROM promo_codes").fetchone()[0],
         "ledger": db.execute("SELECT COUNT(*) FROM credit_ledger").fetchone()[0],
-        "withdrawals": db.execute("SELECT COUNT(*) FROM withdrawals WHERE status='requested'").fetchone()[0],
+        "withdrawals": db.execute("SELECT COUNT(*) FROM withdrawals WHERE status IN ('requested','processing')").fetchone()[0],
         "unrefunded": sum(paid_unrefunded(db, r[0]) for r in db.execute("SELECT id FROM competitions")),
         "card": db.execute("SELECT COALESCE(SUM(cash_due),0) FROM checkouts WHERE status='paid'").fetchone()[0],
     }
@@ -975,6 +975,10 @@ def user_detail(uid):
 def payouts():
     db = get_db()
     if request.method == "POST":
+        if request.form.get("action") == "processing":
+            mark_withdrawal_processing(int(request.form["wid"]))
+            flash("Marked as processing — the player can see it's being paid.")
+            return redirect(url_for("admin.payouts"))
         try:
             w = settle_withdrawal(int(request.form["wid"]), request.form.get("action") == "paid", request.form.get("note", ""))
             flash("Updated.")
@@ -991,7 +995,7 @@ def payouts():
             flash(str(e), "error")
         return redirect(url_for("admin.payouts"))
     withdrawals = db.execute("SELECT w.*, u.name, u.email FROM withdrawals w JOIN users u ON u.id=w.user_id "
-                             "ORDER BY w.status='requested' DESC, w.id DESC LIMIT 100").fetchall()
+                             "ORDER BY w.status IN ('requested','processing') DESC, w.id DESC LIMIT 100").fetchall()
     prizes = db.execute(
         "SELECT ip.*, c.title AS comp, t.number AS won_number, COALESCE(u.name, p.name) AS winner, "
         "COALESCE(u.email, p.email) AS email, p.address FROM instant_prizes ip JOIN competitions c ON c.id=ip.competition_id "
@@ -1032,7 +1036,7 @@ def payouts_csv():
     """Pending withdrawals in a simple CSV you can use for bank bulk payments."""
     rows = get_db().execute(
         "SELECT w.id, u.name, u.email, w.amount, w.method, w.account_name, w.sort_code, w.account_number, w.paypal_email, "
-        "w.created_at FROM withdrawals w JOIN users u ON u.id=w.user_id WHERE w.status='requested' ORDER BY w.id").fetchall()
+        "w.created_at FROM withdrawals w JOIN users u ON u.id=w.user_id WHERE w.status IN ('requested','processing') ORDER BY w.id").fetchall()
     buf = io.StringIO()
     wr = csv.writer(buf)
     wr.writerow(["ref", "name", "email", "amount_gbp", "method", "account_name", "sort_code", "account_number",
