@@ -54,7 +54,7 @@
   </section>
   {% endif %}
   <div class="quicklinks">
-    <a href="{{ url_for('public.account', tab='entries') }}"><b>{{ counts.active + counts.upcoming }}</b><span>Live tickets · {{ counts.upcoming }} awaiting a draw</span></a>
+    <a href="{{ url_for('public.account', tab='entries') }}"><b>{{ counts.active + counts.upcoming }}</b><span>Competitions entered · {{ counts.upcoming }} awaiting a draw</span></a>
     <a href="{{ url_for('public.account', tab='wallet') }}"><b>{{ bal.cash|gbp }}</b><span>Cash balance · withdrawable</span></a>
     <a href="{{ url_for('public.account', tab='wallet') }}"><b>{{ (bal.credit + bal.deposit)|gbp }}</b><span>Site credit &amp; funds · entries only</span></a>
     <a href="{{ url_for('public.account', tab='points') }}"><b>{{ '{:,}'.format(u.points) }}</b><span>DBX Points · {{ tier.name }}</span></a>
