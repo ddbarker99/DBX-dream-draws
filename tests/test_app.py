@@ -2987,6 +2987,116 @@ class Phase6AdminTests(AutoDrawBase):
         self.assertNotIn("Wallet transactions", html)
 
 
+class Phase6OpsTests(PlatformBase):
+    def test_refund_single_order_to_wallet_and_card(self):
+        from unittest import mock
+        from app import payments
+        self.post(f"/admin/users/{self.uid}", {"action": "goodwill", "amount": "1", "reason": "Sorry for the slow reply"})
+        self.add(self.cid, 2, client=self.p)                                   # £5: £1 site credit + £4 card
+        chk = self.checkout(client=self.p, use_credit=True)
+        other = self.make_comp("Second")
+        self.add(other, 1, client=self.p)
+        chk2 = self.checkout(client=self.p)
+        oid = self.q("SELECT id FROM orders WHERE checkout_id=?", chk)
+        self.post(f"/admin/orders/{chk}", {"order_id": str(oid), "method": "wallet", "reason": "x"})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM refunds"), 0)                         # reason required
+        self.post(f"/admin/orders/{chk}", {"order_id": str(oid), "method": "wallet", "reason": "Customer entered by mistake"})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE order_id=?", oid), 0)  # numbers released
+        self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger WHERE user_id=? AND ref LIKE 'refund-o%' AND kind='credit'", self.uid), 100)
+        self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger WHERE user_id=? AND ref LIKE 'refund-o%' AND kind='cash'", self.uid), 400)
+        self.assertEqual(self.q("SELECT points FROM users WHERE id=?", self.uid), self.q("SELECT SUM(points) FROM points_ledger WHERE user_id=?", self.uid))
+        self.post(f"/admin/orders/{chk}", {"order_id": str(oid), "method": "wallet", "reason": "Customer entered by mistake"})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM refunds"), 1)                         # never twice
+        self.assertIn("Refunded", self.client.get(f"/admin/orders/{chk}").get_data(as_text=True))
+        # card refund through Stripe (and a failure that gets flagged)
+        db = self.db()
+        db.execute("UPDATE checkouts SET payment_intent='pi_test' WHERE id=?", (chk2,))
+        db.commit()
+        oid2 = self.q("SELECT id FROM orders WHERE checkout_id=?", chk2)
+        with mock.patch.object(payments, "refund", side_effect=RuntimeError("Stripe down")) as rf:
+            self.post(f"/admin/orders/{chk2}", {"order_id": str(oid2), "method": "card", "reason": "Duplicate purchase"})
+        rf.assert_called_once()
+        self.assertEqual(self.q("SELECT status FROM refunds WHERE order_id=?", oid2), "card_failed")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM flags WHERE kind='Refund failed'"), 1)
+        self.skip_integrity = True                                              # integrity rightly reports the failed card refund
+        # once the entry list is frozen, lines can't be refunded one by one
+        self.add(self.cid, 1, client=self.p)
+        chk3 = self.checkout(client=self.p)
+        self.close()
+        self.run_jobs()
+        oid3 = self.q("SELECT id FROM orders WHERE checkout_id=?", chk3)
+        r = self.post(f"/admin/orders/{chk3}", {"order_id": str(oid3), "method": "wallet", "reason": "Too late now"}, follow_redirects=True)
+        self.assertIn("entries are final", r.get_data(as_text=True))
+        self.assertEqual(self.q("SELECT COUNT(*) FROM refunds WHERE order_id=?", oid3), 0)
+
+    def test_goodwill_limits_and_roles(self):
+        self.role("support")
+        for _ in range(2):
+            self.post(f"/admin/users/{self.uid}", {"action": "goodwill", "amount": "15", "reason": "Withdrawal delay"}, client=self.p)
+        self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger WHERE ref LIKE 'admin%-gw'"), 1500)   # second one over the £20 cap
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "15", "kind": "cash", "reason": "Not allowed"}, client=self.p)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger"), 1)                                     # support can't adjust cash
+        self.post(f"/admin/users/{self.uid}", {"action": "goodwill", "amount": "15", "reason": "Administrator approved"})
+        self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger WHERE ref LIKE 'admin%-gw'"), 3000)
+        self.assertEqual(self.q("SELECT kind FROM credit_ledger LIMIT 1"), "credit")
+
+    def test_promo_rules_engine(self):
+        from datetime import timedelta
+        from app.db import iso, utcnow
+        tech = self.cid
+        cash = self.make_comp("Cash Comp")
+        db = self.db()
+        db.execute("UPDATE competitions SET category='cash' WHERE id=?", (cash,))
+        db.commit()
+        self.post("/admin/promos", {"code": "LATER", "percent": "10", "fixed": "0", "min_spend": "0", "per_user": "1",
+                                    "starts_at": (utcnow() + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")})
+        self.post("/admin/promos", {"code": "CASHONLY", "percent": "50", "fixed": "0", "min_spend": "0", "per_user": "1", "category": "cash"})
+        self.post("/admin/promos", {"code": "FIRST", "percent": "10", "fixed": "0", "min_spend": "0", "per_user": "1", "new_customers": "1"})
+        self.add(tech, 2, client=self.p)
+        self.assertIsNone(self.checkout(client=self.p, promo="LATER"))                    # not started yet
+        self.assertIsNone(self.checkout(client=self.p, promo="CASHONLY"))                 # nothing eligible
+        self.add(cash, 2, client=self.p)                                                    # basket: tech £5 + cash £5
+        chk = self.checkout(client=self.p, promo="CASHONLY")
+        self.assertEqual(self.q("SELECT promo_discount FROM checkouts WHERE id=?", chk), 250)   # 50% of the cash line only
+        self.add(tech, 1, client=self.p)
+        self.assertIsNone(self.checkout(client=self.p, promo="FIRST"))                    # already a customer
+        self.assertIn("Scheduled", self.client.get("/admin/promos").get_data(as_text=True))
+
+    def test_scheduled_announcements(self):
+        from datetime import timedelta
+        from app.db import utcnow
+        self.post("/admin/announcements", {"message": "Maintenance tonight 2am", "level": "warning"})
+        self.post("/admin/announcements", {"message": "Future notice", "starts_at": (utcnow() + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M")})
+        page = self.p.get("/").get_data(as_text=True)
+        self.assertIn("Maintenance tonight 2am", page)
+        self.assertNotIn("Future notice", page)
+        aid = self.q("SELECT id FROM announcements WHERE message LIKE 'Maintenance%'")
+        self.post("/admin/announcements", {"end": str(aid)})
+        self.assertNotIn("Maintenance tonight", self.p.get("/").get_data(as_text=True))
+        self.assertEqual(self.q("SELECT COUNT(*) FROM audit_log WHERE action LIKE 'announcement.%'"), 3)
+
+    def test_daily_and_weekly_reports_and_releases(self):
+        from unittest import mock
+        from datetime import datetime, timezone
+        from app import jobs
+        self.app.config["SUPPORT_EMAIL"] = "ops@example.com"
+        monday_9am = datetime(2026, 10, 5, 8, 0, tzinfo=timezone.utc)                     # 09:00 UK (BST)
+        with mock.patch.object(jobs, "utcnow", return_value=monday_9am), self.assertLogs(self.app.logger, level="WARNING") as logs:
+            with self.app.test_request_context():
+                self.assertEqual(jobs._reports(), "daily, weekly sent")
+                self.assertEqual(jobs._reports(), "")                                     # once each
+        out = "\n".join(logs.output)
+        self.assertIn("daily summary", out)
+        self.assertIn("weekly report", out)
+        self.assertIn("WAITING NOW", out)
+        self.assertIn("Net entry value", out)
+        self.assertIn("Latest daily summary", self.client.get("/admin/reports").get_data(as_text=True))
+        html = self.client.get("/admin/targets").get_data(as_text=True)
+        self.assertIn("Support first-reply time", html)
+        self.assertIn("Payment reconciliation discrepancies", html)
+        self.assertEqual(self.client.get("/admin/releases").status_code, 200)
+
+
 class MigrationTest(unittest.TestCase):
     def test_v1_database_upgrades_in_place(self):
         tmp = tempfile.mkdtemp()

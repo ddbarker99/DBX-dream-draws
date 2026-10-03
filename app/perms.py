@@ -15,6 +15,7 @@ PERMISSIONS = {
     "prizes": "Manage winners, prize claims and physical prize fulfilment",
     "money": "Withdrawals, refunds, wallet adjustments and promo codes",
     "money.large": "Wallet adjustments above the large-adjustment limit",
+    "goodwill": "Give limited goodwill site credit after a service problem",
     "reports": "Revenue, reconciliation and performance reports",
     "users.view": "Look up customers and their timelines",
     "users.verify": "Mark a customer's email as verified",
@@ -27,9 +28,9 @@ PERMISSIONS = {
 }
 
 ROLES = {
-    "support": ("Support", {"comps.view", "postal", "users.view", "users.verify", "cases", "flags"}),
+    "support": ("Support", {"comps.view", "postal", "users.view", "users.verify", "cases", "flags", "goodwill"}),
     "competitions": ("Competition manager", {"comps.view", "comps", "draws", "postal", "prizes", "cases", "audit"}),
-    "finance": ("Finance", {"comps.view", "money", "reports", "users.view", "flags", "audit"}),
+    "finance": ("Finance", {"comps.view", "money", "reports", "users.view", "flags", "audit", "goodwill"}),
     "admin": ("Administrator", set(PERMISSIONS)),
 }
 ROLE_ALIASES = {"owner": "admin", "staff": "competitions"}   # roles used before v9

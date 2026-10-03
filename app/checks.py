@@ -110,7 +110,8 @@ def integrity_problems(db):
                "WHERE t.status='issued' AND o.status!='paid' GROUP BY t.competition_id"):
         out.append(f"{r['n']} issued ticket(s) in competition {r['competition_id']} belong to unpaid orders")
     for r in q("SELECT o.id, o.quantity, (SELECT COUNT(*) FROM tickets t WHERE t.order_id=o.id AND t.status='issued') n FROM orders o "
-               "WHERE o.status='paid' AND o.quantity != (SELECT COUNT(*) FROM tickets t WHERE t.order_id=o.id AND t.status='issued')"):
+               "WHERE o.status='paid' AND o.id NOT IN (SELECT order_id FROM refunds) "
+               "AND o.quantity != (SELECT COUNT(*) FROM tickets t WHERE t.order_id=o.id AND t.status='issued')"):
         out.append(f"Paid order {r['id']} should have {r['quantity']} tickets but has {r['n']}")
     for r in q("SELECT c.id FROM competitions c LEFT JOIN tickets t ON t.id=c.winner_ticket_id "
                "WHERE c.status='drawn' AND (t.id IS NULL OR t.competition_id!=c.id OR t.status!='issued')"):
@@ -138,6 +139,10 @@ def integrity_problems(db):
     for r in q("SELECT u.id, u.points, COALESCE(SUM(p.points),0) s FROM users u LEFT JOIN points_ledger p ON p.user_id=u.id "
                "GROUP BY u.id HAVING u.points != s"):
         out.append(f"Customer {r['id']}'s points balance ({r['points']}) doesn't match their points history ({r['s']})")
+    for r in q("SELECT r.id FROM refunds r WHERE EXISTS (SELECT 1 FROM tickets t WHERE t.order_id=r.order_id)"):
+        out.append(f"Refund {r['id']}: the refunded order still has tickets")
+    for r in q("SELECT id FROM refunds WHERE status='card_failed'"):
+        out.append(f"Refund {r['id']}: the card refund failed — refund it in Stripe by hand")
     for r in q("SELECT w.id FROM withdrawals w WHERE NOT EXISTS (SELECT 1 FROM credit_ledger l WHERE l.ref='w' || w.id AND l.amount<0)"):
         out.append(f"Withdrawal {r['id']} has no matching wallet entry")
     for r in q("SELECT w.id FROM withdrawals w WHERE w.status='rejected' AND NOT EXISTS "

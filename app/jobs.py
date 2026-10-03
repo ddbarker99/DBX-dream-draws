@@ -27,6 +27,7 @@ JOBS = {
     "watch_reminders": (1800, "Remind customers about saved competitions closing soon"),
     "integrity": (21600, "Check the data for impossible conditions"),
     "reconcile": (86400, "Match payments and refunds against Stripe"),
+    "reports": (1800, "Email the daily operations summary (7am) and weekly management report (Monday 8am)"),
     "prune": (86400, "Tidy old job history"),
 }
 _last = {}
@@ -194,6 +195,83 @@ def _integrity():
     return f"{len(problems)} problem(s): " + "; ".join(problems[:3]) if problems else ""
 
 
+def daily_summary(db, now=None):
+    """Yesterday and right now, in plain text — the morning email and the copy kept on the Reports page."""
+    from .control import work_queues, _sum
+    from . import UK
+    now = now or utcnow()
+    midnight = now.astimezone(UK).replace(hour=0, minute=0, second=0, microsecond=0)
+    a, b = iso(midnight - timedelta(days=1)), iso(midnight)
+    lines = [f"DBX daily summary — {(midnight - timedelta(days=1)).strftime('%A %d %B %Y')}", ""]
+    lines += ["YESTERDAY",
+              f"  Paid orders: {_sum(db, 'SELECT COUNT(*) FROM checkouts WHERE status=? AND paid_at>=? AND paid_at<?', 'paid', a, b)}"
+              f" · card £{_sum(db, 'SELECT SUM(cash_due) FROM checkouts WHERE status=? AND paid_at>=? AND paid_at<?', 'paid', a, b) / 100:,.2f}",
+              f"  Failed / abandoned card checkouts: {_sum(db, 'SELECT COUNT(*) FROM checkouts WHERE stripe_session_id IS NOT NULL AND status IN (?,?,?) AND created_at>=? AND created_at<?', 'expired', 'credit_refused', 'needs_refund', a, b)}",
+              f"  Competitions closed: {_sum(db, 'SELECT COUNT(*) FROM competitions WHERE locked_at>=? AND locked_at<?', a, b)}"
+              f" · draws completed: {_sum(db, 'SELECT COUNT(*) FROM draws WHERE drawn_at>=? AND drawn_at<?', a, b)}",
+              f"  Refunds: {_sum(db, 'SELECT COUNT(*) FROM refunds WHERE created_at>=? AND created_at<?', a, b)} single orders"
+              f" · £{_sum(db, 'SELECT SUM(amount) FROM credit_ledger WHERE ref LIKE ? AND created_at>=? AND created_at<?', 'refund-o%', a, b) / 100:,.2f} to wallets",
+              f"  New customers: {_sum(db, 'SELECT COUNT(*) FROM users WHERE created_at>=? AND created_at<?', a, b)}"
+              f" · support cases opened: {_sum(db, 'SELECT COUNT(*) FROM cases WHERE created_at>=? AND created_at<?', a, b)}", ""]
+    lines.append("WAITING NOW")
+    for qu in work_queues(db):
+        lines.append(f"  {qu['title']}: {qu['total']}")
+        for text, _link, meta, level in qu["rows"]:
+            if level != "info":
+                lines.append(f"    - {text}" + (f" ({meta})" if meta else ""))
+    return "\n".join(lines)
+
+
+def weekly_summary(db, now=None):
+    from .control import business_report, target_rows
+    from . import UK
+    now = now or utcnow()
+    end = now.astimezone(UK).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = end - timedelta(days=7)
+    cur, prev = business_report(db, start, end), business_report(db, start - timedelta(days=7), start)
+
+    def gbp(p):
+        return f"£{p / 100:,.2f}"
+    rows = [("Net entry value", "net_entries", gbp), ("Paid with customers' own money", "customer_money", gbp),
+            ("Prize costs", "prize_costs", gbp), ("Estimated contribution", "contribution", gbp), ("Refunds of entries", "refunds_entries", gbp),
+            ("Paid orders", "orders", str), ("Unique paying customers", "customers", str), ("— new", "new", str),
+            ("— returning", "returning", str), ("Sign-ups", "signups", str)]
+    lines = [f"DBX weekly report — week ending {(end - timedelta(days=1)).strftime('%d %B %Y')}", "",
+             "BUSINESS (this week · previous week; definitions: docs/REPORTING-DEFINITIONS.md)"]
+    lines += [f"  {label}: {fmt(cur[k])} · {fmt(prev[k])}" for label, k, fmt in rows]
+    lines += ["", "TARGETS"]
+    for t in target_rows(db):
+        status = "no data" if t["ok"] is None else ("on target" if t["ok"] else "OFF TARGET")
+        lines.append(f"  {t['label']}: {t['value'] if t['value'] is not None else '—'}{t['unit']} (goal {t['op']} {t['target']}) — {status}")
+    return "\n".join(lines)
+
+
+def _reports():
+    """Send the daily summary after 7am UK and the weekly report on Monday after 8am, once each."""
+    from .services import get_setting, set_setting
+    from . import UK
+    db = get_db()
+    local = utcnow().astimezone(UK)
+    to = [a.strip() for a in (current_app.config.get("REPORT_EMAILS") or current_app.config.get("SUPPORT_EMAIL") or "").split(",") if a.strip()]
+    sent = []
+    if local.hour >= 7 and get_setting("daily_report_date") != local.strftime("%Y-%m-%d"):
+        text = daily_summary(db)
+        set_setting("daily_report_date", local.strftime("%Y-%m-%d"))
+        set_setting("daily_report_text", text)
+        for addr in to:
+            mailer.send(addr, f"{current_app.config['SITE_NAME']} daily summary", text, heading="Daily summary")
+        sent.append("daily")
+    week = local.strftime("%G-W%V")
+    if local.weekday() == 0 and local.hour >= 8 and get_setting("weekly_report_week") != week:
+        text = weekly_summary(db)
+        set_setting("weekly_report_week", week)
+        set_setting("weekly_report_text", text)
+        for addr in to:
+            mailer.send(addr, f"{current_app.config['SITE_NAME']} weekly report", text, heading="Weekly report")
+        sent.append("weekly")
+    return ", ".join(sent) + (" sent" if sent else "") if sent else ""
+
+
 def _reconcile():
     from .reconcile import run
     return run(get_db())
@@ -202,7 +280,7 @@ def _reconcile():
 FUNCS = {"publish_scheduled": _publish_scheduled, "expire_checkouts": _expire_checkouts, "close_competitions": _close,
          "auto_draws": _draws, "settle_unrevealed": _settle, "email_outbox": _outbox, "flag_rules": _flags,
          "health_alerts": _alerts, "watch_reminders": _watch, "prune": _prune,
-         "integrity": _integrity, "reconcile": _reconcile}
+         "integrity": _integrity, "reconcile": _reconcile, "reports": _reports}
 
 
 def run_all_jobs(force=False, only=None):
@@ -247,7 +325,7 @@ def health_checks(db):
     for name, (interval, _) in JOBS.items():
         r = db.execute("SELECT * FROM job_status WHERE job=?", (name,)).fetchone()
         if r is None or not r["last_started"] or (now - parse_iso(r["last_started"])).total_seconds() > max(interval * 3, 600):
-            if name not in ("prune", "flag_rules", "health_alerts", "integrity", "reconcile"):
+            if name not in ("prune", "flag_rules", "health_alerts", "integrity", "reconcile", "reports"):
                 stale.append(name)
         elif r["last_error_at"] and (not r["last_ok"] or r["last_error_at"] > r["last_ok"]):
             stale.append(f"{name} (failing: {r['last_error']})")

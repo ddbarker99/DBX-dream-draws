@@ -143,6 +143,11 @@ MIGRATIONS = [
     ("prize_claims", "delivery_address", "TEXT"),
     ("prize_claims", "delivery_phone", "TEXT"),
     ("prize_claims", "choice_at", "TEXT"),
+    ("promo_codes", "starts_at", "TEXT"),                     # promotion scheduling
+    ("promo_codes", "comp_ids", "TEXT"),                      # comma-separated competition ids it applies to ('' = all)
+    ("promo_codes", "category", "TEXT"),                      # or only this category
+    ("promo_codes", "new_customers", "INTEGER NOT NULL DEFAULT 0"),  # only customers with no paid order yet
+    ("promo_codes", "description", "TEXT"),
 ]
 
 # Triggers that use columns added by MIGRATIONS, so they're created after them.
@@ -232,6 +237,14 @@ POST_TRIGGERS += [
     """CREATE TRIGGER IF NOT EXISTS draws_valid BEFORE INSERT ON draws
        WHEN (SELECT competition_id FROM tickets WHERE id=NEW.winning_ticket_id AND status='issued') IS NOT NEW.competition_id
        BEGIN SELECT RAISE(ABORT, 'The winning ticket is not a valid entry in this competition.'); END""",
+    # Refund records: amounts and the order never change; only a card refund's outcome is filled in once.
+    """CREATE TRIGGER IF NOT EXISTS refunds_final BEFORE UPDATE ON refunds
+       WHEN NEW.order_id != OLD.order_id OR NEW.card_amount != OLD.card_amount OR NEW.wallet_amount != OLD.wallet_amount
+            OR NEW.user_id != OLD.user_id OR OLD.status != 'card_pending'
+       BEGIN SELECT RAISE(ABORT, 'Refund records are permanent.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS refunds_no_delete BEFORE DELETE ON refunds
+       WHEN NOT EXISTS (SELECT 1 FROM maintenance_unlock)
+       BEGIN SELECT RAISE(ABORT, 'Refund records are permanent.'); END""",
     # Prize-claim history and processed postal entries are permanent.
     """CREATE TRIGGER IF NOT EXISTS claim_events_no_update BEFORE UPDATE ON claim_events
        BEGIN SELECT RAISE(ABORT, 'Prize-claim history is permanent.'); END""",
@@ -275,7 +288,7 @@ CREATE INDEX IF NOT EXISTS ix_postal_comp ON postal_entries(competition_id, stat
 """
 
 
-def init_db(path):
+def init_db(path, release=None):
     import secrets
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     conn = _connect(path)
@@ -318,6 +331,11 @@ def init_db(path):
                 skipped.append(name)
         conn.execute("INSERT INTO settings (key, value) VALUES ('constraints_skipped', ?) "
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (",".join(skipped),))
+        if release:
+            cols = sum(len(conn.execute(f"PRAGMA table_info({t})").fetchall()) for (t,) in
+                       conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall())
+            conn.execute("INSERT OR IGNORE INTO releases (release, first_seen, schema_columns, constraints_skipped) VALUES "
+                         "(?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?, ?)", (release, cols, ",".join(skipped)))
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")

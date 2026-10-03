@@ -78,7 +78,9 @@ def create_app(test_config=None):
         RELEASE=_env("RELEASE", "") or _read_release(),                 # shown in error reports and /admin/health
         ADMIN_IDLE_MINUTES=int(_env("ADMIN_IDLE_MINUTES", "30")),       # admin pages need re-confirmation after this idle time
         ADMIN_STEPUP_MINUTES=int(_env("ADMIN_STEPUP_MINUTES", "10")),   # sensitive actions need a confirmation this recent
-        LARGE_ADJUSTMENT=int(float(_env("LARGE_ADJUSTMENT", "100")) * 100),  # wallet adjustments above this: Administrator only          # two-step verification for every admin account
+        LARGE_ADJUSTMENT=int(float(_env("LARGE_ADJUSTMENT", "100")) * 100),
+        REPORT_EMAILS=_env("REPORT_EMAILS", ""),                       # who gets the daily/weekly emails (default SUPPORT_EMAIL)
+        GOODWILL_LIMIT=int(float(_env("GOODWILL_LIMIT", "20")) * 100),        # goodwill credit per customer per 30 days  # wallet adjustments above this: Administrator only          # two-step verification for every admin account
         STAGING=_env("STAGING", "0") == "1",
         SIGNUP_RATE_LIMIT=int(_env("SIGNUP_RATE_LIMIT", "10")),   # sign-ups per IP per hour (raise on staging for load tests)              # banner, noindex, every email goes to SUPPORT_EMAIL
         MAX_CONTENT_LENGTH=8 * 1024 * 1024,
@@ -97,7 +99,7 @@ def create_app(test_config=None):
         raise RuntimeError("Set SECRET_KEY in your .env before running in production.")
 
     os.makedirs(app.config["UPLOAD_DIR"], exist_ok=True)
-    dbmod.init_db(app.config["DATABASE"])
+    dbmod.init_db(app.config["DATABASE"], app.config.get("RELEASE") if app.config.get("RELEASE") != "dev" else None)
     app.teardown_appcontext(dbmod.close_db)
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
@@ -215,6 +217,9 @@ def create_app(test_config=None):
             "csrf_token": session["csrf"], "config": app.config, "user": g.get("user"), "wallet": wallet, "unread": unread,
             "basket_count": len(session.get("basket", [])),
             "announcement": get_setting("announcement"),
+            "announcements": dbmod.get_db().execute(
+                "SELECT message, level, link FROM announcements WHERE active=1 AND starts_at<=? AND (ends_at IS NULL OR ends_at>?) "
+                "ORDER BY level='warning' DESC, id DESC LIMIT 3", (dbmod.iso(utcnow()), dbmod.iso(utcnow()))).fetchall(),
             "live_now": get_setting("live_now_url"), "live_title": get_setting("live_now_title", "We're live!"),
             "categories": CATEGORIES, "asset_v": ASSET_V,
             "site_state": __import__("app.status", fromlist=["state"]).state(),
@@ -413,6 +418,13 @@ def create_app(test_config=None):
         fails = [r for r in rows if r[0] == "FAIL"]
         warns = [r for r in rows if r[0] == "WARN"]
         click.echo(f"\n{'NOT READY' if fails else 'READY'}: {len(fails)} failure(s), {len(warns)} warning(s)")
+        conn = dbmod._connect(app.config["DATABASE"])
+        conn.execute("INSERT INTO releases (release, first_seen) VALUES (?, strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+                     "ON CONFLICT(release) DO NOTHING", (cfg.get("RELEASE") or "dev",))
+        conn.execute("UPDATE releases SET check_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'), check_ok=?, check_summary=? WHERE release=?",
+                     (0 if fails else 1, "\n".join(f"{lv} {n} {d}".strip() for lv, n, d in rows if lv != "PASS")[:3000] or "All checks passed",
+                      cfg.get("RELEASE") or "dev"))
+        conn.close()
         raise SystemExit(1 if fails else 0)
 
     @app.cli.command("list-admins")

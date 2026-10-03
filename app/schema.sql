@@ -429,3 +429,44 @@ CREATE TABLE IF NOT EXISTS error_log (
     trace       TEXT,
     resolved_at TEXT
 );
+
+-- v13: refunds of individual orders (one row per refunded order; the wallet parts are also ledger lines refund-o<id>)
+CREATE TABLE IF NOT EXISTS refunds (
+    id               INTEGER PRIMARY KEY,
+    order_id         INTEGER NOT NULL UNIQUE REFERENCES orders(id),
+    checkout_id      INTEGER,
+    user_id          INTEGER NOT NULL,
+    method           TEXT NOT NULL,                 -- wallet | card
+    card_amount      INTEGER NOT NULL DEFAULT 0,    -- refunded to the card through Stripe
+    wallet_amount    INTEGER NOT NULL DEFAULT 0,    -- returned to the wallet (all kinds)
+    points_reversed  INTEGER NOT NULL DEFAULT 0,
+    status           TEXT NOT NULL DEFAULT 'done',  -- done | card_pending | card_failed
+    stripe_refund_id TEXT,
+    reason           TEXT NOT NULL,
+    staff_id         INTEGER,
+    created_at       TEXT NOT NULL
+);
+
+-- Site-wide notices staff publish without a deploy (maintenance, service updates).
+CREATE TABLE IF NOT EXISTS announcements (
+    id         INTEGER PRIMARY KEY,
+    message    TEXT NOT NULL,
+    level      TEXT NOT NULL DEFAULT 'info',        -- info | warning
+    link       TEXT,
+    starts_at  TEXT NOT NULL,
+    ends_at    TEXT,
+    active     INTEGER NOT NULL DEFAULT 1,
+    created_by INTEGER,
+    created_at TEXT NOT NULL
+);
+
+-- Each deployed release: first seen when the app starts with it; release-check results attached.
+CREATE TABLE IF NOT EXISTS releases (
+    release        TEXT PRIMARY KEY,
+    first_seen     TEXT NOT NULL,
+    schema_columns INTEGER,
+    constraints_skipped TEXT,
+    check_at       TEXT,
+    check_ok       INTEGER,
+    check_summary  TEXT
+);

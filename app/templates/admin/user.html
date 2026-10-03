@@ -5,15 +5,27 @@
 <h1>{{ u.name }}</h1>
 <p class="muted">{{ u.email }} {% if u.email_verified %}✓ verified{% else %}(not verified){% endif %} · {{ u.phone or 'no phone' }} · {{ u.points }} pts · born {{ u.dob }} · joined {{ u.created_at|uktime('%d %b %Y') }}{% if u.excluded_until %} · on a break until {{ u.excluded_until|uktime }}{% endif %}</p>
 <div class="two">
-  <form class="panel" method="post" style="margin:0">
+  <div class="stack">
+  {% if can('goodwill') %}<form class="panel" method="post" style="margin:0" aria-labelledby="gw-h">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="goodwill">
+    <strong id="gw-h">Goodwill credit</strong>
+    <p class="small muted" style="margin:4px 0 8px">For a genuine service problem. Site credit only, up to {{ config.GOODWILL_LIMIT|gbp }} per customer in 30 days (more needs an Administrator). Logged.</p>
+    <div class="two"><div><label for="gw-amt">Amount (£)</label><input id="gw-amt" name="amount" type="number" step="0.01" min="0.01" required></div>
+    <div><label for="gw-case">Support case # (optional)</label><input id="gw-case" name="case_id" inputmode="numeric"></div></div>
+    <label for="gw-reason">Reason (the customer sees this)</label><input id="gw-reason" name="reason" required minlength="5" placeholder="Sorry for the delay with your withdrawal">
+    <button class="btn small" style="margin-top:12px">Give goodwill credit</button>
+  </form>{% endif %}
+  {% if can('money') %}<form class="panel" method="post" style="margin:0">
     <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="credit">
     <strong>Cash {{ bal.cash|gbp }} · Deposited {{ bal.deposit|gbp }} · Credit {{ bal.credit|gbp }}</strong>
     <div class="two"><div><label>Amount (£, negative to remove)</label><input name="amount" type="number" step="0.01" required></div>
     <div><label>Balance</label><select name="kind"><option value="credit">Site credit (spend only)</option><option value="cash">Cash (withdrawable)</option></select></div></div>
     <div class="two">
-    <div><label>Reason (they'll see this)</label><input name="reason" placeholder="Goodwill credit"></div></div>
+    <div><label>Reason (they'll see this)</label><input name="reason" required minlength="3" placeholder="Correction: prize paid to the wrong balance"></div></div>
     <button class="btn small" style="margin-top:12px">Adjust wallet</button>
-  </form>
+    <p class="small muted" style="margin:6px 0 0">Corrections only — for compensation use goodwill credit. Over {{ config.LARGE_ADJUSTMENT|gbp }} needs an Administrator.</p>
+  </form>{% endif %}
+  </div>
   <div class="panel" style="margin:0"><strong>Access</strong>
     <p class="small muted">Admins can see all entries, run draws and change wallets.</p>
     {% if not u.email_verified %}<form method="post" style="margin-bottom:10px"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="verify"><button class="btn ghost small">Mark email verified</button></form>{% endif %}

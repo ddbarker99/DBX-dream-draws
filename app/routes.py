@@ -532,13 +532,18 @@ def _basket_view(db):
     return lines, total, gross_total
 
 
-def _totals(db, total):
+def _promo_lines(lines):
+    return [{"comp": ln["c"], "net": ln["net"]} for ln in lines]
+
+
+def _totals(db, total, lines=None):
     """Everything the customer will pay, worked out before they leave for the payment page."""
     t = {"promo": None, "promo_disc": 0, "promo_error": None, "credit": 0, "deposit": 0, "cash": 0, "card": 0}
     code = session.get("promo", "")
     if code and total:
         try:
-            p, t["promo_disc"] = check_promo(db, code, g.user["id"] if g.user else 0, total)
+            p, t["promo_disc"] = check_promo(db, code, g.user["id"] if g.user else 0, total,
+                                             _promo_lines(lines) if lines is not None else None)
             t["promo"] = p["code"]
         except PurchaseError as e:
             t["promo_error"] = str(e)
@@ -561,7 +566,7 @@ def basket():
     if lines:
         track("basket")
     session["basket_idem"] = secrets.token_urlsafe(16)   # new key per view: a double-click shares it, a fresh visit doesn't
-    return render_template("basket.html", lines=lines, total=total, gross=gross, t=_totals(db, total),
+    return render_template("basket.html", lines=lines, total=total, gross=gross, t=_totals(db, total, lines),
                            closed=any(not ln["open"] for ln in lines), clash=any(ln["clash"] for ln in lines),
                            idem=session["basket_idem"])
 
@@ -656,9 +661,9 @@ def basket_promo():
         flash("Promo code removed.")
         return redirect(url_for("public.basket"))
     db = get_db()
-    _, total, _ = _basket_view(db)
+    lines, total, _ = _basket_view(db)
     try:
-        _, disc = check_promo(db, code, g.user["id"] if g.user else 0, total)
+        _, disc = check_promo(db, code, g.user["id"] if g.user else 0, total, _promo_lines(lines))
     except PurchaseError as e:
         flash(str(e), "error")
         return redirect(url_for("public.basket"))

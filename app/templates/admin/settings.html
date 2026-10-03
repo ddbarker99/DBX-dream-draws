@@ -3,7 +3,7 @@
 {% block content %}
 {% include "admin/_bar.html" %}
 <h1>Site settings</h1>
-<p><a class="btn ghost small" href="{{ url_for('admin.features') }}">Features on / off / staff only →</a></p>
+<p><a class="btn ghost small" href="{{ url_for('admin.features') }}">Features on / off / staff only →</a> <a class="btn ghost small" href="{{ url_for('admin.announcements') }}">Scheduled announcements →</a></p>
 <form class="panel" method="post" style="max-width:720px;margin-bottom:var(--s4)">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <h2 style="margin-top:0;font-size:20px">Site status</h2>

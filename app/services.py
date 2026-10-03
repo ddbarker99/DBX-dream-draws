@@ -345,24 +345,50 @@ def is_excluded(user):
 
 # ---------------- promo codes ----------------
 
-def check_promo(db, code, user_id, subtotal):
-    p = db.execute("SELECT * FROM promo_codes WHERE code=? AND active=1", (code.strip(),)).fetchone()
+def promo_problem(db, p, user_id, lines=None, now=None):
+    """The single rules engine for promo codes. Returns (why it can't be used | None, eligible subtotal).
+    lines: [{"comp": competition row, "net": pence}] — the basket; restrictions apply per line."""
+    now = now or utcnow()
+    if not p["active"]:
+        return "That promo code isn't valid.", 0
+    if p["starts_at"] and parse_iso(p["starts_at"]) > now:
+        return "That promo code isn't active yet.", 0
+    if p["expires_at"] and parse_iso(p["expires_at"]) < now:
+        return "That promo code has expired.", 0
+    if p["max_uses"] is not None:
+        in_use = db.execute("SELECT COUNT(*) FROM checkouts WHERE promo_id=? AND status IN ('paid','pending')", (p["id"],)).fetchone()[0]
+        if max(p["uses"], in_use) >= p["max_uses"]:
+            return "That promo code has been fully used.", 0
+    if p["new_customers"] and user_id and db.execute("SELECT 1 FROM checkouts WHERE user_id=? AND status='paid' LIMIT 1",
+                                                       (user_id,)).fetchone():
+        return "That promo code is for first orders only.", 0
+    if user_id:
+        used = db.execute("SELECT COUNT(*) FROM checkouts WHERE user_id=? AND promo_id=? AND status IN ('paid','pending')",
+                          (user_id, p["id"])).fetchone()[0]
+        if used >= p["per_user"]:
+            return "You've already used that promo code.", 0
+    ids = {int(x) for x in (p["comp_ids"] or "").split(",") if x.strip().isdigit()}
+    eligible = None
+    if lines is not None:
+        eligible = sum(ln["net"] for ln in lines
+                       if (not ids or ln["comp"]["id"] in ids) and (not p["category"] or ln["comp"]["category"] == p["category"]))
+        if eligible <= 0:
+            return "That promo code doesn't apply to anything in your basket.", 0
+    return None, eligible
+
+
+def check_promo(db, code, user_id, subtotal, lines=None):
+    """Validate a code against the basket and work out the discount. Raises PurchaseError with the reason."""
+    p = db.execute("SELECT * FROM promo_codes WHERE code=?", (code.strip(),)).fetchone()
     if p is None:
         raise PurchaseError("That promo code isn't valid.")
-    if p["expires_at"] and parse_iso(p["expires_at"]) < utcnow():
-        raise PurchaseError("That promo code has expired.")
-    if p["max_uses"] is not None:
-        in_use = db.execute("SELECT COUNT(*) FROM checkouts WHERE promo_id=? AND status IN ('paid','pending')",
-                            (p["id"],)).fetchone()[0]
-        if max(p["uses"], in_use) >= p["max_uses"]:
-            raise PurchaseError("That promo code has been fully used.")
+    why, eligible = promo_problem(db, p, user_id, lines)
+    if why:
+        raise PurchaseError(why)
     if subtotal < p["min_spend"]:
         raise PurchaseError(f"That code needs a minimum spend of £{p['min_spend']/100:.2f}.")
-    used = db.execute("SELECT COUNT(*) FROM checkouts WHERE user_id=? AND promo_id=? AND status IN ('paid','pending')",
-                      (user_id, p["id"])).fetchone()[0]
-    if used >= p["per_user"]:
-        raise PurchaseError("You've already used that promo code.")
-    discount = min(subtotal, subtotal * p["percent"] // 100 + p["fixed"])
+    base = subtotal if eligible is None else min(eligible, subtotal)
+    discount = min(base, base * p["percent"] // 100 + p["fixed"])
     return p, discount
 
 
@@ -484,7 +510,10 @@ def reserve_checkout(user, lines, promo_code="", use_credit=False, idem_key=None
 
         promo, promo_disc = (None, 0)
         if promo_code.strip():
-            promo, promo_disc = check_promo(db, promo_code, user["id"], subtotal)
+            promo_lines = [{"comp": db.execute("SELECT * FROM competitions WHERE id=?", (o["competition_id"],)).fetchone(),
+                            "net": o["amount"]} for o in db.execute(
+                f"SELECT competition_id, amount FROM orders WHERE id IN ({','.join('?' * len(orders))})", orders).fetchall()]
+            promo, promo_disc = check_promo(db, promo_code, user["id"], subtotal, promo_lines)
         after = subtotal - promo_disc
         bal = balances(db, user["id"])
         credit = min(max(bal["credit"], 0), after) if use_credit else 0                    # site credit first
@@ -1269,7 +1298,84 @@ def order_refund_parts(db, order):
 
 def _refunded(db, order_id):
     return db.execute("SELECT 1 FROM credit_ledger WHERE ref=? OR ref LIKE ?",
-                      (f"refund-o{order_id}", f"refund-o{order_id}-%")).fetchone() is not None
+                      (f"refund-o{order_id}", f"refund-o{order_id}-%")).fetchone() is not None \
+        or db.execute("SELECT 1 FROM refunds WHERE order_id=?", (order_id,)).fetchone() is not None
+
+
+def refund_order(order_id, staff, reason, to_card=False):
+    """Refund one order before its competition closes. Its tickets are released, wallet-funded parts go back to the
+    wallet (ledger refund-o<id>), the card part goes back to the card (Stripe) or to the cash balance, earned points are
+    reversed, and a permanent refunds row records it all. Returns the refunds row id; the card part, if any, is
+    refunded by the caller after this commits (see admin.order_refund)."""
+    reason = (reason or "").strip()
+    if len(reason) < 5:
+        raise PurchaseError("Give a reason for the refund.")
+    with write_txn() as db:
+        o = db.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+        if o is None or o["status"] != "paid":
+            raise PurchaseError("Only paid orders can be refunded.")
+        if _refunded(db, order_id) or db.execute("SELECT 1 FROM refunds WHERE order_id=?", (order_id,)).fetchone():
+            raise PurchaseError("This order has already been refunded.")
+        comp = db.execute("SELECT * FROM competitions WHERE id=?", (o["competition_id"],)).fetchone()
+        if comp["locked_at"] or comp["status"] != "live":
+            raise PurchaseError("This competition has closed, so its entries are final. Cancel the competition to refund everyone, "
+                                "or compensate the customer with goodwill credit.")
+        if db.execute("SELECT 1 FROM instant_prizes ip JOIN tickets t ON t.id=ip.ticket_id WHERE t.order_id=?", (order_id,)).fetchone():
+            raise PurchaseError("A ticket in this order won an instant prize, so it can't be refunded automatically.")
+        c = db.execute("SELECT * FROM checkouts WHERE id=?", (o["checkout_id"],)).fetchone()
+        parts = order_refund_parts(db, o)
+        total_paid = (c["subtotal"] - c["promo_discount"]) if c else 0
+        paid = o["amount"] * total_paid // c["subtotal"] if c and c["subtotal"] else o["amount"]
+        card = paid * c["cash_due"] // total_paid if c and total_paid > 0 else 0
+        if to_card and (not c or not c["payment_intent"] or card <= 0):
+            raise PurchaseError("There's no card payment on record for this order — refund it to the wallet instead.")
+        wallet = dict(parts)
+        if to_card:
+            wallet["cash"] = max(0, wallet["cash"] - card)      # the cash-winnings share still goes back to cash
+        now = iso(utcnow())
+        db.execute("DELETE FROM tickets WHERE order_id=?", (order_id,))
+        for kind, amt in wallet.items():
+            if amt > 0:
+                add_credit(db, o["user_id"], amt, f"Refund — order #{o['checkout_id']}, {comp['title']}",
+                           f"refund-o{order_id}" + ("" if kind == "cash" else f"-{kind}"), kind=kind)
+        pts = 0
+        earned = db.execute("SELECT points FROM points_ledger WHERE ref=? AND points>0", (f"c{o['checkout_id']}",)).fetchone()
+        if earned and c and c["subtotal"]:
+            have = db.execute("SELECT points FROM users WHERE id=?", (o["user_id"],)).fetchone()[0]
+            pts = min(have, earned[0] * o["amount"] // c["subtotal"])
+            if pts > 0:
+                add_points(db, o["user_id"], -pts, f"Points reversed — order #{o['checkout_id']} refunded", f"refund-o{order_id}",
+                           lifetime=False)
+        cur = db.execute("INSERT INTO refunds (order_id, checkout_id, user_id, method, card_amount, wallet_amount, points_reversed, "
+                         "status, reason, staff_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                         (order_id, o["checkout_id"], o["user_id"], "card" if to_card else "wallet", card if to_card else 0,
+                          sum(wallet.values()), pts, "card_pending" if to_card else "done", reason[:500], staff["id"], now))
+        audit(db, "order.refund", f"user:{o['user_id']}", f"Order line {order_id} (checkout #{o['checkout_id']}, {comp['title']}): "
+              f"{'card ' + str(card) + 'p, ' if to_card else ''}wallet {sum(wallet.values())}p, points −{pts}. Reason: {reason[:200]}",
+              actor=staff)
+        return cur.lastrowid
+
+
+def goodwill_credit(user_id, amount, reason, staff, case_id=None):
+    """Compensation after a service problem: site credit only, reason required, capped per customer per 30 days
+    (higher needs an Administrator). Recorded as a normal ledger line and audited."""
+    from flask import current_app
+    from .perms import can
+    reason = (reason or "").strip()
+    if len(reason) < 5:
+        raise PurchaseError("Give the reason for the goodwill credit (the customer sees it in their history).")
+    if amount <= 0:
+        raise PurchaseError("Enter an amount above zero.")
+    cap = current_app.config.get("GOODWILL_LIMIT", 2000)
+    with write_txn() as db:
+        given = db.execute("SELECT COALESCE(SUM(amount),0) FROM credit_ledger WHERE user_id=? AND ref LIKE 'admin%-gw' AND created_at>?",
+                           (user_id, iso(utcnow() - timedelta(days=30)))).fetchone()[0]
+        if given + amount > cap and not can(staff, "money.large"):
+            raise PurchaseError(f"Goodwill is limited to £{cap / 100:.0f} per customer in 30 days (£{given / 100:.2f} given). "
+                                "Ask an Administrator for more.")
+        add_credit(db, user_id, amount, f"Goodwill credit — {reason[:120]}", f"admin{staff['id']}-gw", kind="credit")
+        audit(db, "wallet.goodwill", f"user:{user_id}", f"+{amount}p site credit" + (f" (case #{case_id})" if case_id else "")
+              + f": {reason[:200]}", actor=staff)
 
 
 def refund_competition(comp_id, db=None):
@@ -1383,6 +1489,12 @@ def _delete_comp_rows(db, comp_ids):
     checkouts = [r[0] for r in db.execute(
         f"SELECT DISTINCT checkout_id FROM orders WHERE competition_id IN ({q}) AND checkout_id IS NOT NULL", comp_ids)]
     db.execute(f"UPDATE competitions SET purging=1 WHERE id IN ({q})", comp_ids)
+    held = db.execute("SELECT 1 FROM maintenance_unlock").fetchone()     # "start fresh" may already hold it
+    if not held:
+        db.execute("INSERT INTO maintenance_unlock (id, reason) VALUES (1, 'deleting test competitions')")
+    db.execute(f"DELETE FROM refunds WHERE order_id IN (SELECT id FROM orders WHERE competition_id IN ({q}))", comp_ids)
+    if not held:
+        db.execute("DELETE FROM maintenance_unlock")
     db.execute(f"DELETE FROM draws WHERE competition_id IN ({q})", comp_ids)
     db.execute(f"DELETE FROM entry_snapshots WHERE competition_id IN ({q})", comp_ids)
     db.execute(f"DELETE FROM claim_events WHERE claim_id IN (SELECT id FROM prize_claims WHERE competition_id IN ({q}))", comp_ids)
@@ -1432,6 +1544,7 @@ def start_fresh(competitions="", wallets=False, accounts=False, promos=False):
             out["games" if competitions == "games" else "competitions"] = len(ids)
         if wallets:
             out["transactions"] = db.execute("DELETE FROM credit_ledger").rowcount
+            db.execute("DELETE FROM refunds")
             out["withdrawals"] = db.execute("DELETE FROM withdrawals").rowcount
             db.execute("DELETE FROM deposits")
             db.execute("UPDATE users SET points=0, points_lifetime=0")

@@ -40,6 +40,7 @@
 {% if config.STAGING %}<div class="strip" style="background:#7a1622;color:#fff;text-align:center;font-weight:800">STAGING — test site. Payments are test-mode and emails go to staff only.</div>{% endif %}
 {% if live_now %}<div class="strip live"><div class="wrap"><span><span class="dot" aria-hidden="true"></span>{{ live_title or "We're live!" }}</span><a href="{{ live_now }}" target="_blank" rel="noopener">Watch now<span class="sr-only"> (opens in a new tab)</span></a></div></div>{% endif %}
 {% if site_state[0] != 'ok' %}<div class="strip announce" role="status"><div class="wrap">⚠ {{ site_state[1] or ('Payments are paused for a short while — please try again soon.' if site_state[0] == 'payments_paused' else 'Maintenance in progress.') }}</div></div>{% endif %}
+{% for a in announcements %}<div class="strip announce{{ ' warn' if a.level == 'warning' }}" role="{{ 'alert' if a.level == 'warning' else 'status' }}"><div class="wrap">{{ a.message }}{% if a.link %} <a href="{{ a.link }}">More</a>{% endif %}</div></div>{% endfor %}
 {% if announcement %}<div class="strip announce"><div class="wrap">{{ announcement }}</div></div>{% endif %}
 
 <header class="site-header">

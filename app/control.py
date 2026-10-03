@@ -204,7 +204,7 @@ def search():
             if kind in ("", "#", "order", "checkout", "c"):
                 for k in db.execute("SELECT k.id, k.status, k.cash_due, u.email, u.id AS uid FROM checkouts k JOIN users u ON u.id=k.user_id "
                                     "WHERE k.id=?", (num,)):
-                    hit("Orders", f"Order #{k['id']} · {k['status']} · £{k['cash_due'] / 100:.2f}", url_for("control.timeline", uid=k["uid"]),
+                    hit("Orders", f"Order #{k['id']} · {k['status']} · £{k['cash_due'] / 100:.2f}", url_for("admin.order_detail", cid=k["id"]),
                         k["email"])
             if kind in ("", "#", "t", "ticket"):
                 for t in db.execute("SELECT t.number, t.status, c.title, c.id AS cid, COALESCE(u.email, p.email) AS who, u.id AS uid "
@@ -227,7 +227,7 @@ def search():
                 hit("Competitions", f"{c['title']} (#{c['id']})", url_for("admin.entries", cid=c["id"]), c["status"])
         if low.startswith(("cs_", "pi_")):
             for k in db.execute("SELECT id, user_id, status FROM checkouts WHERE stripe_session_id=? OR payment_intent=?", (q, q)):
-                hit("Orders", f"Order #{k['id']} · {k['status']}", url_for("control.timeline", uid=k["user_id"]), q)
+                hit("Orders", f"Order #{k['id']} · {k['status']}", url_for("admin.order_detail", cid=k["id"]), q)
             for d in db.execute("SELECT id, user_id, status FROM deposits WHERE stripe_session_id=? OR payment_intent=?", (q, q)):
                 hit("Deposits", f"Deposit #{d['id']} · {d['status']}", url_for("control.timeline", uid=d["user_id"]), q)
         if len(q) >= 3 and not low.startswith(("cs_", "pi_")):
@@ -396,7 +396,7 @@ COUNT_ROWS = [("orders", "Paid orders"), ("paid_entries", "Paid entries"), ("fre
 @bp.route("/reports", methods=["GET", "POST"])
 @require("reports")
 def reports():
-    from .services import set_setting
+    from .services import get_setting, set_setting
     db = get_db()
     if request.method == "POST":
         try:
@@ -423,6 +423,7 @@ def reports():
         return Response(buf.getvalue(), mimetype="text/csv",
                         headers={"Content-Disposition": f"attachment; filename=business-report-{start:%Y%m%d}.csv"})
     return render_template("admin/reports.html", r=cur, p=prev, rows=REPORT_ROWS, counts=COUNT_ROWS,
+                           daily=get_setting("daily_report_text"), weekly=get_setting("weekly_report_text"),
                            start=start.strftime("%Y-%m-%d"), end=(end - timedelta(days=1)).strftime("%Y-%m-%d"))
 
 
@@ -469,7 +470,8 @@ def timeline_events(db, uid):
                  "needs_refund": "Payment needs a refund", "refunded": "Payment refunded by staff", "pending": "Checkout in progress"}.get(k["status"], k["status"])
         ev.append((k["paid_at"] or k["created_at"], "order", f"{label} — order #{k['id']}",
                    f"Card £{k['cash_due'] / 100:.2f} · balance £{(k['credit_used'] + k['cash_used'] + k['deposit_used']) / 100:.2f}"
-                   f"{' · promo £%.2f' % (k['promo_discount'] / 100) if k['promo_discount'] else ''} — " + "; ".join(nums)))
+                   f"{' · promo £%.2f' % (k['promo_discount'] / 100) if k['promo_discount'] else ''} — " + "; ".join(nums),
+                   url_for("admin.order_detail", cid=k["id"])))
     for p in db.execute("SELECT p.*, c.title, t.number FROM postal_entries p JOIN competitions c ON c.id=p.competition_id "
                         "LEFT JOIN tickets t ON t.postal_entry_id=p.id WHERE p.user_id=?", (uid,)):
         ev.append((p["received_at"] or p["created_at"], "postal", f"Postal entry {p['status']}",
@@ -510,7 +512,7 @@ def timeline(uid):
         abort(404)
     audit(db, "customer.viewed", f"user:{uid}", "Opened customer timeline")
     kinds = request.args.getlist("kind")
-    events = timeline_events(db, uid)
+    events = [e if len(e) == 5 else (*e, None) for e in timeline_events(db, uid)]
     if kinds:
         events = [e for e in events if e[1] in kinds]
     return render_template("admin/timeline.html", u=u, events=events, bal=balances(db, uid), kinds=kinds,
@@ -825,6 +827,23 @@ def target_rows(db):
         f"{st['errors']} of {st['requests']:,} requests, last 7 days")
     add("Server time, 95th percentile", st["p95_under_ms"], " ms", "<=", 500, "Time to build each page on the server, last 7 days "
         "(phone download time comes on top — see Largest Contentful Paint)")
+    # reliability, month by month (docs/TARGETS.md)
+    recon = _sum(db, "SELECT COUNT(*) FROM flags WHERE kind IN ('Reconciliation','Payment reversal','Refund failed') AND created_at>=?", month)
+    add("Payment reconciliation discrepancies (new, 30 days)", recon, "", "<=", 0, "Stripe mismatches, chargebacks and failed refunds")
+    add("Draws blocked or overdue (30 days)", _sum(db, "SELECT COUNT(DISTINCT target) FROM audit_log WHERE action='draw.blocked' AND created_at>=?", month),
+        "", "<=", 0, "Draws stopped by the readiness checks")
+    slow_w = _sum(db, "SELECT COUNT(*) FROM withdrawals WHERE created_at>=? AND ((done_at IS NOT NULL AND julianday(done_at)-julianday(created_at)>2) "
+                      "OR (done_at IS NULL AND julianday('now')-julianday(created_at)>2))", month)
+    add("Withdrawals taking more than 48 hours (30 days)", slow_w, "", "<=", 0, "Requested in the last 30 days")
+    replies = [((parse_iso(r[1]) - parse_iso(r[0])).total_seconds() / 3600) for r in db.execute(
+        "SELECT k.created_at, (SELECT MIN(n.created_at) FROM case_notes n WHERE n.case_id=k.id AND n.kind='reply') FROM cases k "
+        "WHERE k.created_at>=?", (month,)) if r[1]]
+    from statistics import median as _median
+    add("Support first-reply time (median, 30 days)", round(_median(replies), 1) if replies else None, " h", "<=", 24,
+        f"{len(replies)} cases answered")
+    add("Checkout errors (30 days)", _sum(db, "SELECT COALESCE(SUM(count),0) FROM error_log WHERE last_at>=? AND (endpoint LIKE '%checkout%' "
+                                              "OR endpoint LIKE '%basket%' OR endpoint LIKE '%webhook%')", month), "", "<=", 0,
+        "Server errors on basket, checkout and payment pages")
     ext = json.loads(get_setting("external_measurements") or "{}")
     for key, label, unit, op, target in EXTERNAL_TARGETS:
         m = ext.get(key) or {}
@@ -904,6 +923,21 @@ def resolve_error(eid):
     audit(db, "error.resolved", f"error:{eid}", "Marked fixed")
     flash("Marked as fixed — it reappears if it happens again.")
     return redirect(url_for("control.targets") + "#errors")
+
+
+@bp.route("/releases")
+@require("audit")
+def releases():
+    import json
+    from .services import get_setting
+    db = get_db()
+    rows = db.execute("SELECT * FROM releases ORDER BY first_seen DESC LIMIT 50").fetchall()
+    current = current_app.config.get("RELEASE")
+    integ = json.loads(get_setting("last_integrity") or "null")
+    from .jobs import health_checks
+    health = health_checks(db)
+    return render_template("admin/releases.html", rows=rows, current=current, integ=integ,
+                           failing=[c for c in health if not c["ok"]], skipped=get_setting("constraints_skipped"))
 
 
 # ---------------- prize liability ----------------

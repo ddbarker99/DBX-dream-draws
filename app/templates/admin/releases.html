@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Releases · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Releases</h1>
+<p class="muted" style="max-width:760px">Every version deployed to this server: when it first started, the database it found, and the result of <code>flask release-check</code> (run it before and after each deploy — docs/DEPLOY.md). Automated tests run on GitHub for every change before it can be released.</p>
+<div class="statstrip">
+  <div><b>{{ current }}</b><span>Running now</span></div>
+  <div><b>{{ 'OK' if not failing else failing|length ~ ' failing' }}</b><span>Health checks</span></div>
+  <div><b>{{ 'OK' if integ and not integ.problems else ('Problems' if integ else 'Not run') }}</b><span>Data integrity</span></div>
+  <div><b>{{ 'All active' if not skipped else 'Skipped: ' ~ skipped }}</b><span>Database safety rules</span></div>
+</div>
+<div class="panel table-scroll" tabindex="0" role="region" aria-label="Releases" style="margin-top:var(--s4)"><table>
+  <thead><tr><th scope="col">Version (commit · date · change)</th><th scope="col">Deployed</th><th scope="col">Release check</th></tr></thead><tbody>
+  {% for r in rows %}<tr><td>{% if r.release == current %}<span class="pill live">running</span> {% endif %}<code class="small">{{ r.release }}</code>{% if r.schema_columns %}<div class="tiny muted">{{ r.schema_columns }} database columns{% if r.constraints_skipped %} · rules skipped: {{ r.constraints_skipped }}{% endif %}</div>{% endif %}</td>
+    <td class="small">{{ r.first_seen|uktime('%d %b %Y %H:%M') }}</td>
+    <td class="small">{% if r.check_at %}<span class="pill {{ 'paid' if r.check_ok else 'needs_refund' }}">{{ 'READY' if r.check_ok else 'NOT READY' }}</span> {{ r.check_at|uktime('%d %b %H:%M') }}<details><summary class="tiny">Details</summary><pre class="tiny" style="white-space:pre-wrap">{{ r.check_summary }}</pre></details>{% else %}<span class="muted">not run — run release-check</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">No releases recorded yet (development build).</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

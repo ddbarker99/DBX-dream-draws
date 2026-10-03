@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Announcements · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Announcements</h1>
+<p class="muted" style="max-width:720px">A strip across the top of every page for genuine service information — planned maintenance, a payment provider problem, a change to draw times. Schedule it to start and end by itself. Not for marketing.</p>
+<form class="panel" method="post" style="max-width:720px"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <label for="a-msg">Message</label><input id="a-msg" name="message" maxlength="300" required placeholder="Scheduled maintenance: Tuesday 2–3am. Entries pause briefly.">
+  <div class="two"><div><label for="a-link">Link for more (optional)</label><input id="a-link" name="link" placeholder="/faq or https://…"></div>
+    <div><label for="a-level">Type</label><select id="a-level" name="level"><option value="info">Information</option><option value="warning">Warning (service problem)</option></select></div></div>
+  <div class="two"><div><label for="a-start">Starts (UK time, blank = now)</label><input id="a-start" name="starts_at" type="datetime-local"></div>
+    <div><label for="a-end">Ends (blank = until you end it)</label><input id="a-end" name="ends_at" type="datetime-local"></div></div>
+  <button class="btn" style="margin-top:var(--s3)">Publish / schedule</button>
+</form>
+<div class="panel table-scroll" style="margin-top:var(--s4)" tabindex="0" role="region" aria-label="Announcements"><table>
+  <thead><tr><th scope="col">Message</th><th scope="col">When</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Action</span></th></tr></thead><tbody>
+  {% for a in rows %}{% set showing = a.active and a.starts_at <= now and (not a.ends_at or a.ends_at > now) %}
+  <tr><td>{{ a.message }}{% if a.level == 'warning' %} <span class="pill hot">warning</span>{% endif %}<div class="tiny muted">by {{ a.email or 'staff' }}</div></td>
+    <td class="small">{{ a.starts_at|uktime('%d %b %H:%M') }} → {{ a.ends_at|uktime('%d %b %H:%M') if a.ends_at else 'until ended' }}</td>
+    <td>{% if showing %}<span class="pill live">Showing</span>{% elif a.active and a.starts_at > now %}<span class="pill pending">Scheduled</span>{% else %}<span class="pill">Ended</span>{% endif %}</td>
+    <td>{% if a.active and (not a.ends_at or a.ends_at > now) %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn ghost small" name="end" value="{{ a.id }}">End now</button></form>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">No announcements yet.</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

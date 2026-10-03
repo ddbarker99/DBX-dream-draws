@@ -1,6 +1,18 @@
 {% extends "base.html" %}
-{% block title %}Business reports · Admin{% endblock %}
-{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block title %}Business reports · Admin<section class="section" aria-labelledby="em-h"><h2 id="em-h">Emailed summaries</h2>
+<p class="small muted">Sent automatically to {{ config.REPORT_EMAILS or config.SUPPORT_EMAIL or 'nobody — set SUPPORT_EMAIL or REPORT_EMAILS' }}: a daily operations summary at 7am and a weekly management report on Mondays at 8am. The latest copies:</p>
+<div class="two">
+  <details class="panel"><summary><b>Latest daily summary</b></summary><pre class="small" style="white-space:pre-wrap">{{ daily or 'Not sent yet.' }}</pre></details>
+  <details class="panel"><summary><b>Latest weekly report</b></summary><pre class="small" style="white-space:pre-wrap">{{ weekly or 'Not sent yet.' }}</pre></details>
+</div></section>
+{% endblock %}
+{% block robots %}<meta name="robots" content="noindex"><section class="section" aria-labelledby="em-h"><h2 id="em-h">Emailed summaries</h2>
+<p class="small muted">Sent automatically to {{ config.REPORT_EMAILS or config.SUPPORT_EMAIL or 'nobody — set SUPPORT_EMAIL or REPORT_EMAILS' }}: a daily operations summary at 7am and a weekly management report on Mondays at 8am. The latest copies:</p>
+<div class="two">
+  <details class="panel"><summary><b>Latest daily summary</b></summary><pre class="small" style="white-space:pre-wrap">{{ daily or 'Not sent yet.' }}</pre></details>
+  <details class="panel"><summary><b>Latest weekly report</b></summary><pre class="small" style="white-space:pre-wrap">{{ weekly or 'Not sent yet.' }}</pre></details>
+</div></section>
+{% endblock %}
 {% block content %}
 {% include "admin/_bar.html" %}
 <h1>Business reports</h1>
@@ -38,4 +50,10 @@
   <div><label for="fee_fixed">Fixed per payment (pence)</label><input id="fee_fixed" name="fee_fixed_pence" inputmode="numeric" value="{{ r.fee_fixed }}"></div></div>
   <button class="btn ghost small" style="margin-top:var(--s3)">Save</button></form>
 </div></div>
+<section class="section" aria-labelledby="em-h"><h2 id="em-h">Emailed summaries</h2>
+<p class="small muted">Sent automatically to {{ config.REPORT_EMAILS or config.SUPPORT_EMAIL or 'nobody — set SUPPORT_EMAIL or REPORT_EMAILS' }}: a daily operations summary at 7am and a weekly management report on Mondays at 8am. The latest copies:</p>
+<div class="two">
+  <details class="panel"><summary><b>Latest daily summary</b></summary><pre class="small" style="white-space:pre-wrap">{{ daily or 'Not sent yet.' }}</pre></details>
+  <details class="panel"><summary><b>Latest weekly report</b></summary><pre class="small" style="white-space:pre-wrap">{{ weekly or 'Not sent yet.' }}</pre></details>
+</div></section>
 {% endblock %}

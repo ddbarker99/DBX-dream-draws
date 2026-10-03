@@ -10,7 +10,7 @@ import requests
 from flask import (Blueprint, Response, abort, current_app, flash, g, redirect, render_template,
                    request, url_for)
 
-from . import UK, mailer
+from . import UK, mailer, payments
 from .notify import notify, tell
 from .perms import can, require, ROLES
 from .db import get_db, iso, utcnow, write_txn
@@ -970,15 +970,23 @@ def promos():
                 fixed = money(f.get("fixed"), "Fixed amount")
                 if not (0 <= percent <= 100) or (percent == 0 and fixed == 0):
                     raise ValueError("Set a percentage or a fixed amount off.")
-                exp = None
-                if f.get("expires_at"):
-                    exp = iso(datetime.strptime(f["expires_at"], "%Y-%m-%dT%H:%M").replace(tzinfo=UK))
-                db.execute("INSERT INTO promo_codes (code, percent, fixed, min_spend, max_uses, per_user, expires_at, created_at) "
-                           "VALUES (?,?,?,?,?,?,?,?)",
+                def when(v):
+                    return iso(datetime.strptime(v, "%Y-%m-%dT%H:%M").replace(tzinfo=UK)) if v else None
+                start, exp = when(f.get("starts_at")), when(f.get("expires_at"))
+                if start and exp and exp <= start:
+                    raise ValueError("The end must be after the start.")
+                ids = ",".join(str(int(x)) for x in re.findall(r"\d+", f.get("comp_ids", "")))
+                if ids and db.execute(f"SELECT COUNT(*) FROM competitions WHERE id IN ({ids})").fetchone()[0] != len(ids.split(",")):
+                    raise ValueError("One of those competition numbers doesn't exist.")
+                cat = f.get("category") if f.get("category") in dict(CATEGORIES) else None
+                db.execute("INSERT INTO promo_codes (code, percent, fixed, min_spend, max_uses, per_user, expires_at, created_at, starts_at, "
+                           "comp_ids, category, new_customers, description) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                            (code, percent, fixed, money(f.get("min_spend"), "Minimum spend"),
                             int(f["max_uses"]) if f.get("max_uses") else None, int(f.get("per_user") or 1), exp,
-                            iso(utcnow())))
-                audit(db, "promo.create", f"promo:{code}", f"{percent}% + {fixed}p off")
+                            iso(utcnow()), start, ids or None, cat, 1 if f.get("new_customers") else 0,
+                            f.get("description", "").strip()[:200] or None))
+                audit(db, "promo.create", f"promo:{code}", f"{percent}% + {fixed}p off; {start or 'now'} → {exp or 'no end'}; "
+                      f"competitions {ids or 'all'}; category {cat or 'any'}; first order only {bool(f.get('new_customers'))}")
                 flash(f"Promo code {code} created.")
         except ValueError as e:
             flash(str(e), "error")
@@ -989,7 +997,7 @@ def promos():
                 raise
         return redirect(url_for("admin.promos"))
     rows = db.execute("SELECT * FROM promo_codes ORDER BY id DESC").fetchall()
-    return render_template("admin/promos.html", rows=rows)
+    return render_template("admin/promos.html", rows=rows, now=iso(utcnow()), categories=CATEGORIES)
 
 
 # ---------------- users & wallet ----------------
@@ -1018,7 +1026,7 @@ def user_detail(uid):
         abort(404)
     if request.method == "POST":
         f = request.form
-        need = {"credit": "money", "verify": "users.verify", "admin": "users.manage"}.get(f.get("action"))
+        need = {"credit": "money", "verify": "users.verify", "admin": "users.manage", "goodwill": "goodwill"}.get(f.get("action"))
         if not need or not can(g.user, need):
             flash("Your role can't do that.", "error")
             return redirect(url_for("admin.user_detail", uid=uid))
@@ -1045,6 +1053,14 @@ def user_detail(uid):
                 add_credit(wdb, uid, amt, reason, f"admin{g.user['id']}", kind=kind)
                 audit(wdb, "wallet.adjust", f"user:{uid}", f"{amt:+}p {kind}: {reason}")
             flash("Wallet updated.")
+        elif f.get("action") == "goodwill":
+            from .services import goodwill_credit
+            try:
+                goodwill_credit(uid, money(f.get("amount"), "Amount"), f.get("reason", ""), g.user,
+                                int(f["case_id"]) if f.get("case_id", "").isdigit() else None)
+                flash("Goodwill credit added — the customer can see it in their wallet history.")
+            except (ValueError, PurchaseError) as e:
+                flash(str(e), "error")
         elif f.get("action") == "verify":
             db.execute("UPDATE users SET email_verified=1 WHERE id=?", (uid,))
             audit(db, "user.verify", f"user:{uid}", "Email marked verified by admin")
@@ -1108,6 +1124,96 @@ def payouts():
     deposits = db.execute("SELECT COALESCE(SUM(amount),0) FROM credit_ledger WHERE kind='deposit'").fetchone()[0]
     return render_template("admin/payouts.html", withdrawals=withdrawals, prizes=prizes, refunds=refunds,
                            dep_refunds=dep_refunds, deposits_held=deposits)
+
+
+@bp.route("/orders/<int:cid>", methods=["GET", "POST"])
+@require("users.view")
+def order_detail(cid):
+    """One order (checkout): what was bought, how it was paid, its tickets, and refunds — with refund tools."""
+    from .services import refund_order
+    db = get_db()
+    k = db.execute("SELECT k.*, u.name, u.email FROM checkouts k JOIN users u ON u.id=k.user_id WHERE k.id=?", (cid,)).fetchone()
+    if k is None:
+        abort(404)
+    if request.method == "POST":
+        if not can(g.user, "money"):
+            flash("Your role can't refund orders.", "error")
+            return redirect(url_for("admin.order_detail", cid=cid))
+        to_card = request.form.get("method") == "card"
+        try:
+            rid = refund_order(int(request.form["order_id"]), g.user, request.form.get("reason", ""), to_card=to_card)
+        except PurchaseError as e:
+            flash(str(e), "error")
+            return redirect(url_for("admin.order_detail", cid=cid))
+        r = db.execute("SELECT * FROM refunds WHERE id=?", (rid,)).fetchone()
+        if r["method"] == "card" and r["card_amount"] > 0:
+            try:
+                res = payments.refund(k["payment_intent"], amount=r["card_amount"], why=f"order refund: {r['reason'][:80]}")
+                db.execute("UPDATE refunds SET status='done', stripe_refund_id=? WHERE id=?", (res.get("id"), rid))
+            except Exception:
+                current_app.logger.exception("Card refund failed for refund %s", rid)
+                db.execute("UPDATE refunds SET status='card_failed' WHERE id=?", (rid,))
+                db.execute("INSERT OR IGNORE INTO flags (kind, subject, detail, created_at) VALUES ('Refund failed', ?, ?, ?)",
+                           (f"refund:{rid}", f"Card refund of {r['card_amount']}p for order #{cid} failed — refund it in Stripe "
+                                             f"({k['payment_intent']}) and note it here.", iso(utcnow())))
+                flash("Tickets released and wallet parts refunded, but the card refund failed — it's flagged; refund it in Stripe.", "error")
+                return redirect(url_for("admin.order_detail", cid=cid))
+        u = db.execute("SELECT * FROM users WHERE id=?", (k["user_id"],)).fetchone()
+        total = r["card_amount"] + r["wallet_amount"]
+        tell(u["email"], f"Refund for order #{cid}", f"Hi {u['name'].split()[0]},\n\nWe've refunded £{total / 100:.2f} for part of order #{cid}"
+             + (f": £{r['card_amount'] / 100:.2f} to your card (3–10 days)" if r["card_amount"] else "")
+             + (f"{' and ' if r['card_amount'] else ': '}£{r['wallet_amount'] / 100:.2f} to your wallet" if r["wallet_amount"] else "")
+             + ". The tickets for it have been released.", kind="payment", key=f"refund:{rid}", user_id=u["id"],
+             link=url_for("public.order_detail", cid=cid), heading="Refund processed", highlight=f"£{total / 100:.2f}")
+        flash("Refunded.")
+        return redirect(url_for("admin.order_detail", cid=cid))
+    lines = db.execute("SELECT o.*, c.title, c.slug, c.status AS comp_status, c.locked_at, "
+                       "(SELECT COUNT(*) FROM tickets t WHERE t.order_id=o.id) AS n_tickets, "
+                       "(SELECT GROUP_CONCAT(number, ', ') FROM (SELECT number FROM tickets t WHERE t.order_id=o.id ORDER BY number LIMIT 40)) AS numbers "
+                       "FROM orders o JOIN competitions c ON c.id=o.competition_id WHERE o.checkout_id=?", (cid,)).fetchall()
+    refunds = {r["order_id"]: r for r in db.execute("SELECT r.*, u.email AS staff FROM refunds r LEFT JOIN users u ON u.id=r.staff_id "
+                                                     "WHERE r.checkout_id=?", (cid,))}
+    from .services import order_refund_parts, _refunded
+    info = {ln["id"]: {"parts": order_refund_parts(db, ln), "refunded": _refunded(db, ln["id"])} for ln in lines}
+    return render_template("admin/order.html", k=k, lines=lines, refunds=refunds, info=info)
+
+
+@bp.route("/announcements", methods=["GET", "POST"])
+@require("settings")
+def announcements():
+    db = get_db()
+    if request.method == "POST":
+        f = request.form
+        if f.get("end"):
+            db.execute("UPDATE announcements SET active=0 WHERE id=?", (int(f["end"]),))
+            audit(db, "announcement.end", f"announcement:{f['end']}", "Ended")
+            flash("Announcement ended.")
+            return redirect(url_for("admin.announcements"))
+        msg = " ".join(f.get("message", "").split())[:300]
+        link = f.get("link", "").strip()[:300] or None
+        if not msg:
+            flash("Write the announcement.", "error")
+            return redirect(url_for("admin.announcements"))
+        if link and not (link.startswith("/") or link.startswith("https://")):
+            flash("Links must start with / or https://", "error")
+            return redirect(url_for("admin.announcements"))
+
+        def when(v, default):
+            try:
+                return iso(datetime.strptime(v, "%Y-%m-%dT%H:%M").replace(tzinfo=UK)) if v else default
+            except ValueError:
+                return default
+        starts, ends = when(f.get("starts_at"), iso(utcnow())), when(f.get("ends_at"), None)
+        if ends and ends <= starts:
+            flash("The end must be after the start.", "error")
+            return redirect(url_for("admin.announcements"))
+        db.execute("INSERT INTO announcements (message, level, link, starts_at, ends_at, created_by, created_at) VALUES (?,?,?,?,?,?,?)",
+                   (msg, "warning" if f.get("level") == "warning" else "info", link, starts, ends, g.user["id"], iso(utcnow())))
+        audit(db, "announcement.create", None, f"{msg} ({starts} → {ends or 'until ended'})")
+        flash("Announcement scheduled." if starts > iso(utcnow()) else "Announcement published.")
+        return redirect(url_for("admin.announcements"))
+    rows = db.execute("SELECT a.*, u.email FROM announcements a LEFT JOIN users u ON u.id=a.created_by ORDER BY a.id DESC LIMIT 50").fetchall()
+    return render_template("admin/announcements.html", rows=rows, now=iso(utcnow()))
 
 
 @bp.route("/deposit-refunds/<int:did>/done", methods=["POST"])

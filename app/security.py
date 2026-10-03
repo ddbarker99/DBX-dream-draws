@@ -121,7 +121,8 @@ def mfa_required(user):
 # (password or MFA code) in the last few minutes. endpoint -> form "action" values (None = every POST),
 # or ("not", {...}) for every action except those.
 SENSITIVE = {
-    "admin.user_detail": {"credit", "admin"},
+    "admin.user_detail": {"credit", "admin", "goodwill"},
+    "admin.order_detail": None, "admin.announcements": None,
     "admin.payouts": ("not", {"processing"}),
     "admin.refund_done": None, "admin.deposit_refund_done": None,
     "admin.set_status": {"cancel"},

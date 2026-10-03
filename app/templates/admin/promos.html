@@ -3,6 +3,7 @@
 {% block content %}
 {% include "admin/_bar.html" %}
 <h1>Promo codes</h1>
+<p class="muted" style="max-width:760px">Every rule is checked in one place at checkout: dates, uses, minimum spend, which competitions or category, first orders only. Schedule a start and end so nobody has to switch a campaign on or off by hand.</p>
 <form class="panel" method="post">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <div class="four">
@@ -12,15 +13,22 @@
     <div><label>Min spend (£)</label><input name="min_spend" type="number" min="0" step="0.01" value="0"></div>
     <div><label>Total uses <span class="muted">(blank = unlimited)</span></label><input name="max_uses" type="number" min="1"></div>
     <div><label>Uses per person</label><input name="per_user" type="number" min="1" value="1"></div>
-    <div><label>Expires (UK) <span class="muted">optional</span></label><input name="expires_at" type="datetime-local"></div>
+    <div><label>Starts (UK) <span class="muted">blank = now</span></label><input name="starts_at" type="datetime-local"></div>
+    <div><label>Ends (UK) <span class="muted">optional</span></label><input name="expires_at" type="datetime-local"></div>
+    <div><label>Only competitions # <span class="muted">e.g. 12, 15</span></label><input name="comp_ids" placeholder="blank = all"></div>
+    <div><label>Only category</label><select name="category"><option value="">Any</option>{% for k, label in categories %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select></div>
   </div>
+  <label class="check" style="margin-top:10px"><input type="checkbox" name="new_customers" value="1"> First order only (customers who haven't bought before)</label>
+  <label for="p-desc">Internal note <span class="muted">(campaign, who it's for)</span></label><input id="p-desc" name="description" maxlength="200">
   <button class="btn" style="margin-top:14px">Create code</button>
 </form>
 <div class="panel table-scroll" style="margin-top:16px" tabindex="0"><table>
-  <tr><th>Code</th><th>Discount</th><th>Min spend</th><th class="num">Used</th><th>Expires</th><th>Status</th><th></th></tr>
+  <tr><th>Code</th><th>Discount</th><th>Rules</th><th class="num">Used</th><th>When</th><th>Status</th><th></th></tr>
   {% for p in rows %}<tr><td><b>{{ p.code }}</b></td><td>{% if p.percent %}{{ p.percent }}%{% endif %}{% if p.percent and p.fixed %} + {% endif %}{% if p.fixed %}{{ p.fixed|gbp }}{% endif %}</td>
-    <td>{{ p.min_spend|gbp }}</td><td class="num">{{ p.uses }}{% if p.max_uses %} / {{ p.max_uses }}{% endif %}</td><td>{{ p.expires_at|uktime('%d %b %Y %H:%M') if p.expires_at else '—' }}</td>
-    <td><span class="pill {{ 'live' if p.active else 'draft' }}">{{ 'Active' if p.active else 'Off' }}</span></td>
+    <td class="small">{% if p.min_spend %}min {{ p.min_spend|gbp }} · {% endif %}{{ p.per_user }}/person{% if p.comp_ids %} · comps {{ p.comp_ids }}{% endif %}{% if p.category %} · {{ p.category }}{% endif %}{% if p.new_customers %} · first order{% endif %}{% if p.description %}<div class="tiny muted">{{ p.description }}</div>{% endif %}</td>
+    <td class="num">{{ p.uses }}{% if p.max_uses %} / {{ p.max_uses }}{% endif %}</td>
+    <td class="small">{{ p.starts_at|uktime('%d %b %H:%M') if p.starts_at else 'now' }} → {{ p.expires_at|uktime('%d %b %H:%M') if p.expires_at else 'no end' }}</td>
+    <td>{% if not p.active %}<span class="pill draft">Off</span>{% elif p.starts_at and p.starts_at > now %}<span class="pill pending">Scheduled</span>{% elif p.expires_at and p.expires_at < now %}<span class="pill">Ended</span>{% else %}<span class="pill live">Live</span>{% endif %}</td>
     <td><form method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="linkbtn small" name="toggle" value="{{ p.id }}">{{ 'Turn off' if p.active else 'Turn on' }}</button></form></td></tr>
   {% else %}<tr><td colspan="7" class="muted">No codes yet.</td></tr>{% endfor %}
 </table></div>

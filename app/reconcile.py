@@ -56,7 +56,8 @@ def compare(db, sessions, refunds, now=None, since=None):
         elif status in ("credit_refused", "refunded") and back < amount:
             out.append((f"{kind}:{n}:refund", f"{label} was refused (credit card) but Stripe shows only {back}p of {amount}p refunded"))
         elif status == "paid":
-            expected = row["refunded"] if kind == "deposit" else 0
+            expected = row["refunded"] if kind == "deposit" else db.execute(
+                "SELECT COALESCE(SUM(card_amount),0) FROM refunds WHERE checkout_id=? AND status IN ('done','card_pending')", (n,)).fetchone()[0]
             if back != expected:
                 out.append((f"{kind}:{n}:refunded", f"{label}: Stripe shows {back}p refunded but our records show {expected}p"
                             + (" — the entries are still valid here" if kind == "checkout" else "")))

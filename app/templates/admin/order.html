@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Order #{{ k.id }} · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('control.timeline', uid=k.user_id) }}">{{ k.name }}</a> › <span aria-current="page">Order #{{ k.id }}</span></nav>
+<h1>Order #{{ k.id }}</h1>
+<p class="muted">{{ k.name }} · {{ k.email }} · {{ (k.paid_at or k.created_at)|uktime }} · <span class="pill {{ k.status }}">{{ k.status }}</span></p>
+<dl class="facts panel">
+  <div><dt>Basket after multi-buy</dt><dd>{{ k.subtotal|gbp }}</dd></div>
+  {% if k.promo_discount %}<div><dt>Promo discount</dt><dd>−{{ k.promo_discount|gbp }}</dd></div>{% endif %}
+  <div><dt>Paid by card</dt><dd>{{ k.cash_due|gbp }}{% if k.payment_intent %} · <code>{{ k.payment_intent }}</code>{% elif k.stripe_session_id %} · <code>{{ k.stripe_session_id }}</code>{% endif %}</dd></div>
+  <div><dt>From wallet</dt><dd>credit {{ k.credit_used|gbp }} · deposited {{ k.deposit_used|gbp }} · cash {{ k.cash_used|gbp }}</dd></div>
+</dl>
+<section class="section" aria-labelledby="ln-h"><h2 id="ln-h">Lines</h2>
+{% for ln in lines %}{% set inf = info[ln.id] %}{% set r = refunds.get(ln.id) %}
+<div class="panel" style="margin-bottom:var(--s3)">
+  <div class="row"><b><a href="{{ url_for('admin.entries', cid=ln.competition_id) }}">{{ ln.title }}</a></b><span>{{ ln.quantity }} × · {{ ln.amount|gbp }}</span></div>
+  <p class="small muted" style="margin:4px 0">{% if ln.n_tickets %}Tickets #{{ ln.numbers }}{% else %}No tickets (released){% endif %} · paid {{ (inf.parts.cash + inf.parts.credit + inf.parts.deposit)|gbp }}
+    (cash/card {{ inf.parts.cash|gbp }}, credit {{ inf.parts.credit|gbp }}, deposited {{ inf.parts.deposit|gbp }})</p>
+  {% if r %}<p class="notice good" style="margin:0"><span>Refunded {{ r.created_at|uktime }} by {{ r.staff or 'staff' }}: {{ r.card_amount|gbp }} to card{% if r.status != 'done' %} (<b>{{ r.status|replace('_', ' ') }}</b>){% endif %}, {{ r.wallet_amount|gbp }} to wallet{% if r.points_reversed %}, {{ r.points_reversed }} points reversed{% endif %}. Reason: {{ r.reason }}</span></p>
+  {% elif inf.refunded %}<p class="small">Refunded when the competition was cancelled.</p>
+  {% elif k.status != 'paid' %}
+  {% elif ln.locked_at or ln.comp_status != 'live' %}<p class="small muted" style="margin:0">The competition has closed, so these entries are final. Use goodwill credit if compensation is due.</p>
+  {% elif can('money') %}
+  <details><summary class="small">Refund this line</summary>
+    <form method="post" class="stack" style="margin-top:var(--s2)" onsubmit="return confirm('Refund this line? Its tickets are released. This can\'t be undone.')">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="order_id" value="{{ ln.id }}">
+      <fieldset><legend class="small">Where the card part goes</legend>
+        <label class="check"><input type="radio" name="method" value="wallet" checked> To their cash balance (withdrawable)</label>
+        <label class="check"><input type="radio" name="method" value="card" {{ 'disabled' if not k.payment_intent }}> Back to their card through Stripe{% if not k.payment_intent %} (not available for this order){% endif %}</label></fieldset>
+      <label for="rr-{{ ln.id }}">Reason (kept permanently)</label><input id="rr-{{ ln.id }}" name="reason" required minlength="5">
+      <button class="btn small danger" style="align-self:flex-start">Refund</button>
+      <p class="tiny muted">Site credit and deposited funds always go back where they came from. Points earned are reversed. Promo discounts aren't refunded.</p>
+    </form></details>
+  {% endif %}
+</div>{% endfor %}
+</section>
+{% endblock %}
