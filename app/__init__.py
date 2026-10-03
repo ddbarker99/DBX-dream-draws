@@ -34,6 +34,16 @@ def _fill_contact_defaults(cfg):
         cfg["MAIL_FROM"] = cfg["SUPPORT_EMAIL"]
 
 
+def _read_release():
+    """The deployed version: RELEASE in .env, else the RELEASE file written at build time, else 'dev'."""
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "..", "RELEASE")) as f:
+            v = f.read().strip()
+            return v if v and not v.startswith("$Format") else "dev"
+    except OSError:
+        return "dev"
+
+
 def _env(name, default=""):
     return os.environ.get(name, default)
 
@@ -65,6 +75,7 @@ def create_app(test_config=None):
         TRUSTPILOT_URL=_env("TRUSTPILOT_URL"),
         BLOCK_CREDIT_CARDS=_env("BLOCK_CREDIT_CARDS", "1") == "1",
         ADMIN_MFA=_env("ADMIN_MFA", "1") == "1",
+        RELEASE=_env("RELEASE", "") or _read_release(),                 # shown in error reports and /admin/health
         ADMIN_IDLE_MINUTES=int(_env("ADMIN_IDLE_MINUTES", "30")),       # admin pages need re-confirmation after this idle time
         ADMIN_STEPUP_MINUTES=int(_env("ADMIN_STEPUP_MINUTES", "10")),   # sensitive actions need a confirmation this recent
         LARGE_ADJUSTMENT=int(float(_env("LARGE_ADJUSTMENT", "100")) * 100),  # wallet adjustments above this: Administrator only          # two-step verification for every admin account
@@ -267,7 +278,8 @@ def create_app(test_config=None):
             db = dbmod.get_db()
             if db.in_transaction:
                 db.execute("ROLLBACK")
-            metrics.record_error(db, getattr(e, "original_exception", None) or e, request.endpoint, request.path)
+            metrics.record_error(db, getattr(e, "original_exception", None) or e, request.endpoint, request.path,
+                                 request.method, g.user["id"] if g.get("user") else None)
         except Exception:
             app.logger.exception("couldn't record the error")
         return render_template("error.html", code=500, heading="Sorry, that didn't work",
@@ -357,6 +369,51 @@ def create_app(test_config=None):
             dbmod.close_db()
         click.echo(f"Disaster-recovery drill {'PASSED' if rep['ok'] else 'FAILED'}")
         raise SystemExit(0 if rep["ok"] else 1)
+
+    @app.cli.command("release-check")
+    def release_check_cmd():
+        """Before and after every production release: settings, backups, data integrity and health in one go."""
+        from .jobs import health_checks
+        from .checks import integrity_problems
+        from .services import get_setting
+        cfg, rows = app.config, []
+
+        def row(level, name, ok, detail=""):
+            rows.append(("PASS" if ok else level, name, detail))
+
+        live_key = (cfg.get("STRIPE_SECRET_KEY") or "").startswith("sk_live_")
+        row("FAIL", "SECRET_KEY set", cfg["SECRET_KEY"] != "dev-only-change-me")
+        row("FAIL", "Test payments switched off (DEMO_PAYMENTS=0)", not cfg.get("DEMO_PAYMENTS"))
+        row("WARN", "Stripe live key", live_key, "test key in use" if cfg.get("STRIPE_SECRET_KEY") else "no Stripe key")
+        row("FAIL", "Stripe webhook secret", bool(cfg.get("STRIPE_WEBHOOK_SECRET")))
+        row("FAIL", "Email (SMTP) configured", bool(cfg.get("SMTP_HOST")))
+        row("FAIL", "Free postal entry address", bool(cfg.get("POSTAL_ADDRESS")))
+        row("WARN", "Company details", bool(cfg.get("COMPANY_DETAILS")))
+        row("FAIL", "SITE_URL uses https", cfg["SITE_URL"].startswith("https://"), cfg["SITE_URL"])
+        row("FAIL", "Secure cookies", bool(cfg.get("SESSION_COOKIE_SECURE")))
+        row("FAIL", "Admin two-step verification on", bool(cfg.get("ADMIN_MFA")))
+        row("WARN", "Release recorded", cfg.get("RELEASE") not in ("", "dev"), cfg.get("RELEASE"))
+        with app.test_request_context("/__release_check__"):
+            db = dbmod.get_db()
+            last = get_setting("last_backup_verified")
+            fresh = bool(last) and (utcnow() - dbmod.parse_iso(last)).total_seconds() < 86400
+            row("FAIL", "Verified backup in the last 24 hours", fresh, last or "none — run ./backup.sh")
+            skipped = get_setting("constraints_skipped")
+            row("FAIL", "Database safety rules active", not skipped, skipped)
+            problems = integrity_problems(db)
+            row("FAIL", "Data integrity", not problems, "; ".join(problems[:3]))
+            for c in health_checks(db):
+                if c["key"] in ("backups", "integrity", "stripe", "email"):
+                    continue                         # covered above
+                row("WARN", f"Health: {c['name']}", c["ok"], "" if c["ok"] else c["detail"])
+            dbmod.close_db()
+        width = max(len(r[1]) for r in rows)
+        for level, name, detail in rows:
+            click.echo(f"{level:4}  {name:{width}}  {detail if level != 'PASS' else ''}".rstrip())
+        fails = [r for r in rows if r[0] == "FAIL"]
+        warns = [r for r in rows if r[0] == "WARN"]
+        click.echo(f"\n{'NOT READY' if fails else 'READY'}: {len(fails)} failure(s), {len(warns)} warning(s)")
+        raise SystemExit(1 if fails else 0)
 
     @app.cli.command("list-admins")
     def list_admins():

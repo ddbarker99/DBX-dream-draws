@@ -1,0 +1,19 @@
+name: uptime
+# Visits the live site every 15 minutes from GitHub's servers (independent of your VPS).
+# Set the repository variable SITE_URL (Settings → Secrets and variables → Actions → Variables) to enable it.
+# A failed run emails whoever watches the repository's Actions notifications.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+jobs:
+  check:
+    if: ${{ vars.SITE_URL != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python tests/synthetic_check.py "${{ vars.SITE_URL }}"

@@ -300,9 +300,44 @@ def health_checks(db):
                       (iso(now - timedelta(hours=24)),)).fetchone()
     add("errors", "Server errors", not errs[0], f"{errs[0]} different error(s), {errs[1]} time(s) in 24 hours — see Admin → Targets"
         if errs[0] else "None in the last 24 hours")
+    blocked = db.execute("SELECT COUNT(DISTINCT a.target) FROM audit_log a JOIN competitions c ON 'comp:' || c.id = a.target "
+                         "WHERE a.action='draw.blocked' AND a.created_at>? AND c.status='live'", (iso(now - timedelta(hours=24)),)).fetchone()[0]
+    add("draw_blocked", "Draw safety checks", not blocked,
+        f"{blocked} draw(s) blocked by the readiness checks — see the competition page and RUNBOOK §9" if blocked else "No draws blocked")
+    from .metrics import stats
+    today = stats(db, 1)
+    slow = today["p95_under_ms"] is not None and today["requests"] >= 200 and today["p95_under_ms"] > 1000
+    erring = today["error_rate"] is not None and today["requests"] >= 200 and today["error_rate"] > 1
+    add("speed", "Site speed & errors", not (slow or erring),
+        (f"Slow: 95% of pages under {today['p95_under_ms']} ms today" if slow else "")
+        + (f"{' · ' if slow else ''}{today['error_rate']:.1f}% of requests failing today" if erring else "")
+        if (slow or erring) else (f"{today['requests']:,} requests today, 95% under {today['p95_under_ms']} ms" if today["requests"]
+                                  else "No traffic measured yet today"))
+    db_errs = db.execute("SELECT COALESCE(SUM(count),0) FROM error_log WHERE last_at>? AND (error LIKE 'OperationalError%' "
+                         "OR error LIKE 'DatabaseError%' OR error LIKE 'IntegrityError%')", (iso(now - timedelta(hours=1)),)).fetchone()[0]
+    add("db_errors", "Database errors", db_errs < 5, f"{db_errs} database error(s) in the last hour" if db_errs else "None in the last hour")
+    pay_drop = _payment_drop(db, now)
+    add("payment_rate", "Payment success rate", not pay_drop, pay_drop or "Normal compared with the last 7 days")
     odd = anomalies(db, now)
     add("anomalies", "Unusual activity", not odd, "; ".join(odd) if odd else "Nothing unusual in the last 24 hours")
     return out
+
+
+def _payment_drop(db, now):
+    """Card checkouts completing in the last 6 hours vs the previous 7 days. Returns a message if it's unusually low."""
+    def rate(a, b):
+        r = db.execute("SELECT COUNT(*), SUM(status='paid') FROM checkouts WHERE stripe_session_id IS NOT NULL AND created_at>=? "
+                       "AND created_at<?", (iso(a), iso(b))).fetchone()
+        return (r[0] or 0), (r[1] or 0)
+    settled = now - timedelta(minutes=45)                 # newer checkouts may still be paying
+    n, ok = rate(now - timedelta(hours=6), settled)
+    bn, bok = rate(now - timedelta(days=7), now - timedelta(hours=6))
+    if n < 10 or bn < 30 or not bok:
+        return None
+    recent, base = ok / n, bok / bn
+    if recent < base * 0.6:
+        return f"Only {recent:.0%} of card checkouts completed in the last 6 hours (usually {base:.0%}) — check Stripe and the checkout page"
+    return None
 
 
 def anomalies(db, now=None):

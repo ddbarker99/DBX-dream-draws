@@ -1025,7 +1025,7 @@ def user_detail(uid):
                 flash(str(e), "error")
                 return redirect(url_for("admin.user_detail", uid=uid))
             reason = f.get("reason", "").strip()
-            if len(reason) < 5:
+            if len(reason) < 3:
                 flash("Give a reason for the adjustment (it's kept permanently in their history).", "error")
                 return redirect(url_for("admin.user_detail", uid=uid))
             limit = current_app.config.get("LARGE_ADJUSTMENT", 10000)

@@ -632,6 +632,45 @@ def target_rows(db):
     return rows
 
 
+def ops_metrics(db):
+    """Business-system health at a glance: today against the last 7 days, plus anything stuck right now."""
+    from statistics import median
+    from .metrics import stats
+    now = utcnow()
+    day, week = iso(now - timedelta(hours=24)), iso(now - timedelta(days=7))
+
+    def pay_rate(since, until):
+        r = db.execute("SELECT COUNT(*), SUM(status='paid') FROM checkouts WHERE stripe_session_id IS NOT NULL AND created_at>=? "
+                       "AND created_at<?", (since, until)).fetchone()
+        return (round(100 * (r[1] or 0) / r[0], 1) if r[0] else None), r[0] or 0
+
+    settled = iso(now - timedelta(minutes=45))
+    rate_d, n_d = pay_rate(day, settled)
+    rate_w, n_w = pay_rate(week, settled)
+    waits = [(parse_iso(r[1]) - parse_iso(r[0])).total_seconds() / 3600 for r in db.execute(
+        "SELECT created_at, done_at FROM withdrawals WHERE status='paid' AND done_at>?", (iso(now - timedelta(days=30)),))]
+    t, w = stats(db, 1), stats(db, 7)
+    return [
+        ("Card payments completed (24 h / 7 days)", f"{rate_d if rate_d is not None else '—'}% of {n_d} / {rate_w if rate_w is not None else '—'}% of {n_w}",
+         rate_d is None or rate_w is None or rate_d >= rate_w * 0.6),
+        ("Checkouts abandoned or failed (24 h)", _sum(db, "SELECT COUNT(*) FROM checkouts WHERE created_at>? AND created_at<? "
+                                                      "AND status IN ('expired','credit_refused','needs_refund')", day, settled), True),
+        ("Payments waiting for a refund", _sum(db, "SELECT COUNT(*) FROM checkouts WHERE status='needs_refund'")
+         + _sum(db, "SELECT COUNT(*) FROM deposits WHERE status='needs_refund'"), None),
+        ("Draws overdue (closed > 1 h ago, not drawn)", _sum(db, "SELECT COUNT(*) FROM competitions WHERE status='live' AND game_type='' "
+                                                             "AND auto_draw=1 AND ends_at<?", iso(now - timedelta(hours=1))), None),
+        ("Emails failed (24 h) / waiting", f"{_sum(db, 'SELECT COUNT(*) FROM notifications WHERE email_status=? AND created_at>?', 'failed', day)}"
+         f" / {_sum(db, 'SELECT COUNT(*) FROM notifications WHERE email_status=?', 'queued')}", None),
+        ("Withdrawals waiting / oldest", f"{_sum(db, 'SELECT COUNT(*) FROM withdrawals WHERE status IN (?,?)', 'requested', 'processing')}"
+         + (lambda o: f" / {o[:10]}" if o else "")(db.execute("SELECT MIN(created_at) FROM withdrawals WHERE status IN ('requested','processing')").fetchone()[0]), None),
+        ("Withdrawal time to pay (median, 30 days)", f"{median(waits):.1f} h" if waits else "—", not waits or median(waits) <= 24),
+        ("Reconciliation / payment-reversal flags open", _sum(db, "SELECT COUNT(*) FROM flags WHERE status='open' AND kind IN "
+                                                          "('Reconciliation','Payment reversal')"), None),
+        ("Requests today / 95% faster than", f"{t['requests']:,} / {t['p95_under_ms'] or '—'} ms", t["p95_under_ms"] is None or t["p95_under_ms"] <= 1000),
+        ("Server errors today / 7 days", f"{t['errors']} / {w['errors']}", not t["errors"]),
+    ]
+
+
 @bp.route("/targets", methods=["GET", "POST"])
 @require("reports")
 def targets():
@@ -653,7 +692,8 @@ def targets():
         flash("Saved.")
         return redirect(url_for("control.targets"))
     errors = db.execute("SELECT * FROM error_log WHERE resolved_at IS NULL ORDER BY last_at DESC LIMIT 50").fetchall()
-    return render_template("admin/targets.html", rows=target_rows(db), external=EXTERNAL_TARGETS, errors=errors)
+    ops = [(label, value, (value == 0) if ok is None and isinstance(value, int) else ok) for label, value, ok in ops_metrics(db)]
+    return render_template("admin/targets.html", rows=target_rows(db), external=EXTERNAL_TARGETS, errors=errors, ops=ops)
 
 
 @bp.route("/errors/<int:eid>/resolve", methods=["POST"])

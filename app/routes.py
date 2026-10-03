@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import random
 import secrets
 from datetime import date, timedelta
@@ -1834,6 +1835,54 @@ def health():
         return jsonify({"ok": True, "time": iso(utcnow())})
     except Exception:
         return jsonify({"ok": False}), 503
+
+
+@bp.route("/healthz/deep")
+def health_deep():
+    """For uptime monitors that should catch more than "the server answers": the database can be written to, the
+    background worker is alive, the main pages render, and there's disk space. Shows only ok/not-ok per check —
+    no figures or personal data. 503 if anything critical fails."""
+    import shutil
+    db = get_db()
+    checks = {}
+    try:
+        db.execute("BEGIN IMMEDIATE")              # proves the database isn't locked or read-only
+        db.execute("ROLLBACK")
+        checks["database_writable"] = True
+    except Exception:
+        checks["database_writable"] = False
+    row = db.execute("SELECT last_started FROM job_status WHERE job='close_competitions'").fetchone()
+    checks["background_jobs"] = bool(row and row["last_started"]
+                                     and (utcnow() - parse_iso(row["last_started"])).total_seconds() < 600)
+    try:
+        db.execute("SELECT id FROM competitions WHERE status='live' LIMIT 50").fetchall()
+        checks["competitions_query"] = True
+    except Exception:
+        checks["competitions_query"] = False
+    du = shutil.disk_usage(os.path.dirname(os.path.abspath(current_app.config["DATABASE"])))
+    checks["disk_space"] = du.free > 5e8
+    from .status import state as site_state
+    checks["payments_open"] = site_state()[0] == "ok"
+    critical = ("database_writable", "competitions_query", "disk_space")
+    ok = all(checks[k] for k in critical)
+    return jsonify({"ok": ok, "checks": checks, "time": iso(utcnow())}), (200 if ok else 503)
+
+
+@bp.route("/api/competitions")
+def api_competitions():
+    """Live competitions as JSON (public information only) — used by monitoring and available for partners."""
+    db = get_db()
+    rows = db.execute("SELECT id, slug, title, ticket_price, max_tickets, ends_at, game_type FROM competitions "
+                      "WHERE status='live' AND (starts_at IS NULL OR starts_at<=?) ORDER BY ends_at",
+                      (iso(utcnow()),)).fetchall()
+    out = []
+    for r in rows:
+        out.append({"slug": r["slug"], "title": r["title"], "price_pence": r["ticket_price"], "max_entries": r["max_tickets"],
+                    "entries_sold": sold_count(db, r["id"]), "closes_at": r["ends_at"], "instant_win_game": bool(r["game_type"]),
+                    "url": current_app.config["SITE_URL"] + url_for("public.competition", slug=r["slug"])})
+    resp = jsonify({"competitions": out, "generated_at": iso(utcnow())})
+    resp.headers["Cache-Control"] = "public, max-age=30"
+    return resp
 
 
 @bp.route("/robots.txt")

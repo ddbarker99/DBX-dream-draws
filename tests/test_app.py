@@ -543,7 +543,7 @@ class V4Tests(Base):
         self.add(cid, 1)
         self.checkout()
         self.assertEqual((self.bal("cash"), self.bal("credit")), (500, 0))
-        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "1", "kind": "credit"})
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "1", "kind": "credit", "reason": "Top-up"})
         self.add(cid, 3)                                   # £3: £1 credit first, then £2 cash
         chk = self.checkout(use_credit=True)
         row = self.db().execute("SELECT * FROM checkouts WHERE id=?", (chk,)).fetchone()
@@ -2691,6 +2691,149 @@ class HardeningTests(AutoDrawBase):
         self.jobs_due()
         self.p.get("/competitions")                                   # any customer visit
         self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", self.cid), "drawn")
+
+
+class AdminHardeningTests(PlatformBase):
+    def age_session(self, client, **keys):
+        with client.session_transaction() as sess:
+            for k, v in keys.items():
+                sess[k] = v
+
+    def test_sensitive_actions_need_recent_confirmation(self):
+        self.age_session(self.client, sudo_at=time.time() - 3600)
+        r = self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "5", "kind": "credit", "reason": "Goodwill"},
+                      headers={"Referer": f"http://localhost/admin/users/{self.uid}"})
+        self.assertIn("/admin/mfa/confirm", r.headers["Location"])
+        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger"), 0)
+        self.post("/admin/mfa/confirm?next=/admin/", {"password": "wrong-password"})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM audit_log WHERE action='admin.confirm_failed'"), 1)
+        r = self.post(f"/admin/mfa/confirm?next=/admin/users/{self.uid}", {"password": "supersecret123"})
+        self.assertEqual(r.headers["Location"], f"/admin/users/{self.uid}")
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "5", "kind": "credit", "reason": "Goodwill"})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger"), 1)
+        # non-sensitive actions don't ask (e.g. marking a withdrawal as processing, verifying an email)
+        self.age_session(self.client, sudo_at=time.time() - 3600)
+        r = self.post(f"/admin/users/{self.uid}", {"action": "verify"})
+        self.assertNotIn("confirm", r.headers.get("Location", ""))
+        self.assertEqual(self.q("SELECT email_verified FROM users WHERE id=?", self.uid), 1)
+        # draws and cancellations are sensitive too
+        r = self.post(f"/admin/competitions/{self.cid}/status", {"action": "cancel"})
+        self.assertIn("/admin/mfa/confirm", r.headers["Location"])
+        self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", self.cid), "live")
+
+    def test_admin_times_out_after_inactivity(self):
+        self.assertEqual(self.client.get("/admin/").status_code, 200)
+        self.age_session(self.client, admin_seen=time.time() - 3 * 3600)
+        r = self.client.get("/admin/payouts")
+        self.assertIn("/admin/mfa/confirm", r.headers["Location"])
+        self.assertEqual(self.p.get("/account").status_code, 200)                  # the customer site isn't affected
+        self.post("/admin/mfa/confirm?next=/admin/payouts", {"password": "supersecret123"})
+        self.assertEqual(self.client.get("/admin/payouts").status_code, 200)
+
+    def test_confirmation_uses_mfa_when_enabled(self):
+        from app.security import new_secret, totp
+        secret = new_secret()
+        db = self.db()
+        db.execute("UPDATE users SET mfa_secret=?, mfa_enabled=1 WHERE email='admin@example.com'", (secret,))
+        db.commit()
+        self.app.config["ADMIN_MFA"] = True
+        try:
+            self.age_session(self.client, sudo_at=0)
+            self.post("/admin/mfa/", {"code": totp(secret)})                     # sign-in MFA
+            self.age_session(self.client, sudo_at=0)
+            html = self.client.get("/admin/mfa/confirm?next=/admin/").get_data(as_text=True)
+            self.assertIn("authenticator app", html)
+            self.post("/admin/mfa/confirm?next=/admin/", {"password": "supersecret123"})      # a password isn't enough
+            r = self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "5", "kind": "credit", "reason": "Goodwill"})
+            self.assertIn("confirm", r.headers["Location"])
+            self.post("/admin/mfa/confirm?next=/admin/", {"code": totp(secret)})
+            self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "5", "kind": "credit", "reason": "Goodwill"})
+            self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger"), 1)
+        finally:
+            self.app.config["ADMIN_MFA"] = False
+
+    def test_large_adjustments_need_an_administrator(self):
+        fin = self.app.test_client()
+        self.signup("finance@example.com", client=fin, name="Fin Person")
+        fid = self.q("SELECT id FROM users WHERE email='finance@example.com'")
+        self.post(f"/admin/users/{fid}", {"action": "admin", "role": "finance"})
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "250", "kind": "cash", "reason": "Big prize"}, client=fin)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger"), 0)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM audit_log WHERE action='wallet.adjust_refused'"), 1)
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "50", "kind": "cash", "reason": "Small prize"}, client=fin)
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "250", "kind": "cash", "reason": "Big prize"})
+        self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger"), 30000)
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "5", "kind": "cash", "reason": ""})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger"), 2)                    # a reason is required
+
+
+class MonitoringTests(PlatformBase):
+    def test_deep_health_and_competition_api(self):
+        self.run_jobs()
+        r = self.client.get("/healthz/deep")
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertTrue(body["ok"])
+        self.assertTrue(body["checks"]["database_writable"])
+        self.assertTrue(body["checks"]["background_jobs"])
+        self.assertNotIn("@", r.get_data(as_text=True))                       # nothing personal
+        api = self.client.get("/api/competitions").get_json()
+        self.assertEqual(api["competitions"][0]["slug"], self.slug(self.cid))
+        self.assertEqual(api["competitions"][0]["price_pence"], 250)
+        self.assertNotIn("seed", json.dumps(api))                              # the draw seed is never exposed
+        db = self.db()
+        db.execute("DELETE FROM job_status")
+        db.commit()
+        self.assertFalse(self.client.get("/healthz/deep").get_json()["checks"]["background_jobs"])
+
+    def test_error_reports_are_scrubbed_and_have_context(self):
+        self.app.config["PROPAGATE_EXCEPTIONS"] = False
+        self.app.testing = False
+
+        def broken():
+            raise ValueError("bad row for pat@example.com card 4242 4242 4242 4242 sort 12-34-56 sk_live_ABCDEFGH12345")
+        orig = self.app.view_functions["public.transparency"]
+        self.app.view_functions["public.transparency"] = broken
+        try:
+            self.p.get("/transparency?email=pat@example.com")
+        finally:
+            self.app.view_functions["public.transparency"] = orig
+            self.app.testing = True
+        row = self.db().execute("SELECT * FROM error_log").fetchone()
+        text = row["error"] + row["trace"] + row["path"]
+        for secret in ("pat@example.com", "4242 4242", "12-34-56", "sk_live_ABCDEFGH12345", "email="):
+            self.assertNotIn(secret, text)
+        self.assertIn(f"account #{self.uid}", row["trace"])
+        self.assertIn("GET /transparency", row["trace"])
+        self.assertIn("release", row["trace"])
+
+    def test_release_check(self):
+        r = self.cli("release-check")
+        self.assertEqual(r.exit_code, 1)
+        self.assertIn("NOT READY", r.output)
+        self.assertIn("FAIL  Verified backup", r.output.replace("  ", "  "))
+
+    def test_payment_drop_and_blocked_draw_alerts(self):
+        from app.jobs import health_checks
+        db = self.db()
+        old = "datetime('now','-3 days')"
+        for i in range(40):
+            db.execute(f"INSERT INTO checkouts (user_id, subtotal, cash_due, status, stripe_session_id, created_at) VALUES "
+                       f"(?, 100, 100, 'paid', ?, strftime('%Y-%m-%dT%H:%M:%SZ', {old}))", (self.uid, f"cs_old{i}"))
+        for i in range(12):
+            db.execute("INSERT INTO checkouts (user_id, subtotal, cash_due, status, stripe_session_id, created_at) VALUES "
+                       "(?, 100, 100, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now','-2 hours')))",
+                       (self.uid, "paid" if i < 2 else "expired", f"cs_new{i}"))
+        db.commit()
+        with self.app.app_context():
+            from app.db import get_db
+            checks = {c["key"]: c for c in health_checks(get_db())}
+        self.assertFalse(checks["payment_rate"]["ok"])
+        self.assertIn("card checkouts completed", checks["payment_rate"]["detail"])
+        self.assertTrue(checks["draw_blocked"]["ok"])
+        html = self.client.get("/admin/targets").get_data(as_text=True)
+        self.assertIn("Operations right now", html)
+        self.assertIn("Card payments completed", html)
 
 
 class MigrationTest(unittest.TestCase):

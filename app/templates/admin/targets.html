@@ -5,6 +5,13 @@
 {% include "admin/_bar.html" %}
 <h1>Targets</h1>
 <p class="muted" style="max-width:760px">The measurable targets agreed for the site (see <code>docs/TARGETS.md</code>). Green means on target. Figures measured outside the app (uptime monitor, PageSpeed Insights, usability tests) are recorded below.</p>
+<section class="section" aria-labelledby="ops-h" style="margin-top:0"><h2 id="ops-h">Operations right now</h2>
+<div class="panel table-scroll" tabindex="0" role="region" aria-labelledby="ops-h"><table>
+  <thead><tr><th scope="col">Measure</th><th scope="col" class="num">Now</th><th scope="col">Status</th></tr></thead><tbody>
+  {% for label, value, ok in ops %}<tr><td>{{ label }}</td><td class="num">{{ value }}</td>
+    <td>{% if ok is none %}—{% elif ok %}<span class="pill paid">OK</span>{% else %}<span class="pill needs_refund">Look at this</span>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div></section>
+<h2>Agreed targets</h2>
 <div class="panel table-scroll" tabindex="0" role="region" aria-label="Targets"><table>
   <thead><tr><th scope="col">Target</th><th scope="col" class="num">Now</th><th scope="col" class="num">Goal</th><th scope="col">Status</th></tr></thead><tbody>
   {% for t in rows %}<tr><td>{{ t.label }}<div class="tiny muted">{{ t.how }}</div></td>
