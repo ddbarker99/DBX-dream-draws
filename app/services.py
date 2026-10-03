@@ -332,11 +332,17 @@ def start_break(user, days):
     """Take a break: blocks every paid route, and releases any checkout or deposit already in progress
     so it can't be completed during the break (a late payment is flagged and refunded)."""
     with write_txn() as db:
-        db.execute("UPDATE users SET excluded_until=? WHERE id=?", (iso(utcnow() + timedelta(days=days)), user["id"]))
+        # A break can only ever be extended, never shortened — choosing a shorter break while on one changes nothing.
+        cur = db.execute("SELECT excluded_until FROM users WHERE id=?", (user["id"],)).fetchone()["excluded_until"]
+        until = utcnow() + timedelta(days=days)
+        if cur and parse_iso(cur) > until:
+            until = parse_iso(cur)
+        db.execute("UPDATE users SET excluded_until=? WHERE id=?", (iso(until), user["id"]))
         for r in db.execute("SELECT id FROM checkouts WHERE user_id=? AND status='pending'", (user["id"],)).fetchall():
             _expire_checkout_db(db, r["id"])
         db.execute("UPDATE deposits SET status='expired' WHERE user_id=? AND status='pending'", (user["id"],))
-        audit(db, "safer.break", f"user:{user['id']}", f"Took a {days}-day break", actor=user)
+        audit(db, "safer.break", f"user:{user['id']}", f"Took a {days}-day break (until {iso(until)})", actor=user)
+        return until
 
 
 def is_excluded(user):

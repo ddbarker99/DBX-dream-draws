@@ -3,8 +3,6 @@
 Each check is a dict: {"label", "ok", "detail", "blocking"}. Blocking checks stop the action; the rest are
 warnings shown to staff.
 """
-import json
-
 from flask import current_app
 
 from .db import parse_iso, utcnow

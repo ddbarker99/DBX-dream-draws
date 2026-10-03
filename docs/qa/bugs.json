@@ -1,0 +1,42 @@
+[
+  {
+    "id": "BUG-001",
+    "severity": "P1",
+    "area": "Responsible play",
+    "title": "A responsible-play break could be shortened by choosing a shorter break",
+    "found_by": "tests/test_qa_audit.py SaferAudit (QA-RP-02)",
+    "reproduce": "Account \u2192 Responsible play \u2192 take a 7-day break, then submit the form again with 1 day: excluded_until moved from +7 days to +1 day.",
+    "fix": "start_break() only ever extends the break (keeps the later end date); message now states the end date and that breaks can't be shortened.",
+    "status": "Fixed",
+    "retest": "QA-RP-02 passes; full suite 237/237",
+    "tests": [
+      "test_break_cannot_be_undone_and_blocks_buying"
+    ]
+  },
+  {
+    "id": "BUG-002",
+    "severity": "P3",
+    "area": "SEO",
+    "title": "Sitemap code contradicted its description (180-day cut-off computed but never used)",
+    "found_by": "Static analysis (pyflakes)",
+    "reproduce": "app/routes.py sitemap(): unused 'cutoff'; docstring said results drop out after 180 days.",
+    "fix": "Behaviour kept (results are a permanent archive); dead code removed and description corrected.",
+    "status": "Fixed",
+    "retest": "test_sitemap_keeps_recent_results_and_drops_cancelled passes",
+    "tests": [
+      "test_sitemap_keeps_recent_results_and_drops_cancelled"
+    ]
+  },
+  {
+    "id": "BUG-003",
+    "severity": "P3",
+    "area": "Code quality",
+    "title": "Unused variables/imports left in routes, control, checks",
+    "found_by": "Static analysis (pyflakes)",
+    "reproduce": "pyflakes app/",
+    "fix": "Removed the unused variables that could hide logic slips; no undefined names exist.",
+    "status": "Fixed",
+    "retest": "pyflakes: no undefined names; suite passes",
+    "tests": []
+  }
+]

@@ -1517,7 +1517,6 @@ def signup():
             session["promo"] = promo_keep
         session["pwv"] = _pw_version(db, cur.lastrowid)
         start_session(db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone())
-        new_user = db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
         for ch, field in (("email", "marketing"), ("sms", "marketing_sms")):
             if f.get(field):
                 if ch == "sms":
@@ -1887,10 +1886,11 @@ def self_exclude():
     days = {"1": 1, "7": 7, "30": 30, "90": 90, "180": 180, "365": 365}.get(request.form.get("days"))
     if not days:
         abort(400)
-    start_break(g.user, days)
+    until = start_break(g.user, days)
     session["basket"] = []
     session.pop("held", None)
-    flash(f"You're on a break for {days} day{'s' if days > 1 else ''}. You won't be able to buy tickets until then.")
+    flash(f"You're on a break until {until.astimezone(UK).strftime('%d %B %Y, %H:%M')}. You won't be able to buy tickets until "
+          "then. A break can be made longer but never shorter.")
     return redirect(url_for("public.account", tab="safer"))
 
 
@@ -2315,16 +2315,15 @@ def robots():
 
 @bp.route("/sitemap.xml")
 def sitemap():
-    """Live competitions, plus finished draws for 180 days (people search for results); cancelled
-    competitions and closed games drop out."""
+    """Live competitions plus every finished draw (results are a permanent archive); cancelled competitions and
+    closed games drop out."""
     base = current_app.config["SITE_URL"]
     urls = [(base + url_for(e), None) for e in ("public.home", "public.competitions", "public.instant_wins",
                                                 "public.winners", "public.results", "public.how_it_works", "public.contact")]
     urls += [(base + url_for("public.page", page=p), None) for p in PAGES]
-    cutoff = iso(utcnow() - timedelta(days=180))
     for r in get_db().execute(
             "SELECT slug, COALESCE(drawn_at, created_at) AS mod FROM competitions WHERE free_daily=0 AND "
-            "(status='live' OR (status='drawn' AND game_type='' AND drawn_at > ?))", ("2000-01-01",)):
+            "(status='live' OR (status='drawn' AND game_type=''))"):
         urls.append((base + url_for("public.competition", slug=r["slug"]), (r["mod"] or "")[:10]))
     body = "".join(f"<url><loc>{u}</loc>{f'<lastmod>{m}</lastmod>' if m else ''}</url>" for u, m in urls)
     return Response(f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{body}</urlset>',

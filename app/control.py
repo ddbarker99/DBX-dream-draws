@@ -21,7 +21,6 @@ def _sum(db, sql, *a):
 
 def attention_items(db):
     """Everything that needs a person, most urgent first. (label, count, link, level)"""
-    now = iso(utcnow())
     items = []
 
     def add(label, n, link, level="warn"):
