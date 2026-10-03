@@ -41,7 +41,7 @@
 {% endif %}
   <section class="panel" aria-labelledby="hi-h"><h2 id="hi-h" style="font-size:20px;margin-top:0">History</h2>
     <ul class="timeline">{% for e in events %}<li><time class="tiny muted">{{ e.created_at|uktime('%d %b, %H:%M') }}</time> {{ e.note or e.status }}</li>{% endfor %}</ul>
-    <p class="small muted">Questions? <a href="{{ url_for('public.support_centre', topic='Prize') }}">Contact our prize team</a>. We will never ask you to pay to claim a prize.</p>
+    <p class="small muted">Questions? <a href="{{ url_for('public.support_centre', topic='Prize', comp=c.competition_id) }}">Contact our prize team</a>. We will never ask you to pay to claim a prize.</p>
   </section>
 </div>
 {% endblock %}

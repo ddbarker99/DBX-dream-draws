@@ -1,19 +1,30 @@
 {% extends "base.html" %}
-{% block title %}Backlog · Admin{% endblock %}
+{% block title %}Development board · Admin{% endblock %}
 {% block robots %}<meta name="robots" content="noindex">{% endblock %}
 {% block content %}
 {% include "admin/_bar.html" %}
-<h1>Development backlog</h1>
-<p class="muted" style="max-width:760px">Problems customers keep running into, each with the cases, feedback and errors that prove it. Most evidence first. Add items from a support case, the feedback page or the error log — or here.</p>
-<nav class="chips">{% for k, label in statuses %}<a class="chip" href="{{ url_for('control.backlog', show=k) }}"{% if show == k %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</nav>
+<h1>Development board</h1>
+<p class="muted" style="max-width:820px">Nothing gets built just because it sounds good. Every item answers four questions before it can be planned: <b>what problem it solves, who has it, how we'll know it worked, and what new risks it brings</b>. Evidence (support cases, feedback, errors) is attached so priorities come from what customers actually struggle with.</p>
+<nav class="chips"><a class="chip" href="{{ url_for('control.backlog') }}"{% if show == 'board' %} aria-current="page"{% endif %}>Board</a>{% for k, label in statuses if k in ('done','wont_do') %}<a class="chip" href="{{ url_for('control.backlog', show=k) }}"{% if show == k %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</nav>
+{% if show == 'board' %}
+<div class="board devboard">{% for key, label, items in columns %}
+  <section class="queue {{ 'empty' if not items }}" aria-labelledby="col-{{ key }}">
+    <div class="row"><h2 id="col-{{ key }}" style="font-size:17px;margin:0">{{ label }}</h2><span class="qcount {{ 'zero' if not items }}">{{ items|length }}</span></div>
+    {% if items %}<ul>{% for b in items %}{% set answered = b.problem and b.who and b.measure and b.risks %}<li class="{{ 'bad' if key == 'critical_bug' else ('good' if b.status == 'planned' else '') }}"><a href="{{ url_for('control.backlog_item', bid=b.id) }}">#{{ b.id }} {{ b.title }}</a><span>{{ 'Planned' if b.status == 'planned' else 'Proposed' }} · {{ b.evidence }} evidence{% if not answered %} · <b>4 questions not answered</b>{% endif %}</span></li>{% endfor %}</ul>
+    {% else %}<p class="small muted" style="margin:0">Nothing here.</p>{% endif %}
+  </section>{% endfor %}</div>
+{% else %}
 <div class="panel table-scroll" tabindex="0" role="region" aria-label="Backlog"><table>
-  <thead><tr><th scope="col">#</th><th scope="col">Item</th><th scope="col">Type</th><th scope="col" class="num">Evidence</th><th scope="col">Updated</th></tr></thead><tbody>
-  {% for b in rows %}<tr><td>{{ b.id }}</td><td><a href="{{ url_for('control.backlog_item', bid=b.id) }}">{{ b.title }}</a></td><td>{{ dict(kinds)[b.kind] }}</td><td class="num"><b>{{ b.evidence }}</b></td><td class="small muted">{{ b.updated_at|ago }}</td></tr>
+  <thead><tr><th scope="col">#</th><th scope="col">Item</th><th scope="col">Column</th><th scope="col" class="num">Evidence</th><th scope="col">Did it work?</th></tr></thead><tbody>
+  {% for b in rows %}<tr><td>{{ b.id }}</td><td><a href="{{ url_for('control.backlog_item', bid=b.id) }}">{{ b.title }}</a></td><td>{{ dict(kinds).get(b.kind, b.kind) }}</td><td class="num">{{ b.evidence }}</td><td class="small">{{ b.outcome or '—' }}</td></tr>
   {% else %}<tr><td colspan="5" class="muted">Nothing here.</td></tr>{% endfor %}</tbody></table></div>
-<details class="panel" style="margin-top:var(--s4);max-width:720px"><summary><b>New item</b></summary>
+{% endif %}
+<details class="panel" style="margin-top:var(--s4);max-width:760px"><summary><b>Propose a change</b></summary>
   <form method="post" class="stack"><input type="hidden" name="csrf" value="{{ csrf_token }}">
-    <label for="nt">Title</label><input id="nt" name="title" required minlength="5">
-    <label for="nk">Type</label><select id="nk" name="kind">{% for k, label in kinds %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select>
-    <label for="nd">Detail</label><textarea id="nd" name="detail" rows="3"></textarea>
-    <button class="btn small" style="align-self:flex-start">Create</button></form></details>
+    <label for="nt">Title</label><input id="nt" name="title" required minlength="5" placeholder="Customers can't find their ticket numbers after paying">
+    <label for="nk">Column</label><select id="nk" name="kind">{% for k, label in kinds %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select>
+    {% for k, q in questions %}<label for="q-{{ k }}">{{ q }}</label><textarea id="q-{{ k }}" name="{{ k }}" rows="2"></textarea>{% endfor %}
+    <label for="nd">Anything else</label><textarea id="nd" name="detail" rows="2"></textarea>
+    <p class="small muted" style="margin:0">You can save without all four answers, but it can't be planned until they're filled in.</p>
+    <button class="btn small" style="align-self:flex-start">Add to board</button></form></details>
 {% endblock %}

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Approvals · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Approvals</h1>
+<p class="muted" style="max-width:760px">The highest-impact actions — large wallet adjustments, redraws of a published result and changes to admin access — need a <b>second administrator</b>. One compromised or mistaken account can't do them alone. Requests expire after 48 hours.</p>
+<section aria-labelledby="pend-h"><h2 id="pend-h">Waiting ({{ rows|length }})</h2>
+{% for a in rows %}<div class="panel" style="margin-bottom:var(--s3)">
+  <div class="row" style="flex-wrap:wrap"><b>{{ kinds[a.kind][0] }}: {{ a.summary }}</b><span class="small muted">asked by {{ a.requester }} · {{ age(a)|round|int }} h ago</span></div>
+  {% if a.reason %}<p class="small" style="margin:var(--s2) 0">Reason: {{ a.reason }}</p>{% endif %}
+  {% if a.requested_by == user.id %}<p class="small muted" style="margin:0">Your request — another administrator has to approve it.</p>
+  {% else %}<form method="post" class="inline-form" style="flex-wrap:wrap;margin-top:var(--s2)"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="id" value="{{ a.id }}">
+    <label class="sr-only" for="n{{ a.id }}">Note</label><input id="n{{ a.id }}" name="note" placeholder="Note (optional)" maxlength="300">
+    <button class="btn small" name="decision" value="approve">Approve and do it</button><button class="btn ghost small" name="decision" value="reject">Reject</button></form>{% endif %}
+</div>{% else %}<p class="muted">Nothing waiting.</p>{% endfor %}
+</section>
+{% if can('settings') %}<form class="panel" method="post" style="max-width:720px;margin-top:var(--s4)"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <h2 style="margin-top:0;font-size:18px">When is a second approval required?</h2>
+  <label class="check"><input type="radio" name="four_eyes" value="auto" {{ 'checked' if mode == 'auto' }}> Whenever another administrator could approve (recommended — a one-person team isn't blocked)</label>
+  <label class="check"><input type="radio" name="four_eyes" value="on" {{ 'checked' if mode == 'on' }}> Always — the action waits until a second person exists and approves</label>
+  <label class="check"><input type="radio" name="four_eyes" value="off" {{ 'checked' if mode == 'off' }}> Never (not recommended)</label>
+  <button class="btn ghost small" style="margin-top:var(--s2)">Save</button></form>{% endif %}
+<section aria-labelledby="hist-h" style="margin-top:var(--s5)"><h2 id="hist-h">History</h2>
+<div class="panel table-scroll" tabindex="0"><table><tr><th>When</th><th>Request</th><th>Asked by</th><th>Decision</th><th>Result</th></tr>
+{% for a in history %}<tr><td class="small">{{ a.requested_at|uktime('%d %b %H:%M') }}</td><td>{{ kinds[a.kind][0] }}: {{ a.summary }}</td><td class="small">{{ a.requester }}</td><td class="small">{{ a.status|capitalize }}{% if a.decider %} by {{ a.decider }}{% endif %}{% if a.decision_note %} — {{ a.decision_note }}{% endif %}</td><td class="small">{{ a.result or '' }}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">None yet.</td></tr>{% endfor %}</table></div></section>
+{% endblock %}

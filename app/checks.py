@@ -48,6 +48,11 @@ def launch_checks(db, comp):
                       "Set POSTAL_ADDRESS in .env — every paid competition must offer a free entry route."))
         out.append(_c("Payments configured", bool(cfg.get("STRIPE_SECRET_KEY")) or cfg.get("DEMO_PAYMENTS"),
                       "Add your Stripe keys (or test mode) before taking entries."))
+    from .mechanics import name as mech_name, unsigned
+    missing = unsigned(db, comp)
+    out.append(_c("Mechanic signed off for compliance", not missing,
+                  "Not signed off yet: " + "; ".join(mech_name(m) for m in missing) + ". Someone responsible for the legal side must "
+                  "sign it off in Admin → More → Compliance sign-off."))
     out.append(_c("Company details for the terms", bool(cfg.get("COMPANY_DETAILS")), "Set COMPANY_DETAILS in .env.", blocking=False))
     out.append(_c("Support email", bool(cfg.get("SUPPORT_EMAIL")), "Set SUPPORT_EMAIL in .env.", blocking=False))
     return out
@@ -181,3 +186,58 @@ def liability(db):
                                            "COUNT(*) n, SUM(value) v, SUM(ticket_id IS NOT NULL) w FROM instant_prizes WHERE competition_id=? "
                                            "GROUP BY k", (c["id"],)).fetchall()})
     return rows
+
+
+def after_draw_checks(db, comp_id, draw_id):
+    """Straight after a draw or redraw: did exactly what should have happened, happen? Returns [(check, ok, note)]."""
+    import hashlib
+    import hmac
+    import json
+    d = db.execute("SELECT * FROM draws WHERE id=?", (draw_id,)).fetchone()
+    comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
+    entries = json.loads(d["entries"])
+    t = db.execute("SELECT * FROM tickets WHERE id=?", (d["winning_ticket_id"],)).fetchone()
+    from .services import entries_digest
+    attempt = db.execute("SELECT COUNT(*) FROM draws WHERE competition_id=? AND id<=?", (comp_id, draw_id)).fetchone()[0]
+    if d["method"] == "redraw":
+        idx = int(hmac.new(comp["seed"].encode(), f"{d['entries_hash']}:redraw:{attempt}".encode(), hashlib.sha256).hexdigest(), 16) \
+            % len(entries)
+    else:
+        idx = int(hmac.new(comp["seed"].encode(), d["entries_hash"].encode(), hashlib.sha256).hexdigest(), 16) % len(entries)
+    claims = db.execute("SELECT COUNT(*) FROM prize_claims WHERE draw_id=?", (draw_id,)).fetchone()[0]
+    active = db.execute("SELECT COUNT(*) FROM prize_claims WHERE competition_id=? AND status!='forfeited'", (comp_id,)).fetchone()[0]
+    snap = db.execute("SELECT entries_hash, entry_count FROM entry_snapshots WHERE id=?", (d["snapshot_id"],)).fetchone() \
+        if d["snapshot_id"] else None
+    seed_ok = hashlib.sha256(comp["seed"].encode()).hexdigest() == comp["seed_hash"]
+    checks = [
+        ("Competition marked as drawn", comp["status"] == "drawn", comp["status"]),
+        ("Winner on the competition matches the draw", comp["winner_ticket_id"] == d["winning_ticket_id"], ""),
+        ("Winning ticket is a valid ticket in this competition", bool(t) and t["competition_id"] == comp_id and t["status"] == "issued"
+         and t["number"] == d["winning_number"], ""),
+        ("Winning ticket was in the frozen entry list", d["winning_number"] in entries, ""),
+        ("Entry count matches the list", d["entry_count"] == len(entries), f"{d['entry_count']} vs {len(entries)}"),
+        ("Entry list fingerprint matches", entries_digest(entries) == d["entries_hash"], ""),
+        ("Result reproduces from the published method", idx == d["winning_index"] and entries[idx] == d["winning_number"],
+         f"position {idx}"),
+        ("Secret matches the fingerprint published before sales", seed_ok, ""),
+        ("Exactly one prize claim created for this draw", claims == 1, f"{claims} created"),
+        ("Exactly one active winner for the main prize", active == 1, f"{active} active"),
+    ]
+    if d["method"] != "redraw":
+        checks.append(("Draw used the closing snapshot", bool(snap) and snap["entries_hash"] == d["entries_hash"], ""))
+    return checks
+
+
+def record_draw_audit(db, comp_id, draw_id, phase, checks):
+    """checks: draw_checks() dicts (before) or after_draw_checks() tuples (after). Returns True if nothing blocking failed."""
+    import json
+    from .db import iso
+    if checks and isinstance(checks[0], dict):
+        rows = [[c["label"], c["ok"], "" if c["ok"] else c["detail"]] for c in checks]
+        ok = all(c["ok"] or not c["blocking"] for c in checks)
+    else:
+        rows = [[name, bool(passed), note] for name, passed, note in checks]
+        ok = all(r[1] for r in rows)
+    db.execute("INSERT INTO draw_audits (competition_id, draw_id, phase, at, ok, detail) VALUES (?,?,?,?,?,?)",
+               (comp_id, draw_id, phase, iso(utcnow()), 1 if ok else 0, json.dumps(rows)))
+    return ok

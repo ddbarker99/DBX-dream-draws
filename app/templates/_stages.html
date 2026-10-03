@@ -1,0 +1,1 @@
+{% if stage %}<ol class="stages" aria-label="Competition progress">{% for s in stage[1] %}<li class="{{ s.state }}"{% if s.state == 'current' %} aria-current="step"{% endif %}><span>{{ s.label }}</span></li>{% endfor %}</ol>{% endif %}

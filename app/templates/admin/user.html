@@ -4,6 +4,7 @@
 {% include "admin/_bar.html" %}
 <h1>{{ u.name }}</h1>
 <p class="muted">{{ u.email }} {% if u.email_verified %}✓ verified{% else %}(not verified){% endif %} · {{ u.phone or 'no phone' }} · {{ u.points }} pts · born {{ u.dob }} · joined {{ u.created_at|uktime('%d %b %Y') }}{% if u.excluded_until %} · on a break until {{ u.excluded_until|uktime }}{% endif %}</p>
+<p class="small"><a href="{{ url_for('control.timeline', uid=u.id) }}">Timeline</a> · <a href="{{ url_for('control.communications', q=u.email) }}">Emails sent to this customer</a></p>
 <div class="two">
   <div class="stack">
   {% if can('goodwill') %}<form class="panel" method="post" style="margin:0" aria-labelledby="gw-h">

@@ -145,6 +145,33 @@ You'll get an email and a **Payment reversal** flag (Admin → Flags) as soon as
 2. Chargeback: gather evidence (order, tickets, terms acceptance, IP/device from the timeline) and respond in Stripe within its deadline. If the entries should no longer count and the draw hasn't happened, cancel/refund through the app so records match.
 3. A refund done in Stripe's dashboard doesn't remove entries or wallet credit by itself — decide, then use the app (refund, adjustment) so both sides agree. Mark the flag reviewed with what you did.
 
+## 17. Something serious is wrong with payments, ticket allocation or a competition (emergency lock)
+1. **Admin → More → Emergency lock** (or the link in the Control Centre's System health box). Say briefly what's wrong
+   (audit log only) and press **Stop all purchases now**. Tick *hold automatic draws* if a draw could be affected.
+2. Customers can still log in, see tickets and results, withdraw and contact support. They see a calm message and the
+   **/status** page says entries are paused — they are never told why.
+3. Payments already completed on Stripe are still recorded; refund any that shouldn't stand from the order page.
+4. Investigate (integrity checks on System health, Risk dashboard, audit log). Fix, then **Lift the lock**. Overdue
+   automatic draws run within a minute, with their readiness checks.
+5. If customers were affected, tell them (announcement or email) and record what happened on the Development board.
+
+## 18. An after-draw check failed
+You'll get an email and the Risk dashboard shows **Act now**. Don't announce the result or pay the prize yet.
+1. Open **Admin → Reports → Risk dashboard → After-draw checks** — it lists which check failed.
+2. Compare the competition's draw record (public page `/c/<slug>/draw`) with the entries page in admin.
+3. If the winner record is wrong but the draw itself reproduces, correct the record with the developer; if the draw
+   doesn't reproduce, use the emergency lock (section 17) and treat it as a security incident (section 15).
+4. When resolved, press **Mark looked into** (recorded in the audit log).
+
+## 19. A customer quotes an error reference (DBX-XXXXXX)
+Paste it into the admin **Search** box. You'll see when it happened, the page, the account and the technical detail
+(personal data removed). Fix or mark it fixed; reply to the customer.
+
+## 20. A large adjustment, redraw or admin-access change needs approving
+These need a second administrator (four-eye approval). The request shows in the Control Centre's **Approvals waiting**
+queue and under **More → Approvals**. Check the reason against the customer's history or the draw record before
+approving — approving carries the action out immediately. You can't approve your own request.
+
 ## Contacts to keep up to date
 - Hosting provider support: ______________________
 - Stripe support: https://support.stripe.com

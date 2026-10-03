@@ -41,8 +41,9 @@ users ─┬─< checkouts ─< orders >── competitions ─┬─< tickets (
 | Table | Columns | References |
 |---|---|---|
 | `announcements` | `id`, `message`, `level`, `link`, `starts_at`, `ends_at`, `active`, `created_by`, `created_at` | — |
+| `approvals` | `id`, `kind`, `target`, `payload`, `summary`, `reason`, `requested_by`, `requested_at`, `status`, `decided_by`, `decided_at`, `decision_note`, `result` | — |
 | `audit_log` | `id`, `created_at`, `actor_id`, `actor_email`, `action`, `target`, `detail`, `prev_hash`, `row_hash` | — |
-| `backlog` | `id`, `kind`, `title`, `detail`, `status`, `created_by`, `created_at`, `updated_at` | — |
+| `backlog` | `id`, `kind`, `title`, `detail`, `status`, `created_by`, `created_at`, `updated_at`, `problem`, `who`, `measure`, `risks`, `outcome` | — |
 | `backlog_evidence` | `id`, `backlog_id`, `source`, `source_id`, `note`, `added_by`, `created_at` | backlog_id→backlog.id |
 | `case_notes` | `id`, `case_id`, `created_at`, `actor_id`, `kind`, `body` | case_id→cases.id |
 | `cases` | `id`, `user_id`, `name`, `email`, `topic`, `status`, `competition_id`, `checkout_id`, `assigned_to`, `resolution`, `created_at`, `updated_at`, `priority`, `withdrawal_id`, `locked_by`, `locked_at`, `reason` | user_id→users.id |
@@ -54,9 +55,11 @@ users ─┬─< checkouts ─< orders >── competitions ─┬─< tickets (
 | `content_versions` | `id`, `slug`, `version`, `body`, `note`, `created_by`, `created_at` | — |
 | `credit_ledger` | `id`, `user_id`, `amount`, `reason`, `ref`, `created_at`, `kind` | user_id→users.id |
 | `deposits` | `id`, `user_id`, `amount`, `status`, `stripe_session_id`, `payment_intent`, `refunded`, `created_at`, `paid_at` | user_id→users.id |
+| `draw_audits` | `id`, `competition_id`, `draw_id`, `phase`, `at`, `ok`, `detail`, `resolved_at`, `resolved_by` | — |
 | `draws` | `id`, `competition_id`, `drawn_at`, `method`, `run_by`, `seed`, `seed_hash`, `entries_hash`, `entry_count`, `winning_index`, `winning_number`, `winning_ticket_id`, `entries`, `redraw_of`, `reason`, `winner_user_id`, `snapshot_id` | — |
 | `entry_snapshots` | `id`, `competition_id`, `taken_at`, `entry_count`, `paid_count`, `postal_count`, `entries_hash`, `entries` | — |
 | `error_log` | `id`, `signature`, `first_at`, `last_at`, `count`, `endpoint`, `path`, `error`, `trace`, `resolved_at` | — |
+| `error_refs` | `ref`, `error_id`, `at`, `path`, `user_id` | error_id→error_log.id |
 | `experiment_members` | `key`, `user_id`, `variant`, `exposed_at`, `converted_at` | — |
 | `experiments` | `key`, `status`, `started_at`, `stopped_at`, `decision` | — |
 | `feature_flags` | `key`, `state`, `updated_at`, `updated_by` | — |
@@ -67,6 +70,7 @@ users ─┬─< checkouts ─< orders >── competitions ─┬─< tickets (
 | `job_runs` | `id`, `job`, `started_at`, `finished_at`, `ok`, `changed`, `error` | — |
 | `job_status` | `job`, `last_started`, `last_ok`, `last_error_at`, `last_error`, `last_changed` | — |
 | `maintenance_unlock` | `id`, `reason` | — |
+| `mechanic_signoffs` | `id`, `mechanic`, `signed_by`, `signed_at`, `responsible`, `note`, `checklist`, `legacy` | — |
 | `notifications` | `id`, `user_id`, `email`, `kind`, `title`, `body`, `link`, `dedupe_key`, `created_at`, `read_at`, `email_status`, `email_tries`, `email_error`, `sent_at`, `email_payload` | user_id→users.id |
 | `orders` | `id`, `user_id`, `competition_id`, `quantity`, `amount`, `status`, `stripe_session_id`, `created_at`, `paid_at`, `checkout_id`, `discount`, `terms_version`, `comp_terms_id` | checkout_id→checkouts.id, competition_id→competitions.id, user_id→users.id |
 | `password_resets` | `token_hash`, `user_id`, `expires_at` | user_id→users.id |
@@ -89,6 +93,8 @@ Deprecated (kept so older releases can still run; not used by current code): `or
 
 ## Rules enforced by the database itself
 Triggers (refuse the change with an error):
+- `approvals`: `approvals_final`
+- `approvals`: `approvals_no_delete`
 - `audit_log`: `audit_no_delete`
 - `audit_log`: `audit_no_update`
 - `checkouts`: `checkouts_final`
@@ -100,6 +106,7 @@ Triggers (refuse the change with an error):
 - `content_versions`: `content_no_delete`
 - `content_versions`: `content_no_update`
 - `credit_ledger`: `ledger_no_delete`
+- `credit_ledger`: `ledger_no_negative`
 - `credit_ledger`: `ledger_no_update`
 - `credit_ledger`: `ledger_valid`
 - `deposits`: `deposits_final`
@@ -109,6 +116,7 @@ Triggers (refuse the change with an error):
 - `entry_snapshots`: `snapshots_no_delete`
 - `entry_snapshots`: `snapshots_no_update`
 - `instant_prizes`: `instant_prize_final`
+- `mechanic_signoffs`: `mechanic_signoffs_permanent`
 - `orders`: `orders_valid`
 - `points_ledger`: `points_no_delete`
 - `points_ledger`: `points_no_update`

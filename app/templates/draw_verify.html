@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ c.title }} — draw record · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}How the {{ c.title }} winner was picked: when entries were frozen, how many paid and free entries took part, the winning ticket, and how to check it yourself.{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('public.results') }}">Results</a> › <a href="{{ url_for('public.competition', slug=c.slug) }}">{{ c.title }}</a> › <span aria-current="page">Draw record</span></nav>
+<div style="max-width:820px">
+<h1>Draw record: {{ c.title }}</h1>
+{% include "_stages.html" %}
+
+<div class="winner-banner" role="status" style="margin:var(--s4) 0">Winning ticket <b>#{{ winner_number }}</b>{% if winner_name %} — {{ winner_name }}{% endif %}<br><span class="small">Drawn {{ last.drawn_at|uktime('%A %d %B %Y at %H:%M') }} UK time</span></div>
+{% if mine %}<p class="notice {{ 'good' if winner_number in mine else '' }}"><span>{% if winner_number in mine %}<b>That's you — you won!</b> <a href="{{ url_for('public.account', tab='entries') }}">See your prize</a>{% else %}You had {{ mine|length }} ticket{{ 's' if mine|length != 1 }} in this draw ({% for n in mine[:12] %}#{{ n }}{{ ', ' if not loop.last }}{% endfor %}{% if mine|length > 12 %} and {{ mine|length - 12 }} more{% endif %}). Not a winner this time.{% endif %}</span></p>{% endif %}
+
+<section aria-labelledby="what-h"><h2 id="what-h">What happened, step by step</h2>
+<ol class="steps-plain">
+  <li><b>Before any tickets were sold</b> we locked in a secret number for this draw and published its fingerprint (shown below). It can't be changed afterwards without the fingerprint changing.</li>
+  <li><b>Entries closed</b> {{ c.ends_at|uktime('%a %d %b %Y, %H:%M') }}.</li>
+  {% if snapshot %}<li><b>The entry list was frozen</b> {{ snapshot.taken_at|uktime('%a %d %b %Y, %H:%M') }}, after every reservation had expired or been paid and every free postal entry had been processed: <b>{{ '{:,}'.format(snapshot.entry_count) }} entries</b> ({{ '{:,}'.format(snapshot.paid_count) }} paid, {{ '{:,}'.format(snapshot.postal_count) }} free by post).</li>{% endif %}
+  {% for d in draws %}<li><b>{{ 'The draw' if loop.first else 'Redraw ' ~ loop.index0 }}</b> ran {{ 'automatically' if d.method == 'automatic' else 'by a member of our team' }} at {{ d.drawn_at|uktime('%H:%M on %a %d %b %Y') }} from {{ '{:,}'.format(d.entry_count) }} eligible entries. Winning ticket: <b>#{{ d.winning_number }}</b>{% if d.winner_postal %} (a free postal entry){% endif %}.{% if d.reason %} Reason for the redraw: {{ d.reason }}{% endif %}</li>{% endfor %}
+</ol>
+{% if audits %}<p class="small">{% for a in audits %}{{ '✓' if a.ok else '⚠' }} <b>{{ 'Checks before the draw' if a.phase == 'before' else 'Checks after the draw' }}</b>: {% if a.ok %}{{ (a.detail|fromjson)|length }} passed{% else %}being looked into by our team{% endif %}{{ ' · ' if not loop.last }}{% endfor %} <details style="display:inline"><summary class="small">what was checked</summary><ul class="small">{% for a in audits %}{% for name, ok, note in a.detail|fromjson %}<li>{{ '✓' if ok else '•' }} {{ name }}</li>{% endfor %}{% endfor %}</ul></details></p>{% endif %}
+<p class="small muted">Every eligible entry — paid or free — had exactly one equal chance. The draw only looks at ticket numbers; it doesn't know who owns a ticket or how it was entered.</p>
+</section>
+
+<section aria-labelledby="check-h"><h2 id="check-h">Check it yourself</h2>
+<div class="panel">
+<ol class="small" style="padding-left:1.2em">
+  <li>Download the <a href="{{ url_for('public.draw_entries', slug=c.slug) }}">frozen entry list</a> (every eligible ticket number, in order, separated by commas).</li>
+  <li>Its SHA-256 fingerprint should be the <b>entries hash</b> below.</li>
+  <li>The SHA-256 fingerprint of the revealed <b>secret</b> should be the <b>seed hash</b> we published before sales opened.</li>
+  {% if last.method == 'redraw' %}<li>For this redraw, the list is the original frozen list with every earlier winning ticket removed. Work out HMAC-SHA256(secret, "<i>entries hash</i>:redraw:{{ draws|length }}"), read it as a number and take the remainder after dividing by the number of entries. That position (counting from 0) is the winning ticket: position {{ last.winning_index }} → #{{ last.winning_number }}.</li>
+  {% else %}<li>Work out HMAC-SHA256(secret, entries hash), read it as a number and take the remainder after dividing by the number of entries. That position (counting from 0) in the list is the winning ticket: position {{ last.winning_index }} → #{{ last.winning_number }}.</li>{% endif %}
+</ol>
+<dl class="facts">
+  <div><dt>Seed hash (published before sales)</dt><dd><span class="hash">{{ c.seed_hash }}</span></dd></div>
+  <div><dt>Secret (revealed after the draw)</dt><dd><span class="hash">{{ last.seed }}</span></dd></div>
+  <div><dt>Entries hash</dt><dd><span class="hash">{{ last.entries_hash }}</span></dd></div>
+  <div><dt>Entries / winning position</dt><dd>{{ '{:,}'.format(last.entry_count) }} / {{ last.winning_index }}</dd></div>
+</dl>
+<p class="small muted" style="margin-bottom:0">More detail, with a worked example: <a href="{{ url_for('public.page', page='fair-draws') }}">how our draws work</a>.</p>
+</div></section>
+
+<p style="margin-top:var(--s4)"><a class="btn ghost" href="{{ url_for('public.competition', slug=c.slug) }}">Back to the competition</a> <a class="textlink" href="{{ url_for('public.results') }}">All results</a></p>
+</div>
+{% endblock %}

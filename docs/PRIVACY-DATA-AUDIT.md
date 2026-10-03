@@ -73,3 +73,13 @@ Verified in the code (no `localStorage`, `sessionStorage`, IndexedDB, analytics 
 
 Automatic (`prune` job, daily): device sessions 90 days after last use, read notifications after 1 year, job history and resolved server errors after 90 days.
 Manual (quarterly, until automated): postal entry personal details 2 years after the competition, resolved support cases after 3 years, reviewed flags after 2 years.
+
+## Phase 7 tables
+| Table | Personal data | Retention |
+|---|---|---|
+| `error_refs` | account number (optional), page path | 180 days (automatic) |
+| `approvals` | staff account ids; the request payload may reference a customer id and amount | Permanent (audit) |
+| `draw_audits` | none | Permanent |
+| `mechanic_signoffs` | name of the responsible person | Permanent |
+
+Customers can now download all their data themselves (`/account/export/everything.json`). Full rules: `docs/RETENTION.md`.

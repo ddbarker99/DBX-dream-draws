@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Operations calendar · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<div class="row" style="flex-wrap:wrap"><h1 style="margin:0">Operations calendar</h1>
+<span class="small">Next: {% for d in (7, 30, 90) %}<a href="{{ url_for('control.ops_calendar', days=d) }}" {{ 'aria-current=page' if days == d }}>{{ d }} days</a>{{ ' · ' if not loop.last }}{% endfor %}</span></div>
+<p class="muted">Launches, closing times, draws, promotions, announcements and report emails — everything scheduled, in UK time.</p>
+{% for day, items in by_day.items() %}<section style="margin-top:var(--s4)"><h2 style="font-size:18px">{{ day }}</h2>
+  <ul class="activity panel">{% for at, kind, text, link in items %}<li><time>{{ at|uktime('%H:%M') }}</time><span class="pill {{ {'draw':'hot','launch':'live','close':'pending','promo':'','notice':'','report':''}[kind] }}">{{ {'draw':'Draw','launch':'Launch','close':'Closes','promo':'Promo','notice':'Notice','report':'Report'}[kind] }}</span><span>{% if link %}<a href="{{ link }}">{{ text }}</a>{% else %}{{ text }}{% endif %}</span></li>{% endfor %}</ul></section>
+{% else %}<p class="muted">Nothing scheduled in this period.</p>{% endfor %}
+{% endblock %}

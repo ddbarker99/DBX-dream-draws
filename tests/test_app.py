@@ -1939,6 +1939,10 @@ class OperationsTests(PlatformBase):
         self.assertIn("No problems found", self.client.get("/admin/health").get_data(as_text=True))
         self.skip_integrity = True
         db = self.db()
+        with self.assertRaises(Exception):              # the database itself refuses a line that takes a balance below zero
+            db.execute("INSERT INTO credit_ledger (user_id, amount, reason, created_at, kind) VALUES (?,?,?,?,?)",
+                       (self.uid, -500, "bad", "2026-01-01T00:00:00Z", "cash"))
+        db.execute("DROP TRIGGER ledger_no_negative")    # simulate corruption from outside the app, to prove the check still finds it
         db.execute("INSERT INTO credit_ledger (user_id, amount, reason, created_at, kind) VALUES (?,?,?,?,?)",
                    (self.uid, -500, "bad", "2026-01-01T00:00:00Z", "cash"))
         db.execute("DELETE FROM job_status WHERE job='integrity'")
@@ -2767,14 +2771,28 @@ class AdminHardeningTests(PlatformBase):
         self.signup("finance@example.com", client=fin, name="Fin Person")
         fid = self.q("SELECT id FROM users WHERE email='finance@example.com'")
         self.post(f"/admin/users/{fid}", {"action": "admin", "role": "finance"})
+        # Another administrator exists who can approve, so a large adjustment by Finance becomes a request, not a change
         self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "250", "kind": "cash", "reason": "Big prize"}, client=fin)
         self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger"), 0)
-        self.assertEqual(self.q("SELECT COUNT(*) FROM audit_log WHERE action='wallet.adjust_refused'"), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM approvals WHERE status='pending' AND kind='wallet_adjust'"), 1)
         self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "50", "kind": "cash", "reason": "Small prize"}, client=fin)
-        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "250", "kind": "cash", "reason": "Big prize"})
+        self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger"), 5000)                 # small ones go straight through
+        # Finance can't approve (needs money.large); the administrator can
+        aid = self.q("SELECT id FROM approvals")
+        self.post("/admin/approvals", {"id": aid, "decision": "approve"}, client=fin)
+        self.assertEqual(self.q("SELECT status FROM approvals"), "pending")
+        self.post("/admin/approvals", {"id": aid, "decision": "approve"})
+        self.assertEqual(self.q("SELECT status FROM approvals"), "approved")
         self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger"), 30000)
+        self.assertEqual(self.q("SELECT ref FROM credit_ledger ORDER BY id DESC LIMIT 1"), f"admin{fid}+" + str(self.q("SELECT id FROM users WHERE admin_role IS NULL AND is_admin=1 OR admin_role='admin' ORDER BY id LIMIT 1")))
+        # Nobody else holds money.large, so the administrator's own large adjustment applies directly
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "250", "kind": "cash", "reason": "Big prize"})
+        self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger"), 55000)
         self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "5", "kind": "cash", "reason": ""})
-        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger"), 2)                    # a reason is required
+        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger"), 3)                    # a reason is required
+        # Decided approvals are permanent
+        with self.assertRaises(Exception):
+            self.db().execute("UPDATE approvals SET status='pending'")
 
 
 class MonitoringTests(PlatformBase):
@@ -2908,7 +2926,7 @@ class Phase6CustomerTests(AutoDrawBase):
         self.post(f"/admin/prizes/{claim}", {"status": "fulfilment", "note": "Courier booked"})
         self.assertEqual(self.q("SELECT COUNT(*) FROM notifications WHERE user_id=? AND dedupe_key=?", self.uid, f"claim:{claim}:fulfilment"), 1)
         html = self.p.get(f"/account/prizes/{claim}").get_data(as_text=True)
-        self.assertIn("On its way", html)
+        self.assertIn("Dispatched / being paid", html)
         self.assertNotIn("Prize or cash?", html)
         self.post(f"/account/prizes/{claim}", {"choice": "cash"}, client=self.p)
         self.assertEqual(self.q("SELECT prize_choice FROM prize_claims"), "prize")
@@ -3177,7 +3195,17 @@ class Phase6GrowthTests(PlatformBase):
         self.assertIn("2</b> pieces of evidence", html)
         self.assertIn("Where are my numbers?", html)
         self.assertIn("Couldn&#39;t find my numbers", html)
-        self.assertIn("<b>2</b>", self.client.get("/admin/backlog").get_data(as_text=True))
+        board = self.client.get("/admin/backlog").get_data(as_text=True)
+        self.assertIn("2 evidence · <b>4 questions not answered</b>", board)
+        # It can't be planned until the four questions are answered
+        self.post("/admin/backlog", {"bid": str(bid), "status": "planned"})
+        self.assertEqual(self.q("SELECT status FROM backlog WHERE id=?", bid), "open")
+        self.post("/admin/backlog", {"bid": str(bid), "answers": "1", "kind": "friction", "problem": "Customers can't find numbers",
+                                     "who": "New customers on mobile", "measure": "Fewer 'where are my numbers' cases",
+                                     "risks": "None significant"})
+        self.post("/admin/backlog", {"bid": str(bid), "status": "planned"})
+        self.assertEqual(self.q("SELECT status FROM backlog WHERE id=?", bid), "planned")
+        self.assertEqual(self.q("SELECT kind FROM backlog WHERE id=?", bid), "friction")
 
     def test_diagnostics_segments_and_experiments(self):
         self.add(self.cid, 1, client=self.p)
@@ -3269,3 +3297,225 @@ class MigrationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Phase7TrustTests(AutoDrawBase):
+    """Phase 7: trust, transparency and customer confidence."""
+
+    def drawn(self, postal=True):
+        self.add(self.cid, 3, client=self.p)
+        self.checkout(client=self.p)
+        if postal:
+            self.post(f"/admin/competitions/{self.cid}/postal", {"name": "Post Person", "email": "post@example.com",
+                      "address": "1 Road", "answer_correct": "1", "mode": "receive",
+                      "received": time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))})
+            self.post(f"/admin/postal/{self.q('SELECT id FROM postal_entries')}", {"action": "approve"})
+        self.close()
+        self.run_jobs()
+        self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", self.cid), "drawn")
+        return self.slug(self.cid)
+
+    def test_stage_timeline_on_the_competition_page(self):
+        html = self.client.get(f"/c/{self.slug(self.cid)}").get_data(as_text=True)
+        self.assertIn('class="stages"', html)
+        self.assertRegex(html, r'<li class="current" aria-current="step"><span>(Live|Closing soon)</span>')
+        slug = self.drawn()
+        html = self.client.get(f"/c/{slug}").get_data(as_text=True)
+        self.assertIn('<li class="current" aria-current="step"><span>Draw complete</span>', html)
+        claim = self.q("SELECT id FROM prize_claims")
+        db = self.db()
+        db.execute("UPDATE prize_claims SET status='delivered' WHERE id=?", (claim,))
+        db.commit()
+        self.assertIn('aria-current="step"><span>Prize delivered</span>', self.client.get(f"/c/{slug}").get_data(as_text=True))
+
+    def test_draw_record_is_checkable_and_free_entries_are_equal(self):
+        import hashlib
+        import hmac
+        slug = self.drawn()
+        html = self.client.get(f"/c/{slug}/draw").get_data(as_text=True)
+        self.assertIn("Draw record", html)
+        self.assertIn("4 entries</b> (3 paid, 1 free by post)", html)
+        self.assertIn("Checks before the draw", html)
+        self.assertIn("Checks after the draw", html)
+        # Anyone can recompute the winner from the downloadable list, the revealed secret and the published method
+        entries = self.client.get(f"/c/{slug}/draw/entries.txt").get_data(as_text=True)
+        nums = [int(n) for n in entries.split(",")]
+        self.assertEqual(len(nums), 4)
+        d = self.db().execute("SELECT * FROM draws").fetchone()
+        self.assertEqual(hashlib.sha256(entries.encode()).hexdigest(), d["entries_hash"])
+        idx = int(hmac.new(d["seed"].encode(), d["entries_hash"].encode(), hashlib.sha256).hexdigest(), 16) % len(nums)
+        self.assertEqual(nums[idx], d["winning_number"])
+        # the free postal ticket is in the pool on exactly the same footing as paid tickets
+        postal_no = self.q("SELECT number FROM tickets WHERE postal_entry_id IS NOT NULL")
+        self.assertIn(postal_no, nums)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM draw_audits WHERE phase='after' AND ok=1"), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM draw_audits WHERE phase='before' AND ok=1"), 1)
+        self.assertEqual(self.client.get(f"/c/{self.slug(self.make_comp('Live one'))}/draw").status_code, 404)
+
+    def test_selection_ignores_entry_method(self):
+        """The pick only sees sorted ticket numbers: relabelling which tickets are postal never changes the winner."""
+        from app.services import entries_digest, pick_index
+        seed, nums = "s3cret", [3, 8, 11, 15, 19]
+        digest = entries_digest(nums)
+        self.assertEqual(pick_index(seed, digest, len(nums)), pick_index(seed, entries_digest(list(reversed(nums))), len(nums)))
+        counts = [0] * 5
+        for i in range(5000):
+            counts[pick_index(f"seed{i}", digest, 5)] += 1
+        self.assertTrue(all(800 < c < 1200 for c in counts), counts)       # roughly uniform: no position is favoured
+
+    def test_after_draw_check_flags_a_broken_result(self):
+        self.drawn(postal=False)
+        from app.checks import after_draw_checks
+        copy = sqlite3.connect(":memory:")                 # the real tables refuse the corruption, so break a copy
+        self.db().backup(copy)
+        copy.row_factory = sqlite3.Row
+        for (name,) in copy.execute("SELECT name FROM sqlite_master WHERE type='trigger'").fetchall():
+            copy.execute(f"DROP TRIGGER {name}")
+        did = copy.execute("SELECT id FROM draws").fetchone()[0]
+        self.assertEqual([c for c in after_draw_checks(copy, self.cid, did) if not c[1]], [])
+        copy.execute("UPDATE competitions SET winner_ticket_id=NULL WHERE id=?", (self.cid,))
+        failed = [c[0] for c in after_draw_checks(copy, self.cid, did) if not c[1]]
+        self.assertEqual(failed, ["Winner on the competition matches the draw"])
+
+    def test_results_centre_filters_and_receipts(self):
+        slug = self.drawn(postal=False)
+        cat = self.q("SELECT category FROM competitions WHERE id=?", self.cid)
+        html = self.p.get(f"/results?cat={cat}&mine=1").get_data(as_text=True)
+        self.assertIn(f"/c/{slug}/draw", html)
+        self.assertIn("You", html)
+        chk = self.q("SELECT id FROM checkouts")
+        rec = self.p.get(f"/account/orders/{chk}").get_data(as_text=True)
+        self.assertIn(f"DBX-{chk:06d}", rec)
+        self.assertIn("Entry method", rec)
+        self.assertIn(f"/support?topic=Payment&amp;order={chk}", rec)
+        form = self.p.get(f"/support?topic=Payment&order={chk}").get_data(as_text=True)
+        self.assertIn(f'<option value="{chk}" selected', form)
+        # staff can find the receipt reference in admin search
+        r = self.client.get(f"/admin/search?q=DBX-{chk:06d}")
+        self.assertIn(f"/admin/orders/{chk}", r.headers.get("Location", "") + r.get_data(as_text=True))
+
+    def test_emergency_lock_stops_purchases_and_shows_status(self):
+        self.assertIn("Everything is working normally", self.client.get("/status").get_data(as_text=True))
+        self.post("/admin/emergency", {"action": "lock", "reason": "Checking ticket allocation", "hold_draws": "1"})
+        self.assertIn("Some things are affected", self.p.get("/status").get_data(as_text=True))
+        self.add(self.cid, 1, client=self.p)
+        r = self.post("/basket/checkout", {}, client=self.p, follow_redirects=True)
+        self.assertIn("Entries are paused", r.get_data(as_text=True))
+        self.assertEqual(self.q("SELECT COUNT(*) FROM checkouts"), 0)
+        self.assertEqual(self.p.get("/account").status_code, 200)                 # accounts still work
+        self.close()
+        self.run_jobs()
+        self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", self.cid), "live")    # draws held
+        self.post("/admin/emergency", {"action": "unlock"})
+        self.assertIn("Everything is working normally", self.client.get("/status").get_data(as_text=True))
+        self.assertEqual(self.q("SELECT COUNT(*) FROM audit_log WHERE action IN ('site.emergency_lock','site.emergency_unlock')"), 2)
+
+    def test_error_reference_shown_and_searchable(self):
+        from unittest import mock
+
+        def boom():
+            raise RuntimeError("kaboom")
+        app = self.app
+        app.testing = False
+        try:
+            with mock.patch.dict(app.view_functions, {"public.how_it_works": boom}):
+                html = self.p.get("/how-it-works").get_data(as_text=True)
+        finally:
+            app.testing = True
+        m = re.search(r"DBX-[23456789A-HJ-NP-Z]{6}", html)
+        self.assertTrue(m, html[:500])
+        self.assertNotIn("kaboom", html)
+        self.assertIn(m.group(0), self.client.get(f"/admin/search?q={m.group(0)}").get_data(as_text=True))
+        self.assertIn(m.group(0), self.p.get(f"/contact?ref={m.group(0)}").get_data(as_text=True))
+
+    def test_activity_history_and_full_data_export(self):
+        self.drawn(postal=False)
+        html = self.p.get("/account/activity").get_data(as_text=True)
+        self.assertIn("Entry confirmed — 3 tickets", html)
+        self.assertIn("Draw complete", html)
+        self.assertIn("Account opened", html)
+        r = self.p.get("/account/export/everything.json")
+        data = json.loads(r.get_data(as_text=True))
+        self.assertEqual(data["profile"]["email"], "player@example.com")
+        self.assertEqual(len(data["tickets"]), 3)
+        body = r.get_data(as_text=True)
+        self.assertNotIn("password_hash", body)
+        self.assertNotIn("pbkdf2", body)
+        self.assertNotIn("scrypt", body)
+
+    def test_help_centre_search_and_status_links(self):
+        html = self.client.get("/faq?q=withdraw").get_data(as_text=True)
+        self.assertIn("How do I withdraw my winnings?", html)
+        self.assertIn("answers for", html)
+        self.assertIn("Free entry", self.client.get("/faq").get_data(as_text=True))
+        self.assertIn("free", self.client.get("/faq?q=postel").get_data(as_text=True).lower())     # typo-tolerant
+
+    def test_new_device_sign_in_and_password_reset_notify(self):
+        other = self.app.test_client()
+        other.environ_base["HTTP_USER_AGENT"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
+        self.post("/login", {"email": "player@example.com", "password": "supersecret123"}, client=other)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM notifications WHERE user_id=? AND kind='security' AND title LIKE 'New sign-in%'",
+                                self.uid), 1)
+
+    def test_redraw_needs_a_second_admin_when_one_exists(self):
+        self.drawn(postal=False)
+        second = self.app.test_client()
+        self.signup("second@example.com", client=second, name="Second Admin")
+        self.cli("make-admin", "second@example.com")
+        first_winner = self.q("SELECT winning_number FROM draws")
+        self.post(f"/admin/competitions/{self.cid}/redraw", {"confirm": "REDRAW", "reason": "Winner failed age verification checks"})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM draws"), 1)                         # nothing changed yet
+        aid = self.q("SELECT id FROM approvals WHERE kind='redraw'")
+        self.post("/admin/approvals", {"id": aid, "decision": "approve"})                 # can't approve your own
+        self.assertEqual(self.q("SELECT status FROM approvals"), "pending")
+        self.post("/admin/approvals", {"id": aid, "decision": "approve"}, client=second)
+        self.assertEqual(self.q("SELECT status FROM approvals"), "approved")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM draws"), 2)
+        self.assertNotEqual(self.q("SELECT winning_number FROM draws ORDER BY id DESC LIMIT 1"), first_winner)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM draw_audits WHERE phase='after' AND ok=1"), 2)
+        self.assertNotIn("second@example.com", self.client.get(f"/c/{self.slug(self.cid)}/draw").get_data(as_text=True))
+
+    def test_new_mechanic_cannot_publish_without_signoff(self):
+        from app.checks import launch_checks
+        db = self.db()
+        db.execute("DELETE FROM mechanic_signoffs WHERE mechanic='game_box'")
+        db.commit()
+        cid = self.make_comp("Box game", publish=False)
+        db.execute("UPDATE competitions SET game_type='box' WHERE id=?", (cid,))
+        db.commit()
+        comp = db.execute("SELECT * FROM competitions WHERE id=?", (cid,)).fetchone()
+        with self.app.app_context():
+            failed = [c["label"] for c in launch_checks(db, comp) if not c["ok"]]
+        self.assertIn("Mechanic signed off for compliance", failed)
+        self.post("/admin/compliance", {"mechanic": "game_box", "responsible": "Owner", "note": "Too short"})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM mechanic_signoffs WHERE mechanic='game_box'"), 0)
+        form = {"mechanic": "game_box", "responsible": "Darren, owner", "note": "Reviewed with our solicitor on 3 Oct; free route equal."}
+        form.update({f"c{i}": "1" for i in range(8)})
+        self.post("/admin/compliance", form)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM mechanic_signoffs WHERE mechanic='game_box'"), 1)
+        with self.app.app_context():
+            failed = [c["label"] for c in launch_checks(db, comp) if not c["ok"]]
+        self.assertNotIn("Mechanic signed off for compliance", failed)
+
+    def test_retention_rules_prune_only_what_they_say(self):
+        from app.retention import apply
+        db = self.db()
+        db.execute("INSERT INTO error_refs (ref, at, path) VALUES ('DBX-OLDOLD', '2020-01-01T00:00:00Z', '/x')")
+        db.execute("INSERT INTO error_refs (ref, at, path) VALUES ('DBX-NEWNEW', strftime('%Y-%m-%dT%H:%M:%SZ','now'), '/x')")
+        db.commit()
+        apply(db)
+        db.commit()
+        self.assertEqual([r[0] for r in db.execute("SELECT ref FROM error_refs")], ["DBX-NEWNEW"])
+        self.assertIn("How long we keep data", self.client.get("/admin/compliance").get_data(as_text=True))
+
+    def test_staff_pages_render(self):
+        self.drawn(postal=False)
+        for url, text in (("/admin/calendar", "Operations calendar"), ("/admin/risk", "Risk dashboard"),
+                          ("/admin/communications", "Customer emails log"), ("/admin/emails", "Email previews"),
+                          ("/admin/emails?show=2", "won"), ("/admin/approvals", "Approvals"), ("/admin/emergency", "Stop all purchases"),
+                          ("/admin/compliance", "Compliance"), ("/admin/backlog", "Development board")):
+            r = self.client.get(url)
+            self.assertEqual(r.status_code, 200, url)
+            self.assertIn(text, r.get_data(as_text=True), url)
+        self.assertIn("All passed", self.client.get("/admin/risk").get_data(as_text=True))
+        self.assertIn("player@example.com", self.client.get("/admin/communications?q=player").get_data(as_text=True))

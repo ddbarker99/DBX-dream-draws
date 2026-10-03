@@ -71,14 +71,31 @@ def record_error(db, exc, endpoint, path, method="GET", user_id=None):
                "ON CONFLICT(signature) DO UPDATE SET last_at=excluded.last_at, count=count+1, path=excluded.path, "
                "error=excluded.error, trace=excluded.trace, resolved_at=NULL",
                (sig, now, now, 1, endpoint, path.split("?")[0][:300], scrub(f"{type(exc).__name__}: {exc}")[:500], trace))
+    eid = db.execute("SELECT id FROM error_log WHERE signature=?", (sig,)).fetchone()[0]
+    ref = new_error_ref(db, eid, path, user_id)
     if new and current_app.config.get("SUPPORT_EMAIL") and not current_app.testing:
         try:                                       # tell developers at once about a new kind of error
             from . import mailer
             mailer.send(current_app.config["SUPPORT_EMAIL"], f"⚠ New server error: {type(exc).__name__} on {endpoint}",
-                        trace[-2500:] + "\n\nAdmin → Targets → Server errors", heading="New server error")
+                        trace[-2500:] + f"\n\nFirst reference: {ref}\nAdmin → Targets → Server errors", heading="New server error")
         except Exception:
             pass
-    return new
+    return ref
+
+
+def new_error_ref(db, error_id, path, user_id=None):
+    """A short reference the customer can quote (DBX-7KQ2MX). No technical detail is ever shown to them."""
+    import secrets
+    alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"          # no 0/O or 1/I to misread over the phone
+    for _ in range(5):
+        ref = "DBX-" + "".join(secrets.choice(alphabet) for _ in range(6))
+        try:
+            db.execute("INSERT INTO error_refs (ref, error_id, at, path, user_id) VALUES (?,?,?,?,?)",
+                       (ref, error_id, iso(utcnow()), (path or "").split("?")[0][:300], user_id))
+            return ref
+        except Exception:
+            continue
+    return None
 
 
 def stats(db, days=7):

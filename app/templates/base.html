@@ -90,7 +90,7 @@
         <a href="{{ url_for('public.signup') }}">Create an account</a>
       {% endif %}
       <span class="group">Help</span>
-      <a href="{{ url_for('public.page', page='faq') }}">FAQs</a>
+      <a href="{{ url_for('public.page', page='faq') }}">Help Centre</a>
       <a href="{{ url_for('public.page', page='responsible-play') }}">Responsible play</a>
       <a href="{{ url_for('public.support_centre') if user and feature('support_centre') else url_for('public.contact') }}">{{ 'Help & support' if user and feature('support_centre') else 'Contact us' }}</a>
       {% if user %}<a href="{{ url_for('public.my_cases') }}">My support requests</a>{% endif %}
@@ -131,10 +131,11 @@
       </ul></div>
       <div><h2>Help</h2><ul>
         <li><a href="{{ url_for('public.transparency') }}">Transparency centre</a></li>
+        <li><a href="{{ url_for('public.status_page') }}">Service status</a></li>
         <li><a href="{{ url_for('public.how_it_works') }}">How it works</a></li>
         <li><a href="{{ url_for('public.page', page='fair-draws') }}">Fair draws</a></li>
         <li><a href="{{ url_for('public.draw_calendar') }}">Draw calendar</a></li>
-        <li><a href="{{ url_for('public.page', page='faq') }}">FAQs</a></li>
+        <li><a href="{{ url_for('public.page', page='faq') }}">Help Centre</a></li>
         <li><a href="{{ url_for('public.page', page='about') }}">About us</a></li>
         <li><a href="{{ url_for('public.support_centre') if user and feature('support_centre') else url_for('public.contact') }}">{{ 'Help & support' if user and feature('support_centre') else 'Contact us' }}</a></li>
       </ul></div>

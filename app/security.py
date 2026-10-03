@@ -29,6 +29,14 @@ def start_session(user):
     db.execute("INSERT INTO user_sessions (sid, user_id, created_at, last_seen, ip, agent) VALUES (?,?,?,?,?,?)",
                (sid, user["id"], now, now, ip, agent))
     session["sid"] = sid
+    if not known and not user["is_admin"] and db.execute("SELECT 1 FROM user_sessions WHERE user_id=? AND sid!=? LIMIT 1",
+                                                         (user["id"], sid)).fetchone():
+        from .notify import tell                  # a customer signing in somewhere new hears about it (not on their first ever sign-in)
+        from flask import url_for
+        tell(user["email"], "New sign-in to your account", kind="security", key=f"newdev:{sid}", user_id=user["id"],
+             link=url_for("public.account", tab="profile") + "#devices", heading="New sign-in",
+             body=f"Your account was just used to sign in on {device_name(agent)}. If this was you, there's nothing to do. If not, "
+                  "change your password straight away — that signs out every other device — and contact us.")
     session.pop("mfa_ok", None)
     session["sudo_at"] = time.time()          # signing in counts as a fresh confirmation
     if user["is_admin"]:
@@ -130,6 +138,7 @@ SENSITIVE = {
     "admin.claim_detail": None,
     "admin.delete_comp": None, "admin.delete_selected": None, "admin.start_fresh": None,
     "admin.promos": None, "admin.features": None,
+    "control.approvals": None, "control.emergency": None,
 }
 
 

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Email previews · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Email previews</h1>
+<p class="muted">What customers receive for the most important moments, with sample details. Each email has one purpose and says what happened in its heading.</p>
+<ul class="activity panel" style="max-width:720px">{% for name, subject, kw in samples %}<li><span><b>{{ name }}</b><br><span class="small muted">Subject: {{ subject }}</span></span><a class="btn ghost small" style="margin-left:auto" href="{{ url_for('control.email_previews', show=loop.index0) }}" target="_blank" rel="noopener">Preview</a></li>{% endfor %}</ul>
+{% endblock %}

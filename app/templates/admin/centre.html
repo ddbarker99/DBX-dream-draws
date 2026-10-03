@@ -6,6 +6,7 @@
 {% include "admin/_bar.html" %}
 <div class="row" style="flex-wrap:wrap"><h1 style="margin:0">Control Centre</h1><span class="small muted">{{ admin_role_name }} · refreshes every 2 minutes</span></div>
 
+{% if emergency_lock %}<div class="notice warn" role="status"><span><b>Emergency lock is ON</b> — nobody can buy entries ({{ emergency_lock.reason }}). <a href="{{ url_for('control.emergency') }}">Review or lift it</a>.</span></div>{% endif %}
 <form class="inline-form" method="get" action="{{ url_for('control.search') }}" role="search" style="max-width:640px;margin:var(--s4) 0">
   <label class="sr-only" for="as-q">Search customers, orders, tickets, competitions, references</label>
   <input id="as-q" name="q" placeholder="Email, name, order #, ticket #, competition, w123, cs_…, pi_…" autocomplete="off">
@@ -35,7 +36,8 @@
 
 <details class="section"><summary><b>System health</b> — {{ health|selectattr('ok')|list|length }} of {{ health|length }} checks OK</summary>
   <ul class="healthgrid" style="margin-top:var(--s3)">{% for c in health %}<li class="{{ 'ok' if c.ok else 'bad' }}"><b>{{ '✓' if c.ok else '✕' }} {{ c.name }}</b><span>{{ c.detail }}</span></li>{% endfor %}</ul>
-  {% if can('audit') %}<a class="btn ghost small" href="{{ url_for('control.health') }}">Details</a>{% endif %}
+  {% if can('audit') %}<a class="btn ghost small" href="{{ url_for('control.health') }}">Details</a> <a class="btn ghost small" href="{{ url_for('control.risk') }}">Risk dashboard</a>{% endif %}
+  {% if can('settings') and not emergency_lock %}<a class="btn ghost small" href="{{ url_for('control.emergency') }}">Emergency lock…</a>{% endif %}
 </details>
 
 {% if ending %}

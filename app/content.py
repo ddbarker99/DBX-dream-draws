@@ -13,7 +13,7 @@ from .db import get_db, iso, utcnow
 
 # slug: (title, is legal document — versions listed publicly and a change note is required)
 EDITABLE = {
-    "faq": ("FAQs", False),
+    "faq": ("Help Centre note (shown above the articles)", False),
     "home-intro": ("Homepage introduction", False),
     "support-intro": ("Help & support introduction", False),
     "terms": ("Terms & conditions", True),

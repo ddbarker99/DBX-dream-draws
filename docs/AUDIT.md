@@ -284,3 +284,41 @@ Full audit: `docs/PRODUCTION-AUDIT.md`. New URLs: `/healthz/deep`, `/api/competi
 
 # Phase 6 (customer experience & growth)
 New customer URLs: `/draws`, `/account/prizes/<id>`, `/account/export/<orders|entries|transactions>.csv`, `/results?mine=1`, `/winners/<slug>/card.png`, `/feedback`, `/legal/<slug>/versions`, `/legal/<slug>/v/<n>`, `/c/<slug>/conditions/<n>`, `/j/select/<id>`. New admin URLs: `/admin/search`, `/admin/orders/<id>`, `/admin/announcements`, `/admin/content`, `/admin/content/<slug>`, `/admin/releases`, `/admin/checkout-diagnostics`, `/admin/segments`, `/admin/experiments`, `/admin/feedback`, `/admin/backlog`, `/admin/backlog/<id>`. Command: `flask demo-lifecycle`. Brief items 1–40 are mapped in `docs/SIMPLICITY-REVIEW.md`.
+
+# Phase 7 (trust, transparency & customer confidence)
+New customer URLs: `/c/<slug>/draw`, `/c/<slug>/draw/entries.txt`, `/status`, `/account/activity`, `/account/export/everything.json`, `/faq?q=…` (Help Centre search), `/results?year=&month=&cat=`. New admin URLs: `/admin/approvals`, `/admin/emergency`, `/admin/calendar`, `/admin/risk`, `/admin/risk/after-draw/<id>/resolve`, `/admin/communications`, `/admin/communications/retry`, `/admin/emails`, `/admin/compliance`. Admin search also takes `DBX-000123` (receipt), `DBX123` (withdrawal) and `DBX-XXXXXX` (error reference).
+
+| # | Brief item | Where |
+|---|---|---|
+| 1 | Permanent competition history | Competition pages never disappear; `/c/<slug>/draw` archive record |
+| 2 | Results Centre | `/results` search by name, year, month, category; "draws I entered" |
+| 3 | My Results | "You won / You entered" with your tickets and the winning ticket on results, draw record, ticket pages |
+| 4 | Competition timeline | Stage bar on every prize draw (`comp_stage`) |
+| 5 | Draw verification page | `/c/<slug>/draw` + entries download + checks |
+| 6 | Entry receipts | Order pages (DBX reference, method, time, amounts) and per-ticket pages |
+| 7 | Free = paid in the draw | Pick sees only sorted ticket numbers; tests `test_draw_record_is_checkable_and_free_entries_are_equal`, `test_selection_ignores_entry_method` |
+| 8 | Winner fulfilment tracker | Prize page: Winner confirmed → Verification → Prize arranged → Dispatched / being paid → Completed; staff claim workflow |
+| 9 | Help Centre | `/faq` (app/help.py), 12 topics, search |
+| 10 | Contextual support | Links from order, ticket, competition, prize and withdrawal pages pre-fill the reference |
+| 11 | Service status | `/status`, site strip, checkout refuses calmly while paused |
+| 12 | Activity history | `/account/activity` |
+| 13 | Data export | JSON (everything) + 3 CSVs |
+| 14 | Sessions & security events | Devices list + revoke (existing); new-device and password-reset notices |
+| 15 | Excellent emails | Branded template, one purpose each; Admin → Email previews |
+| 16 | Email-delivery monitoring | Health check + Risk row + emails log with retry |
+| 17 | Communication log | Admin → More → Customer emails log (filter by customer) |
+| 18 | Operational calendar | `/admin/calendar` |
+| 19 | Four-eye approval | `app/approvals.py`, `/admin/approvals` |
+| 20 | Emergency lock | `/admin/emergency` |
+| 21 | Reconciliation before draws | `draw_checks` (existing) now recorded in `draw_audits` and shown publicly |
+| 22 | Reconciliation after draws | `after_draw_checks` + alert + Risk dashboard + health check |
+| 23 | Database invariants | Existing triggers/unique indexes + new `ledger_no_negative`; approvals/sign-offs permanent |
+| 24 | Error references | `error_refs`, error page, admin search, contact prefill |
+| 25 | Maintenance mode | Existing; payments blocked on every pay path incl. resumed checkouts; status page |
+| 26 | Risk dashboard | `/admin/risk` |
+| 27 | Retention rules | `app/retention.py`, `docs/RETENTION.md` |
+| 28 | Versioned legal documents | Existing (Phase 6): `/legal/<slug>/versions`; terms version stored on each order |
+| 29 | New-mechanic compliance checklist | `app/mechanics.py`, `/admin/compliance`, `docs/NEW-MECHANIC-CHECKLIST.md` |
+| 30 | Simplify again | `docs/SIMPLICITY-REVIEW.md` (second review) |
+| — | Development board | `docs/DEVELOPMENT-BOARD.md`, `/admin/backlog` |
+| — | 100-user milestone | `docs/FIRST-100-USERS.md` |

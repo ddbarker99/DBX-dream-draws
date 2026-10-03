@@ -756,3 +756,16 @@ dl.facts>dt{padding-top:10px;color:var(--text-2);font-size:var(--fs-sm)}
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
   .reveal div{opacity:1;transform:none}
 }
+/* competition progress (Phase 7) */
+.stages{list-style:none;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;margin:var(--s2) 0 var(--s3);padding:0}
+.stages li{display:block;min-width:0;overflow-wrap:break-word;font-size:12px;line-height:1.25;padding:6px 4px 0;border-top:4px solid var(--line);color:var(--text-3)}
+.stages li span{font-size:inherit;color:inherit}
+.stages li.done{border-color:#2f8f5b;color:var(--text)}
+.stages li.current{border-color:var(--red);color:var(--text);font-weight:700}
+.steps-plain{padding-left:1.2em}.steps-plain li{margin-bottom:var(--s2)}
+.receipt dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:0}.receipt dt{color:var(--text-3)}.receipt dd{margin:0}
+.activity{list-style:none;padding:0;margin:0}.activity li{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.activity time{min-width:120px;color:var(--text-3);font-size:13px}.activity .i{width:22px;text-align:center}
+.statuslist{list-style:none;padding:0}.statuslist li{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+@media (max-width:520px){.stages li{font-size:10.5px;padding:5px 2px 0}}
+.statuslist .ok{color:#3fbf7f}.statuslist .warn{color:#f0b43c}.statuslist .bad{color:#ff5a6a}

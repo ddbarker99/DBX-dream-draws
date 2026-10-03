@@ -59,6 +59,7 @@
     <a href="{{ url_for('public.account', tab='wallet') }}"><b>{{ (bal.credit + bal.deposit)|gbp }}</b><span>Site credit &amp; funds · entries only</span></a>
     <a href="{{ url_for('public.account', tab='points') }}"><b>{{ '{:,}'.format(u.points) }}</b><span>DBX Points · {{ tier.name }}</span></a>
   </div>
+  <p class="small" style="margin:var(--s2) 0 0"><a href="{{ url_for('public.account_activity_page') }}">Full account activity</a> · <a href="{{ url_for('public.results', mine=1) }}">My results</a></p>
 
   <section class="section" aria-labelledby="up-h">
     <div class="section-head"><h2 id="up-h">Your upcoming draws</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='entries') }}">All my tickets</a></div>
@@ -377,13 +378,15 @@
   </section>
   <section class="panel" style="max-width:640px;margin-top:var(--s4)" aria-labelledby="sec-h">
     <h2 id="sec-h" style="font-size:20px">Recent security activity</h2>
+    <p class="small" style="margin:0 0 var(--s2)"><a href="{{ url_for('public.account_activity_page') }}">See your full account activity →</a></p>
     <ul class="timeline">{% for at, what in security_events %}<li><time class="tiny muted">{{ at|uktime('%d %b %Y, %H:%M') }}</time> {{ what }}</li>{% else %}<li class="muted">Nothing yet.</li>{% endfor %}</ul>
     <p class="small" style="margin:var(--s3) 0 0"><b>Don't recognise something?</b> <a href="#profile">Change your password</a> — that signs out every other device straight away — then <a href="{{ url_for('public.support_centre') }}">tell us</a>.</p>
   </section>
   <section class="panel" style="max-width:640px;margin-top:var(--s4)">
     <h2 style="font-size:20px">Your data</h2>
     <p class="small" style="margin:0 0 var(--s2)">Download your records: <a href="{{ url_for('public.account_export', kind='orders') }}">orders</a> · <a href="{{ url_for('public.account_export', kind='entries') }}">entries &amp; tickets</a> · <a href="{{ url_for('public.account_export', kind='transactions') }}">wallet transactions</a> (CSV, opens in Excel or Google Sheets).</p>
-    <p class="small muted" style="margin:0">For a full copy of your data or to close your account, <a href="{{ url_for('public.contact') }}">contact us</a>. We'll pay out any cash balance first. Some records (entries, draws and payments) are kept as long as the law requires — see our <a href="{{ url_for('public.page', page='privacy') }}">privacy policy</a>.</p>
+    <p class="small" style="margin:0 0 var(--s2)"><a href="{{ url_for('public.account_export_all') }}">Download a complete copy of your data</a> (one file with your profile, orders, tickets, wallet, prizes, support requests, notifications and sign-ins).</p>
+    <p class="small muted" style="margin:0">To close your account, <a href="{{ url_for('public.contact') }}">contact us</a>. We'll pay out any cash balance first. Some records (entries, draws and payments) are kept as long as the law requires — see our <a href="{{ url_for('public.page', page='privacy') }}">privacy policy</a>.</p>
   </section>
   <form method="post" action="{{ url_for('public.logout') }}" style="margin-top:var(--s5)"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn ghost">Log out</button></form>
 {% endif %}

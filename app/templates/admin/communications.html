@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Customer emails log · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Customer emails log</h1>
+<p class="muted">Every important message we generated for a customer, and whether its email was delivered to the mail server. Last 24 hours: {% for k, v in totals.items() %}<b>{{ v }}</b> {{ {'sent':'sent','failed':'failed','queued':'queued','not_configured':'not sent (email not set up)','none':'in-account only'}.get(k, k) }}{{ ' · ' if not loop.last }}{% else %}nothing yet{% endfor %}.</p>
+<form class="inline-form" method="get" style="flex-wrap:wrap;max-width:720px">
+  <label class="sr-only" for="cq">Customer email or subject</label><input id="cq" name="q" value="{{ q }}" placeholder="Customer email or subject">
+  <label class="sr-only" for="cs">Status</label><select id="cs" name="status"><option value="">Any status</option>{% for k in ('failed','queued','sent','not_configured') %}<option value="{{ k }}" {{ 'selected' if status == k }}>{{ k|replace('_',' ')|capitalize }}</option>{% endfor %}</select>
+  <button class="btn ghost">Filter</button></form>
+{% if totals.get('failed') %}<form method="post" action="{{ url_for('control.communications_retry') }}" style="margin:var(--s3) 0"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn small">Retry all failed emails</button></form>{% endif %}
+<div class="panel table-scroll" tabindex="0" style="margin-top:var(--s3)"><table><tr><th>When</th><th>To</th><th>Message</th><th>Kind</th><th>Email</th></tr>
+{% for n in rows %}<tr><td class="small">{{ n.created_at|uktime('%d %b %H:%M') }}</td><td class="small">{% if n.user_id %}<a href="{{ url_for('control.timeline', uid=n.user_id) }}">{{ n.email or ('account #' ~ n.user_id) }}</a>{% else %}{{ n.email }}{% endif %}</td><td>{{ n.title }}</td><td class="small">{{ n.kind }}</td>
+<td class="small">{% if n.email_status == 'sent' %}<span class="pill live">Sent</span> {{ n.sent_at|uktime('%H:%M') if n.sent_at }}{% elif n.email_status == 'failed' %}<span class="pill hot">Failed</span> after {{ n.email_tries }} tr{{ 'ies' if n.email_tries != 1 else 'y' }}<div class="tiny muted">{{ n.email_error }}</div>{% elif n.email_status %}<span class="pill pending">{{ n.email_status|replace('_',' ')|capitalize }}</span>{% else %}<span class="muted">in account only</span>{% endif %}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">No messages match.</td></tr>{% endfor %}</table></div>
+<p class="small muted">"Sent" means our mail server accepted it. Customers can always see the same message in their account notifications.</p>
+{% endblock %}

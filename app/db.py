@@ -151,10 +151,21 @@ MIGRATIONS = [
     ("orders", "terms_version", "INTEGER"),                   # site terms version (content_versions.version, NULL = built-in v0)
     ("orders", "comp_terms_id", "INTEGER"),                   # competition-specific conditions that applied (comp_terms.id)
     ("postal_entries", "comp_terms_id", "INTEGER"),
+    # v14: development board (four columns + four questions)
+    ("backlog", "problem", "TEXT"),
+    ("backlog", "who", "TEXT"),
+    ("backlog", "measure", "TEXT"),
+    ("backlog", "risks", "TEXT"),
+    ("backlog", "outcome", "TEXT"),
 ]
 
 # Triggers that use columns added by MIGRATIONS, so they're created after them.
 POST_TRIGGERS = [
+    # No balance can ever go below zero, whatever code path writes the line (withdrawal, checkout, refund, adjustment).
+    """CREATE TRIGGER IF NOT EXISTS ledger_no_negative BEFORE INSERT ON credit_ledger
+       WHEN NEW.amount < 0 AND COALESCE((SELECT SUM(amount) FROM credit_ledger WHERE user_id=NEW.user_id AND kind=NEW.kind), 0)
+            + NEW.amount < 0
+       BEGIN SELECT RAISE(ABORT, 'That would make a wallet balance negative.'); END""",
     # Money and points histories are permanent: mistakes are corrected with a new adjustment line.
     """CREATE TRIGGER IF NOT EXISTS ledger_no_update BEFORE UPDATE ON credit_ledger
        BEGIN SELECT RAISE(ABORT, 'Wallet history is permanent: add an adjustment instead.'); END""",
@@ -328,6 +339,15 @@ def init_db(path, release=None):
             conn.execute("INSERT INTO announcements (message, level, starts_at, created_at) VALUES (?, 'info', "
                          "strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))", (old[0].strip()[:300],))
             conn.execute("UPDATE settings SET value='' WHERE key='announcement'")
+        conn.execute("UPDATE backlog SET kind=CASE kind WHEN 'bug' THEN 'critical_bug' WHEN 'improvement' THEN 'friction' "
+                     "WHEN 'feature' THEN 'idea' ELSE kind END WHERE kind IN ('bug','improvement','feature')")
+        # Mechanics that existed before the sign-off checklist start as signed off, marked for review. Anything added
+        # to the code after this can't be published until someone responsible signs it off in Admin → Compliance.
+        if not conn.execute("SELECT 1 FROM mechanic_signoffs LIMIT 1").fetchone():
+            for m in ("prize_draw", "prize_draw_no_question", "instant_prizes", "free_daily", "game_scratch", "game_spin", "game_box"):
+                conn.execute("INSERT INTO mechanic_signoffs (mechanic, signed_at, responsible, note, checklist, legacy) VALUES "
+                             "(?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), '', 'In use before the sign-off checklist existed — "
+                             "review recommended.', '[]', 1)", (m,))
         skipped = []
         for name, sql in CONSTRAINTS:
             conn.execute("SAVEPOINT c")

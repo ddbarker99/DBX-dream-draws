@@ -1,6 +1,6 @@
 {% set ep = request.endpoint %}
-{% set reports_eps = ('control.finance','control.reports','control.targets','control.liability','control.performance','admin.stats','control.analytics','control.checkout_diagnostics','control.segments','control.experiments') %}
-{% set system_eps = ('control.health','control.releases','admin.audit_log','admin.settings','admin.features','admin.content_list','admin.content_edit','admin.announcements','admin.promos','control.flags','control.backlog','control.backlog_item','control.feedback_admin','control.support_insights') %}
+{% set reports_eps = ('control.finance','control.reports','control.targets','control.liability','control.performance','admin.stats','control.analytics','control.checkout_diagnostics','control.segments','control.experiments','control.risk') %}
+{% set system_eps = ('control.health','control.releases','admin.audit_log','admin.settings','admin.features','admin.content_list','admin.content_edit','admin.announcements','admin.promos','control.flags','control.backlog','control.backlog_item','control.feedback_admin','control.support_insights','control.approvals','control.emergency','control.ops_calendar','control.communications','control.email_previews','control.compliance') %}
 <nav class="adminbar" aria-label="Admin" style="align-items:center">
   <img class="adminbadge" src="{{ url_for('static', filename='brand/admin-160.png') }}" alt="Admin">
   <a class="{{ 'on' if ep == 'control.centre' }}" href="{{ url_for('control.centre') }}">Control Centre</a>
@@ -19,12 +19,15 @@
     <a href="{{ url_for('control.performance') }}">Competition performance</a>
     <a href="{{ url_for('control.checkout_diagnostics') }}">Checkout diagnostics</a>
     <a href="{{ url_for('control.segments') }}">Customer segments</a>
-    <a href="{{ url_for('control.experiments') }}">Experiments</a></div></details>{% endif %}
+    <a href="{{ url_for('control.experiments') }}">Experiments</a>
+    {% if can('audit') %}<a href="{{ url_for('control.risk') }}">Risk dashboard</a>{% endif %}</div></details>{% endif %}
   <details class="admore{{ ' on' if ep in system_eps }}"><summary>More</summary><div>
-    {% if can('cases') %}<a href="{{ url_for('control.support_insights') }}">Support insights</a><a href="{{ url_for('control.feedback_admin') }}">Customer feedback</a><a href="{{ url_for('control.backlog') }}">Development backlog</a>{% endif %}
+    <a href="{{ url_for('control.ops_calendar') }}">Operations calendar</a><a href="{{ url_for('control.approvals') }}">Approvals</a><a href="{{ url_for('control.compliance') }}">Compliance &amp; retention</a>
+    {% if can('users.view') %}<a href="{{ url_for('control.communications') }}">Customer emails log</a>{% endif %}
+    {% if can('cases') %}<a href="{{ url_for('control.support_insights') }}">Support insights</a><a href="{{ url_for('control.feedback_admin') }}">Customer feedback</a><a href="{{ url_for('control.backlog') }}">Development board</a>{% endif %}
     {% if can('flags') %}<a href="{{ url_for('control.flags') }}">Review flags</a>{% endif %}
     {% if can('money') %}<a href="{{ url_for('admin.promos') }}">Promo codes</a>{% endif %}
-    {% if can('settings') %}<a href="{{ url_for('admin.settings') }}">Site settings</a><a href="{{ url_for('admin.announcements') }}">Announcements</a><a href="{{ url_for('admin.content_list') }}">Content &amp; legal pages</a><a href="{{ url_for('admin.features') }}">Features</a>{% endif %}
+    {% if can('settings') %}<a href="{{ url_for('admin.settings') }}">Site settings</a><a href="{{ url_for('admin.announcements') }}">Announcements</a><a href="{{ url_for('admin.content_list') }}">Content &amp; legal pages</a><a href="{{ url_for('admin.features') }}">Features</a><a href="{{ url_for('control.email_previews') }}">Email previews</a><a href="{{ url_for('control.emergency') }}">Emergency lock</a>{% endif %}
     {% if can('audit') %}<a href="{{ url_for('control.health') }}">System health</a><a href="{{ url_for('control.releases') }}">Releases</a><a href="{{ url_for('admin.audit_log') }}">Audit log</a>{% endif %}
   </div></details>
 </nav>

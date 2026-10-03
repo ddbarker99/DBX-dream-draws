@@ -118,3 +118,14 @@ flask --app wsgi make-admin you@example.com
 python tests/qa_crawl.py --serve 5000      # or: a seeded copy with sample competitions
 ```
 `docs/TESTING.md` lists every test suite.
+
+## Phase 7 modules
+| Module | What it does |
+|---|---|
+| `app/activity.py` | Customer activity history and the full data export, built from the permanent records |
+| `app/help.py` | Help Centre articles and typo-tolerant search |
+| `app/approvals.py` | Four-eye approvals: request → a different admin approves (carries it out) or rejects; 48 h expiry |
+| `app/mechanics.py` | Compliance sign-off per competition mechanic; unsigned mechanics block publishing |
+| `app/retention.py` | Retention rules (single source of truth), applied by the nightly `prune` job |
+| `app/status.py` | Site status, emergency purchase lock, public status page data |
+| `app/checks.py` | `after_draw_checks` / `record_draw_audit`: checks kept for every draw, shown on the public draw record |

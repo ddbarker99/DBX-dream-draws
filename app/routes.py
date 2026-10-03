@@ -245,7 +245,8 @@ def competition(slug):
     from .services import comp_terms_current
     from .content import render as render_content
     ct = comp_terms_current(db, c["id"])
-    return render_template("competition.html", c=c, d=data, mine=mine, waiting=waiting, gi=game_info(db, c),
+    stage = comp_stage(db, c, data["state"], snapshot)
+    return render_template("competition.html", c=c, d=data, stage=stage, mine=mine, waiting=waiting, gi=game_info(db, c),
                            conditions=ct if ct and ct["body"] else None, conditions_html=render_content(ct["body"]) if ct else "",
                            claimed=claimed, share=share, board=instant_board(db, c["id"], reveal=finished),
                            winner_name=public_name(winner["name"]) if winner else None,
@@ -253,6 +254,69 @@ def competition(slug):
                            category=CATEGORY_NAMES.get(c["category"], "Other"), max_picks=MAX_PICKS,
                            tiers_json=json.dumps(tiers), held=held, allowance=allowance, draw_rec=draw_rec,
                            draw_history=draw_history, snapshot=snapshot, watching=watching)
+
+
+STAGES = [("live", "Live"), ("closing", "Closing soon"), ("closed", "Closed"), ("pending", "Draw pending"),
+          ("drawn", "Draw complete"), ("fulfilled", "Prize delivered")]
+
+
+def comp_stage(db, c, state, snapshot=None):
+    """Where a prize draw is in its life, so customers never have to guess: Live → Closing soon → Closed (entries being
+    finalised) → Draw pending (entry list frozen) → Draw complete → Prize delivered. Returns (key, steps) or None."""
+    if c["game_type"] or state == "cancelled":
+        return None
+    if state == "live":
+        key = "closing" if (parse_iso(c["ends_at"]) - utcnow()).total_seconds() < 86400 else "live"
+    elif state in ("soldout", "ended"):
+        key = "pending" if snapshot else "closed"
+    else:
+        claim = db.execute("SELECT status FROM prize_claims WHERE competition_id=? ORDER BY id DESC LIMIT 1", (c["id"],)).fetchone()
+        key = "fulfilled" if claim and claim["status"] == "delivered" else "drawn"
+    keys = [k for k, _ in STAGES]
+    at = keys.index(key)
+    return key, [{"key": k, "label": label, "state": "done" if i < at else ("current" if i == at else "todo")}
+                 for i, (k, label) in enumerate(STAGES)]
+
+
+def draw_record(db, c):
+    """Everything a customer needs to check a finished draw, in the order it happened."""
+    draws = db.execute("SELECT d.*, t.postal_entry_id IS NOT NULL AS winner_postal FROM draws d LEFT JOIN tickets t "
+                       "ON t.id=d.winning_ticket_id WHERE d.competition_id=? ORDER BY d.id", (c["id"],)).fetchall()
+    snapshot = db.execute("SELECT * FROM entry_snapshots WHERE competition_id=? ORDER BY id DESC LIMIT 1", (c["id"],)).fetchone()
+    return draws, snapshot
+
+
+@bp.route("/c/<slug>/draw")
+def draw_verify(slug):
+    """A plain-English record of one finished draw: when the entry list was frozen, how many paid and free entries it
+    held, when and how the winner was picked, and how anyone can check the result for themselves."""
+    db = get_db()
+    c = db.execute("SELECT * FROM competitions WHERE slug=? AND status='drawn' AND game_type=''", (slug,)).fetchone()
+    if c is None:
+        abort(404)
+    draws, snapshot = draw_record(db, c)
+    if not draws:
+        abort(404)
+    winner = winner_details(db, c)
+    mine = [r[0] for r in db.execute("SELECT number FROM tickets WHERE competition_id=? AND user_id=? AND status='issued' "
+                                     "ORDER BY number", (c["id"], g.user["id"]))] if g.user else []
+    audits = db.execute("SELECT phase, ok, detail FROM draw_audits WHERE draw_id=? ORDER BY id", (draws[-1]["id"],)).fetchall()
+    return render_template("draw_verify.html", c=c, draws=draws, last=draws[-1], snapshot=snapshot, mine=mine, audits=audits,
+                           winner_name=public_name(winner["name"]) if winner else None,
+                           winner_number=winner["number"] if winner else draws[-1]["winning_number"],
+                           stage=comp_stage(db, c, "drawn", snapshot))
+
+
+@bp.route("/c/<slug>/draw/entries.txt")
+def draw_entries(slug):
+    """The frozen list of eligible ticket numbers for the latest draw, exactly as it was hashed (numbers only, no names)."""
+    db = get_db()
+    c = db.execute("SELECT id FROM competitions WHERE slug=? AND status='drawn' AND game_type=''", (slug,)).fetchone()
+    d = c and db.execute("SELECT entries FROM draws WHERE competition_id=? ORDER BY id DESC LIMIT 1", (c["id"],)).fetchone()
+    if not d:
+        abort(404)
+    return Response(",".join(str(n) for n in sorted(json.loads(d["entries"]))), mimetype="text/plain",
+                    headers={"Content-Disposition": f"inline; filename={slug}-entries.txt"})
 
 
 @bp.route("/c/<slug>/numbers")
@@ -360,6 +424,9 @@ def results():
     db = get_db()
     q = request.args.get("q", "").strip()[:60]
     year = request.args.get("year", type=int)
+    month = request.args.get("month", type=int) if year else None
+    cat = request.args.get("cat", "")
+    cat = cat if cat in CATEGORY_NAMES else ""
     page = max(1, request.args.get("page", 1, type=int))
     sql, args = ("SELECT c.*, d.winning_number, d.entry_count, (SELECT COUNT(*) FROM draws x WHERE x.competition_id=c.id) AS n_draws "
                  "FROM competitions c LEFT JOIN draws d ON d.id=(SELECT MAX(id) FROM draws WHERE competition_id=c.id) "
@@ -371,6 +438,12 @@ def results():
     if year:
         sql += " AND substr(c.drawn_at,1,4)=?"
         args.append(str(year))
+    if month and 1 <= month <= 12:
+        sql += " AND substr(c.drawn_at,6,2)=?"
+        args.append(f"{month:02d}")
+    if cat:
+        sql += " AND c.category=?"
+        args.append(cat)
     if mine:
         sql += " AND c.id IN (SELECT competition_id FROM tickets WHERE user_id=? AND status='issued')"
         args.append(g.user["id"])
@@ -391,7 +464,10 @@ def results():
                       "won": bool(nums) and number in nums})
     years = [r[0] for r in db.execute("SELECT DISTINCT substr(drawn_at,1,4) FROM competitions WHERE status='drawn' AND game_type='' "
                                       "ORDER BY 1 DESC")]
-    return render_template("results.html", items=items, q=q, year=year, years=years, page=page, mine=mine,
+    cats = [(k, CATEGORY_NAMES[k]) for (k,) in db.execute("SELECT DISTINCT category FROM competitions WHERE status='drawn' "
+                                                         "AND game_type='' ORDER BY 1") if k in CATEGORY_NAMES]
+    return render_template("results.html", items=items, q=q, year=year, years=years, page=page, mine=mine, month=month,
+                           cat=cat, cats=cats,
                            pages=max(1, -(-total // 30)), total=total)
 
 
@@ -841,6 +917,10 @@ def checkout_pay(cid):
     c = _own_checkout(cid)
     if c["status"] != "pending" or c["cash_due"] == 0:
         return redirect(url_for("public.checkout_done", cid=cid))
+    from .status import payments_paused
+    if payments_paused():
+        flash(payments_paused(), "error")
+        return redirect(url_for("public.basket"))
     if c["pay_url"]:
         return redirect(c["pay_url"], code=303)
     return render_template("checkout_wait.html", c=c)       # payment page still being prepared
@@ -1130,6 +1210,12 @@ PAGES = {"free-entry": "free_entry.html", "terms": "terms.html", "fair-draws": "
 def page(page):
     """Built-in page, unless staff have published an edited version (then the latest version, with its history)."""
     from .content import EDITABLE, current, render
+    if page == "faq":                     # the Help Centre: built-in articles, plus any note staff publish
+        from . import help as helpc
+        q = request.args.get("q", "").strip()[:80]
+        note = current("faq")
+        return render_template("faq.html", topics=helpc.TOPICS, q=q, results=helpc.search(q) if q else None,
+                               note=render(note["body"]) if note else None)
     if page in EDITABLE:
         cur = current(page)
         if cur:
@@ -1190,6 +1276,14 @@ def transparency():
     return render_template("transparency.html", facts=facts, stats=site_stats(db))
 
 
+@bp.route("/status")
+def status_page():
+    """Is anything wrong right now? One honest answer, so customers don't keep retrying a broken action."""
+    from .status import public_status
+    worst, rows = public_status(get_db())
+    return render_template("status.html", worst=worst, rows=rows)
+
+
 @bp.route("/how-it-works")
 def how_it_works():
     return render_template("how.html")
@@ -1215,7 +1309,8 @@ def support_centre():
     wds = db.execute("SELECT id, amount, status, created_at FROM withdrawals WHERE user_id=? ORDER BY id DESC LIMIT 10", (uid,)).fetchall()
     form = request.form if request.method == "POST" else {"topic": request.args.get("topic", ""),
                                                            "checkout_id": request.args.get("order", ""),
-                                                           "competition_id": request.args.get("comp", "")}
+                                                           "competition_id": request.args.get("comp", ""),
+                                                           "withdrawal_id": request.args.get("withdrawal", "")}
     errors = {}
     if request.method == "POST":
         topic = request.form.get("topic", "")
@@ -1325,6 +1420,9 @@ def contact():
                     "1 working day.\n\nYour message:\n" + msg, heading="Message received")
         current_app.logger.warning("Contact form from %s: %s", email, topic)
         return redirect(url_for("public.contact", sent=1))
+    ref = request.args.get("ref", "")
+    if not form and len(ref) == 10 and ref.startswith("DBX-") and ref[4:].isalnum():
+        form = {"topic": "Something else", "message": f"I saw an error with reference {ref.upper()}. What I was doing: "}
     return render_template("contact.html", form=form, errors={}, topics=CONTACT_TOPICS, sent=request.args.get("sent"))
 
 
@@ -1514,6 +1612,11 @@ def reset(token):
             revoke_others(r["user_id"])
             audit(db, "account.password_reset", f"user:{r['user_id']}", "Password reset by email link; all devices signed out",
                   actor=False)
+            u = db.execute("SELECT email FROM users WHERE id=?", (r["user_id"],)).fetchone()
+            tell(u["email"], "Your password was reset", kind="security", key=f"pwreset:{r['user_id']}:{iso(utcnow())[:16]}",
+                 user_id=r["user_id"], link=url_for("public.account", tab="profile"), heading="Password reset",
+                 body="Your password was just reset using the link we emailed you, and every device was signed out. If this "
+                      "wasn't you, contact us straight away.")
             flash("Password updated — log in with your new password.")
             return redirect(url_for("public.login"))
     return render_template("reset.html")
@@ -1880,9 +1983,27 @@ def prize_claim(claim_id):
     current = step_of.get(c["status"], c["status"])
     at = CLAIM_STEPS.index(current) if current in CLAIM_STEPS else -1
     return render_template("prize.html", c=c, info=CLAIM_CUSTOMER.get(c["status"], ("", "")), steps=CLAIM_STEPS, at=at,
-                           names={"selected": "You won", "verification": "Details checked", "chosen": "Prize chosen",
-                                  "fulfilment": "On its way", "delivered": "Received"}, events=events,
+                           names={"selected": "Winner confirmed", "verification": "Verification", "chosen": "Prize arranged",
+                                  "fulfilment": "Dispatched / being paid", "delivered": "Completed"}, events=events,
                            can_change=c["status"] not in ("fulfilment", "delivered", "forfeited"))
+
+
+@bp.route("/account/activity")
+@login_required
+def account_activity_page():
+    """Everything meaningful that has happened on the account, newest first, in one list."""
+    from .activity import account_activity
+    return render_template("activity.html", events=account_activity(get_db(), g.user["id"]))
+
+
+@bp.route("/account/export/everything.json")
+@login_required
+def account_export_all():
+    """A complete copy of the customer's data in one file (right of access), without needing to contact us."""
+    from .activity import data_export_json
+    audit(get_db(), "account.data_export", f"user:{g.user['id']}", "Downloaded a full copy of their data")
+    return Response(data_export_json(get_db(), g.user["id"]), mimetype="application/json",
+                    headers={"Content-Disposition": "attachment; filename=dbx-my-data.json"})
 
 
 @bp.route("/account/export/<kind>.csv")

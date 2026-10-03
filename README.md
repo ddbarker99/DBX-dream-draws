@@ -239,3 +239,10 @@ python -m unittest discover tests
 - **Staging demo:** `docker compose -p dbx-staging exec web flask --app wsgi demo-lifecycle` runs a whole competition with test money.
 - **How we work from here:** `docs/SIMPLICITY-REVIEW.md` — measure → find a problem → investigate → improve → test → release → measure again.
 
+
+## v14 trust, transparency & customer confidence (Phase 7)
+- **Customers:** every competition shows its stage (Live → Closing soon → Closed → Draw pending → Draw complete → Prize delivered); every finished draw has a plain-English **draw record** (`/c/<slug>/draw`) with the frozen entry list to download, the checks run before and after the draw, and step-by-step instructions to recompute the winner; results filter by month and category; order pages are permanent **receipts** (reference DBX-000123); support forms arrive pre-filled with the order, competition or withdrawal; **Service status** page (`/status`); **Help Centre** with 12 searchable topics (`/faq`); one **account activity** history (`/account/activity`); **download all my data** (JSON); new-device and password-reset security notices; errors show a reference (DBX-XXXXXX) instead of technical detail.
+- **Staff:** **four-eye approvals** for large wallet adjustments, redraws and admin-access changes (`four_eyes` setting: auto/on/off); **emergency lock** to stop all purchases while keeping accounts working (optionally holding automatic draws); **after-draw checks** with alerts; operations calendar; risk dashboard; customer emails log with retry; email previews; **compliance sign-off** per competition mechanic (new mechanics can't be published until signed off); written **retention rules** applied nightly; error-reference search.
+- **Database:** wallet balances can't go negative (trigger); approvals and sign-offs are permanent.
+- **How we decide what to build:** `docs/DEVELOPMENT-BOARD.md` (four columns, four questions). Next milestone: `docs/FIRST-100-USERS.md`.
+- New docs: `docs/RETENTION.md`, `docs/NEW-MECHANIC-CHECKLIST.md`, RUNBOOK §17–20.

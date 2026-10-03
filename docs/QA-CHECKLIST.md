@@ -215,6 +215,25 @@ Trigger each and check subject, wording, links and that it renders on a phone: e
 | Content editor: legal page versions kept and listed; competition conditions versioned per entry | Auto | |
 | `flask demo-lifecycle` on staging completes to "delivered" | Auto + manual on staging | |
 
+## 13d. Phase 7 (trust & transparency)
+- [ ] A live competition shows the stage bar with "Live" (or "Closing soon" in its last 24 hours)
+- [ ] A finished competition: stage "Draw complete"; "Full draw record" opens `/c/<slug>/draw`; the entry list downloads;
+      the checks before/after show as passed
+- [ ] Results: filter by year → month → category; "Only draws I entered" works; each row links to its draw record
+- [ ] An order page says "receipt", shows DBX-000123, the exact time and "Print or save as PDF"; "Ask us about order #…"
+      opens support with the order already chosen
+- [ ] `/status` says everything is working; footer links to it
+- [ ] Help Centre: topic chips jump to sections; search "withdraw" and a typo like "postel" both find answers
+- [ ] My account → Full account activity lists entries, draws and security events; "Download a complete copy of your
+      data" downloads JSON (no password hash inside)
+- [ ] Signing in from a new browser creates a "New sign-in" notification
+- [ ] Admin → More → Emergency lock: lock → checkout refuses with a calm message, `/status` shows "Affected"; unlock
+- [ ] With two administrators: a redraw or a wallet adjustment over the limit goes to Approvals; the requester can't
+      approve it; the other admin can
+- [ ] Compliance & retention: all existing mechanics listed; retention table shows
+- [ ] Risk dashboard, Operations calendar, Customer emails log, Email previews all open
+- [ ] Development board shows four columns; an item can't be planned until the four questions are answered
+
 ## 14. Production smoke test (after every deploy)
 
 Click every link in the header, footer and mobile menu, and every button on: home, one competition, one game, basket, checkout (Stripe test mode on a staging copy), account (every tab), free entry, terms. Confirm `DEMO_PAYMENTS=0`, Stripe live keys, webhook secret and SMTP are set (the admin dashboard's setup checklist shows any that are missing).

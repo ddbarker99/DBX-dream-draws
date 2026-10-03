@@ -1049,11 +1049,17 @@ def user_detail(uid):
                 flash("Give a reason for the adjustment (it's kept permanently in their history).", "error")
                 return redirect(url_for("admin.user_detail", uid=uid))
             limit = current_app.config.get("LARGE_ADJUSTMENT", 10000)
+            kind = "cash" if f.get("kind") == "cash" else "credit"
+            from . import approvals
+            if abs(amt) > limit and approvals.required(db, "wallet_adjust", g.user):
+                approvals.request_approval(db, "wallet_adjust", f"user:{uid}", {"uid": uid, "amount": amt, "kind": kind, "reason": reason},
+                                           f"{amt / 100:+.2f} £ {kind} for {u['email']}", reason, g.user)
+                flash(f"Adjustments over £{limit / 100:.0f} need a second administrator — sent for approval. Nothing changes until it's approved.")
+                return redirect(url_for("admin.user_detail", uid=uid))
             if abs(amt) > limit and not can(g.user, "money.large"):
                 flash(f"Adjustments over £{limit / 100:.0f} need an Administrator.", "error")
                 audit(db, "wallet.adjust_refused", f"user:{uid}", f"{amt:+}p over the large-adjustment limit")
                 return redirect(url_for("admin.user_detail", uid=uid))
-            kind = "cash" if f.get("kind") == "cash" else "credit"
             with write_txn() as wdb:
                 if amt < 0 and balance(wdb, uid, kind) + amt < 0:
                     flash("That would make their balance negative.", "error")
@@ -1075,6 +1081,13 @@ def user_detail(uid):
             flash("Email marked as verified.")
         elif f.get("action") == "admin" and uid != g.user["id"]:
             role = f.get("role") if f.get("role") in ROLES else None
+            from . import approvals
+            if approvals.required(db, "admin_access", g.user):
+                approvals.request_approval(db, "admin_access", f"user:{uid}", {"uid": uid, "role": role},
+                                           f"Set admin access for {u['email']} to {ROLES[role][0] if role else 'none'}",
+                                           f.get("reason", ""), g.user)
+                flash("Admin access changes need a second administrator — sent for approval.")
+                return redirect(url_for("admin.user_detail", uid=uid))
             if role:
                 db.execute("UPDATE users SET is_admin=1, admin_role=? WHERE id=?", (role, uid))
             else:
@@ -1479,6 +1492,17 @@ def redraw_comp(cid):
     if request.form.get("confirm", "").strip().upper() != "REDRAW":
         flash("Type REDRAW to confirm.", "error")
         return redirect(url_for("admin.entries", cid=cid) + "#draw")
+    from . import approvals
+    if approvals.required(get_db(), "redraw", g.user):
+        reason = request.form.get("reason", "").strip()
+        if len(reason) < 10:
+            flash("Explain why a redraw is needed (at least 10 characters) — it's published in the draw record.", "error")
+            return redirect(url_for("admin.entries", cid=cid) + "#draw")
+        title = get_db().execute("SELECT title FROM competitions WHERE id=?", (cid,)).fetchone()["title"]
+        approvals.request_approval(get_db(), "redraw", f"comp:{cid}", {"cid": cid, "reason": reason},
+                                   f"Redraw “{title}”", reason, g.user)
+        flash("A redraw changes a published result, so a second administrator has to approve it — sent for approval.")
+        return redirect(url_for("admin.entries", cid=cid) + "#draw")
     try:
         n = redraw(cid, request.form.get("reason", ""), g.user)
     except PurchaseError as e:
@@ -1537,7 +1561,8 @@ def claim_detail(claim_id):
                 head, nxt = CLAIM_CUSTOMER.get(new, ("Update", ""))
                 tell(u["email"], f"Your prize: {head} — {comp['title']}", f"Hi {u['name'].split()[0]},\n\n{head}.\n\n{nxt}",
                      kind="win", key=f"claim:{claim_id}:{new}", user_id=before["user_id"],
-                     link=url_for("public.prize_claim", claim_id=claim_id), title=f"{comp['title']}: {head}")
+                     link=url_for("public.prize_claim", claim_id=claim_id), title=f"{comp['title']}: {head}", heading=head,
+                     button=("See your prize", current_app.config["SITE_URL"] + url_for("public.prize_claim", claim_id=claim_id)))
             flash("Saved.")
         except PurchaseError as e:
             flash(str(e), "error")

@@ -13,7 +13,7 @@ from . import db as dbmod
 from .db import parse_iso, utcnow
 
 UK = ZoneInfo("Europe/London")
-ASSET_V = "24"   # bump when style.css or images change, so browsers fetch the new copy
+ASSET_V = "26"   # bump when style.css or images change, so browsers fetch the new copy
 _PLACEHOLDERS = ("example street", "example.com", "yourdomain", "ab1 2cd")
 
 
@@ -230,6 +230,14 @@ def create_app(test_config=None):
             "site_state": __import__("app.status", fromlist=["state"]).state(),
         }
 
+    @app.template_filter("fromjson")
+    def fromjson(text):
+        import json as _json
+        try:
+            return _json.loads(text or "[]")
+        except ValueError:
+            return []
+
     @app.template_filter("gbp")
     def gbp(pence):
         pence = int(pence or 0)
@@ -283,17 +291,19 @@ def create_app(test_config=None):
     @app.errorhandler(500)
     def server_error(e):
         from flask import render_template
+        ref = None
         try:
             from . import metrics
             db = dbmod.get_db()
             if db.in_transaction:
                 db.execute("ROLLBACK")
-            metrics.record_error(db, getattr(e, "original_exception", None) or e, request.endpoint, request.path,
-                                 request.method, g.user["id"] if g.get("user") else None)
+            ref = metrics.record_error(db, getattr(e, "original_exception", None) or e, request.endpoint, request.path,
+                                       request.method, g.user["id"] if g.get("user") else None)
         except Exception:
             app.logger.exception("couldn't record the error")
-        return render_template("error.html", code=500, heading="Sorry, that didn't work",
-                               msg="Something broke on our side. Nothing has been charged twice — please try again in a minute."), 500
+        return render_template("error.html", code=500, heading="Something went wrong", ref=ref,
+                               msg="Something broke on our side. Nothing has been charged twice — please try again in a minute. "
+                                   "If it keeps happening, contact us and quote the reference below."), 500
 
     @app.cli.command("make-admin")
     @click.argument("email")

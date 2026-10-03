@@ -35,6 +35,7 @@
         {% for kind, text in d.badges %}<span class="pill {{ kind }}">{{ text }}</span>{% endfor %}
       </div>
       <h1 id="comp-title">{{ c.title }}</h1>
+      {% include "_stages.html" %}
       {% if user and (live or st in ('soldout', 'ended')) and not c.free_daily and feature('watchlist') %}
       <details class="watchbox"{% if watching %} open{% endif %}><summary>{{ '♥ Saved — reminders' if watching else '♡ Save & remind me' }}</summary>
         <form method="post" action="{{ url_for('public.watch', slug=c.slug) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}">
@@ -76,7 +77,7 @@
     {% endif %}
 
     {% if c.status == 'drawn' %}
-      <div class="winner-banner" role="status"><span class="small" style="text-transform:uppercase;letter-spacing:.08em">Completed · drawn {{ c.drawn_at|uktime('%d %b %Y, %H:%M') }}</span><br>Winning ticket <b>#{{ winner_number }}</b><br>Congratulations {{ winner_name }}! <a href="#draw-h">See the draw record</a> · <a href="{{ url_for('public.page', page='fair-draws') }}">check it yourself</a></div>
+      <div class="winner-banner" role="status"><span class="small" style="text-transform:uppercase;letter-spacing:.08em">Completed · drawn {{ c.drawn_at|uktime('%d %b %Y, %H:%M') }}</span><br>Winning ticket <b>#{{ winner_number }}</b><br>Congratulations {{ winner_name }}! <a href="{{ url_for('public.draw_verify', slug=c.slug) }}">See the draw record</a> · <a href="{{ url_for('public.page', page='fair-draws') }}">check it yourself</a></div>
     {% elif st == 'ended' %}
       <div class="notice" role="status">{% if c.game_type %}<span>This game has closed. Any prizes not revealed are paid to winners automatically.</span>{% else %}<span><b>Entries have closed — draw pending.</b> The draw takes place {{ 'automatically' if c.auto_draw else 'live' }} at {{ c.ends_at|uktime('%H:%M on %a %d %b') }}{% if not c.auto_draw and c.live_url %} (<a href="{{ c.live_url }}" target="_blank" rel="noopener">watch</a>){% endif %}, as soon as any last payments and postal entries are processed. The result will appear right here — this page updates by itself.</span>{% endif %}</div>
     {% elif st == 'soldout' %}
@@ -167,6 +168,7 @@
     {% if mine %}
     <section class="panel" aria-labelledby="mine-h"><h2 id="mine-h" style="font-size:18px">Your {{ unit }}s ({{ mine|length }})</h2>
       <div class="tickets">{% for t in mine %}<span class="{{ 'win' if t.number == winner_number else ('iw' if t.win) }}">#{{ t.number }}{% if t.number == winner_number %} · winner{% elif t.win %} · won {{ t.win }}{% endif %}</span>{% endfor %}</div>
+      <p class="tiny muted" style="margin:var(--s2) 0 0"><a href="{{ url_for('public.account', tab='entries') }}">Receipts in My tickets</a> · <a href="{{ url_for('public.support_centre', topic='Entry', comp=c.id) }}">Question about this competition?</a></p>
     </section>
     {% endif %}
   </div></div>
@@ -219,6 +221,7 @@
           {% if snapshot %}<div><dt>Entry list frozen</dt><dd>{{ snapshot.taken_at|uktime }} · {{ '{:,}'.format(snapshot.entry_count) }} entries ({{ snapshot.paid_count }} paid, {{ snapshot.postal_count }} free by post)</dd></div>{% endif %}
           {% if c.live_url %}<div><dt>Watch</dt><dd><a href="{{ c.live_url }}" target="_blank" rel="noopener">Live stream</a></dd></div>{% endif %}
         </dl>
+        {% if c.status == 'drawn' %}<p><a class="btn ghost small" href="{{ url_for('public.draw_verify', slug=c.slug) }}">Full draw record &amp; how to check it</a></p>{% endif %}
         <p class="small muted">The draw goes ahead at the time shown even if not every ticket sells, and selling out doesn't bring it forward. The winner is picked from every paid and free entry using a method anyone can check — <a href="{{ url_for('public.page', page='fair-draws') }}">how our draws work</a>.</p>
         <details class="faq" style="margin:var(--s3) 0 0">
           <summary>Proof of fairness</summary>

@@ -24,6 +24,6 @@
     {% endif %}
   </dl>
 </section>
-<p class="small muted" style="margin-top:var(--s4)">Check it yourself: your number is in the <a href="{{ url_for('public.entry_list', slug=t.slug, q=t.number) }}">public entry list</a>{% if t.cstatus == 'drawn' %}, and the <a href="{{ url_for('public.competition', slug=t.slug) }}#draw-h">draw record</a> lets anyone recompute the winner{% endif %}. Something not right? <a href="{{ url_for('public.support_centre', topic='Entry', comp=t.competition_id) }}">Ask us about this ticket</a>.</p>
+<p class="small muted" style="margin-top:var(--s4)">Check it yourself: your number is in the <a href="{{ url_for('public.entry_list', slug=t.slug, q=t.number) }}">public entry list</a>{% if t.cstatus == 'drawn' %}, and the <a href="{{ url_for('public.draw_verify', slug=t.slug) }}">draw record</a> lets anyone recompute the winner{% endif %}. Something not right? <a href="{{ url_for('public.support_centre', topic='Entry', comp=t.competition_id) }}">Ask us about this ticket</a>.</p>
 </div>
 {% endblock %}

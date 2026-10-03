@@ -130,6 +130,12 @@ def work_queues(db):
         items.append((f"{n_other} fraud / abuse flag{'s' if n_other != 1 else ''} to review", url_for("control.flags"), "", "warn"))
     queue("customers", "Customers & support", url_for("control.cases"), items)
 
+    from .approvals import pending as pending_approvals
+    appr = [(f"{a['summary']}", url_for("control.approvals"), f"asked by {a['requester']}", "bad") for a in pending_approvals(db)]
+    if appr:
+        q.insert(0, {"key": "approvals", "title": "Approvals waiting", "link": url_for("control.approvals"), "rows": appr[:5],
+                     "total": len(appr)})
+
     from .jobs import health_checks
     items = [(c["name"], url_for("control.health"), c["detail"], "bad") for c in health_checks(db) if not c["ok"]]
     n_err = _sum(db, "SELECT COUNT(*) FROM error_log WHERE resolved_at IS NULL")
@@ -167,7 +173,8 @@ def centre():
                      "postal": _sum(db, "SELECT COUNT(*) FROM postal_entries WHERE competition_id=? AND status='received'", c["id"]),
                      "hours": (parse_iso(c["ends_at"]) - utcnow()).total_seconds() / 3600})
     from .jobs import health_checks
-    return render_template("admin/centre.html", money=money, attention=attention_items(db), live=live, queues=work_queues(db),
+    from .status import emergency as _emergency
+    return render_template("admin/centre.html", emergency_lock=_emergency(), money=money, attention=attention_items(db), live=live, queues=work_queues(db),
                            ending=[x for x in live if 0 < x["hours"] <= 48], stage_names=LIFECYCLE_NAMES,
                            instant_left=sum(x["instant_left"] for x in live),
                            instant_value=_sum(db, "SELECT SUM(ip.value) FROM instant_prizes ip JOIN competitions c ON c.id=ip.competition_id "
@@ -298,8 +305,14 @@ def experiments():
 
 # ---------------- feedback & development backlog ----------------
 
-BACKLOG_KINDS = (("bug", "Bug"), ("improvement", "Improvement"), ("feature", "New feature"))
-BACKLOG_STATUSES = (("open", "Open"), ("planned", "Planned"), ("done", "Done"), ("wont_do", "Won't do"))
+# The development board's four columns. Nothing is built just because it sounds good: before an item can be planned,
+# the four questions below must be answered.
+BACKLOG_KINDS = (("critical_bug", "Critical bugs"), ("friction", "Customer friction"), ("operations", "Business / operations"),
+                 ("idea", "Future ideas"))
+BACKLOG_ALIASES = {"bug": "critical_bug", "improvement": "friction", "feature": "idea"}       # names used before v14
+BACKLOG_QUESTIONS = (("problem", "What problem does this solve?"), ("who", "Who has this problem?"),
+                     ("measure", "How will we know the change improved it?"), ("risks", "What new risks does it introduce?"))
+BACKLOG_STATUSES = (("open", "Proposed"), ("planned", "Planned"), ("done", "Done"), ("wont_do", "Won't do"))
 
 
 def add_evidence(db, backlog_id, source, source_id, note=None):
@@ -318,7 +331,21 @@ def backlog():
     if request.method == "POST":
         f = request.form
         source, sid = f.get("source"), int(f["source_id"]) if f.get("source_id", "").isdigit() else None
+        if f.get("answers") and f.get("bid", "").isdigit():
+            sets = {k: f.get(k, "").strip()[:1000] or None for k, _ in BACKLOG_QUESTIONS}
+            kind = BACKLOG_ALIASES.get(f.get("kind"), f.get("kind"))
+            sets["kind"] = kind if kind in dict(BACKLOG_KINDS) else "friction"
+            sets["outcome"] = f.get("outcome", "").strip()[:1000] or None
+            db.execute(f"UPDATE backlog SET {', '.join(k + '=?' for k in sets)}, updated_at=? WHERE id=?",
+                       (*sets.values(), iso(utcnow()), int(f["bid"])))
+            flash("Saved.")
+            return redirect(url_for("control.backlog_item", bid=int(f["bid"])))
         if f.get("status") and f.get("bid", "").isdigit():
+            b = db.execute("SELECT * FROM backlog WHERE id=?", (int(f["bid"]),)).fetchone()
+            if f["status"] == "planned" and b and not all((b[k] or "").strip() for k, _ in BACKLOG_QUESTIONS):
+                flash("Answer all four questions before planning this — what problem, who has it, how we'll measure it, "
+                      "and what new risks it brings.", "error")
+                return redirect(url_for("control.backlog_item", bid=int(f["bid"])))
             if f["status"] in dict(BACKLOG_STATUSES):
                 db.execute("UPDATE backlog SET status=?, updated_at=? WHERE id=?", (f["status"], iso(utcnow()), int(f["bid"])))
                 audit(db, "backlog.status", f"backlog:{f['bid']}", f["status"])
@@ -331,18 +358,27 @@ def backlog():
                 flash("Give the problem a short, clear title.", "error")
                 return redirect(request.referrer or url_for("control.backlog"))
             now = iso(utcnow())
-            bid = db.execute("INSERT INTO backlog (kind, title, detail, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-                             (f.get("kind") if f.get("kind") in dict(BACKLOG_KINDS) else "improvement", title,
-                              f.get("detail", "").strip()[:4000] or None, g.user["id"], now, now)).lastrowid
+            kind = BACKLOG_ALIASES.get(f.get("kind"), f.get("kind"))
+            bid = db.execute("INSERT INTO backlog (kind, title, detail, created_by, created_at, updated_at, problem, who, measure, risks) "
+                             "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                             (kind if kind in dict(BACKLOG_KINDS) else "friction", title,
+                              f.get("detail", "").strip()[:4000] or None, g.user["id"], now, now,
+                              *[f.get(k, "").strip()[:1000] or None for k, _ in BACKLOG_QUESTIONS])).lastrowid
             audit(db, "backlog.create", f"backlog:{bid}", title)
         if source in ("case", "feedback", "error") and sid:
             add_evidence(db, bid, source, sid, f.get("note"))
         flash("Added to the backlog.")
         return redirect(url_for("control.backlog_item", bid=bid))
-    show = request.args.get("show", "open")
-    rows = db.execute("SELECT b.*, (SELECT COUNT(*) FROM backlog_evidence e WHERE e.backlog_id=b.id) AS evidence FROM backlog b "
-                      "WHERE b.status=? ORDER BY evidence DESC, b.updated_at DESC", (show,)).fetchall()
-    return render_template("admin/backlog.html", rows=rows, show=show, kinds=BACKLOG_KINDS, statuses=BACKLOG_STATUSES)
+    show = request.args.get("show", "board")
+    if show == "board":
+        rows = db.execute("SELECT b.*, (SELECT COUNT(*) FROM backlog_evidence e WHERE e.backlog_id=b.id) AS evidence FROM backlog b "
+                          "WHERE b.status IN ('open','planned') ORDER BY b.status='planned' DESC, evidence DESC, b.updated_at DESC").fetchall()
+    else:
+        rows = db.execute("SELECT b.*, (SELECT COUNT(*) FROM backlog_evidence e WHERE e.backlog_id=b.id) AS evidence FROM backlog b "
+                          "WHERE b.status=? ORDER BY b.updated_at DESC", (show,)).fetchall()
+    columns = [(k, label, [r for r in rows if r["kind"] == k]) for k, label in BACKLOG_KINDS]
+    return render_template("admin/backlog.html", rows=rows, columns=columns, show=show, kinds=BACKLOG_KINDS, statuses=BACKLOG_STATUSES,
+                           questions=BACKLOG_QUESTIONS)
 
 
 @bp.route("/backlog/<int:bid>")
@@ -366,7 +402,8 @@ def backlog_item(bid):
         else:
             er = db.execute("SELECT error, count FROM error_log WHERE id=?", (e["source_id"],)).fetchone()
             ev.append((e, f"Server error ×{er['count']}" if er else "Server error", er["error"] if er else "", url_for("control.targets") + "#errors"))
-    return render_template("admin/backlog_item.html", b=b, ev=ev, kinds=dict(BACKLOG_KINDS), statuses=BACKLOG_STATUSES)
+    return render_template("admin/backlog_item.html", b=b, ev=ev, kinds=BACKLOG_KINDS, statuses=BACKLOG_STATUSES,
+                           questions=BACKLOG_QUESTIONS)
 
 
 @bp.route("/feedback")
@@ -397,6 +434,13 @@ def search():
     def hit(group, label, link, meta=""):
         groups.setdefault(group, []).append((label, link, meta))
 
+    if q and _re.fullmatch(r"(?i)DBX-?\d+", q):        # receipt (DBX-000123) and withdrawal (DBX123) references
+        q = ("order " if "-" in q else "w ") + str(int(_re.sub(r"\D", "", q)))
+    if q and _re.fullmatch(r"(?i)DBX-[A-Z0-9]{6}", q) and can(g.user, "audit"):
+        e = db.execute("SELECT r.*, l.signature, l.error, l.trace, l.count, l.first_at, l.last_at, l.resolved_at, l.id AS eid "
+                       "FROM error_refs r LEFT JOIN error_log l ON l.id=r.error_id WHERE r.ref=?", (q.upper(),)).fetchone()
+        if e:
+            return render_template("admin/error_ref.html", e=e)
     if q:
         low = q.lower()
         ref = _re.fullmatch(r"(?i)(order|checkout|c|w|withdrawal|d|deposit|case|t|ticket|#)\s*#?(\d+)", q)
@@ -1282,3 +1326,271 @@ def performance():
     return render_template("admin/performance.html", rows=rows, now=now, prev=prev,
                            start=start.strftime("%Y-%m-%d"), end=(end - timedelta(days=1)).strftime("%Y-%m-%d"),
                            pstart=pstart.strftime("%d %b"), pend=(pend - timedelta(days=1)).strftime("%d %b"))
+
+
+# ---------------- Phase 7: approvals, emergency lock, calendar, risk, communications ----------------
+
+@bp.route("/approvals", methods=["GET", "POST"])
+@require("comps.view")
+def approvals():
+    """Four-eye approvals: a second administrator approves the highest-impact actions before they happen."""
+    from . import approvals as ap
+    from .services import get_setting, set_setting
+    db = get_db()
+    if request.method == "POST":
+        f = request.form
+        if f.get("four_eyes") and can(g.user, "settings"):
+            if f["four_eyes"] in ("auto", "on", "off"):
+                set_setting("four_eyes", f["four_eyes"])
+                audit(db, "settings.four_eyes", None, f"Four-eye approval set to {f['four_eyes']}")
+                flash("Saved.")
+            return redirect(url_for("control.approvals"))
+        try:
+            result = ap.decide(int(f.get("id", 0)), f.get("decision") == "approve", g.user, f.get("note", ""))
+            flash(f"Approved and done — {result}." if f.get("decision") == "approve" else "Rejected. Nothing was changed.")
+        except ap.ApprovalError as e:
+            flash(str(e), "error")
+        return redirect(url_for("control.approvals"))
+    rows = ap.pending(db)
+    history = db.execute("SELECT a.*, r.email AS requester, d.email AS decider FROM approvals a LEFT JOIN users r ON r.id=a.requested_by "
+                         "LEFT JOIN users d ON d.id=a.decided_by WHERE a.status!='pending' ORDER BY a.id DESC LIMIT 50").fetchall()
+    return render_template("admin/approvals.html", rows=rows, history=history, kinds=ap.KINDS, mode=get_setting("four_eyes", "auto"),
+                           age=ap.age_hours)
+
+
+@bp.route("/emergency", methods=["GET", "POST"])
+@require("settings")
+def emergency():
+    """Stop all new purchases at once (customers keep access to accounts, results, withdrawals and support)."""
+    from .status import emergency as current, set_emergency
+    if request.method == "POST":
+        if request.form.get("action") == "lock":
+            reason = request.form.get("reason", "").strip()
+            if len(reason) < 5:
+                flash("Say briefly why (kept in the audit log; customers never see it).", "error")
+                return redirect(url_for("control.emergency"))
+            set_emergency(True, g.user, reason, request.form.get("hold_draws") == "1")
+            flash("Emergency lock ON — nobody can buy entries. Customers see a calm message and the status page says entries are paused.")
+        elif request.form.get("action") == "unlock":
+            set_emergency(False, g.user)
+            flash("Emergency lock lifted — entries are open again.")
+        return redirect(url_for("control.emergency"))
+    db = get_db()
+    open_checkouts = db.execute("SELECT COUNT(*) FROM checkouts WHERE status='pending'").fetchone()[0]
+    return render_template("admin/emergency.html", lock=current(), open_checkouts=open_checkouts)
+
+
+@bp.route("/calendar")
+@require("comps.view")
+def ops_calendar():
+    """Everything scheduled, in one list by day: launches, closing times, draws, promotions, announcements and
+    automatic reports."""
+    db = get_db()
+    days = max(7, min(90, request.args.get("days", 30, type=int)))
+    start = utcnow() - timedelta(days=1)
+    end = utcnow() + timedelta(days=days)
+    ev = []
+
+    def add(at, kind, text, link=None):
+        if at and iso(start) <= at <= iso(end):
+            ev.append((at, kind, text, link))
+    for c in db.execute("SELECT id, title, status, starts_at, ends_at, game_type, auto_draw, scheduled FROM competitions "
+                        "WHERE status IN ('draft','live')"):
+        link = url_for("admin.edit_competition", cid=c["id"])
+        if c["status"] == "draft" and c["scheduled"] and c["starts_at"]:
+            add(c["starts_at"], "launch", f"Goes live: {c['title']}", link)
+        if c["game_type"]:
+            add(c["ends_at"], "close", f"Game closes: {c['title']}", link)
+        else:
+            add(c["ends_at"], "draw", f"Closes and draws ({'automatic' if c['auto_draw'] else 'live — someone must run it'}): {c['title']}",
+                url_for("admin.entries", cid=c["id"]))
+    for p in db.execute("SELECT id, code, starts_at, expires_at FROM promo_codes WHERE active=1"):
+        add(p["starts_at"], "promo", f"Promo starts: {p['code']}", url_for("admin.promos"))
+        add(p["expires_at"], "promo", f"Promo ends: {p['code']}", url_for("admin.promos"))
+    for a in db.execute("SELECT id, message, starts_at, ends_at FROM announcements"):
+        add(a["starts_at"], "notice", f"Announcement starts: {a['message'][:60]}", url_for("admin.announcements"))
+        add(a["ends_at"], "notice", f"Announcement ends: {a['message'][:60]}", url_for("admin.announcements"))
+    d = utcnow().astimezone(UK).replace(hour=7, minute=0, second=0, microsecond=0)
+    while d.astimezone(UK) < end.astimezone(UK):
+        if d.weekday() == 0:
+            add(iso(d.astimezone(UK).replace(hour=8)), "report", "Weekly report email", url_for("control.reports"))
+        d += timedelta(days=1)
+    ev.sort()
+    by_day = {}
+    for at, kind, text, link in ev:
+        by_day.setdefault(parse_iso(at).astimezone(UK).strftime("%A %d %B"), []).append((at, kind, text, link))
+    return render_template("admin/calendar.html", by_day=by_day, days=days)
+
+
+@bp.route("/risk")
+@require("audit")
+def risk():
+    """Unusual conditions for a person to look into. Nothing here blocks anything automatically."""
+    from .checks import integrity_problems
+    db = get_db()
+    now = utcnow()
+    d7, d30 = iso(now - timedelta(days=7)), iso(now - timedelta(days=30))
+
+    def n(sql, *a):
+        return db.execute(sql, a).fetchone()[0] or 0
+    rows = []
+
+    def add(area, what, value, level, link=None, detail=""):
+        rows.append({"area": area, "what": what, "value": value, "level": level, "link": link, "detail": detail})
+    dup = n("SELECT COUNT(*) FROM flags WHERE status='open' AND kind IN ('Many accounts from one connection','Shared phone number','Possible break circumvention','Many postal entrants at one address')")
+    add("Accounts", "Open duplicate-account signals", dup, "warn" if dup else "ok", url_for("control.flags"))
+    started = n("SELECT COUNT(*) FROM checkouts WHERE created_at>? AND cash_due>0", d7)
+    paid = n("SELECT COUNT(*) FROM checkouts WHERE created_at>? AND cash_due>0 AND status='paid'", d7)
+    fail = (started - paid) / started * 100 if started else 0
+    add("Payments", "Card checkouts not completed (7 days)", f"{fail:.0f}% of {started}", "warn" if started >= 20 and fail > 50 else "ok",
+        url_for("control.checkout_diagnostics"))
+    r7 = n("SELECT COALESCE(SUM(card_amount + wallet_amount),0) FROM refunds WHERE created_at>?", d7)
+    r30 = n("SELECT COALESCE(SUM(card_amount + wallet_amount),0) FROM refunds WHERE created_at>?", d30)
+    unusual = r30 and r7 > (r30 / 30 * 7) * 2 and r7 > 5000
+    add("Payments", "Refunds in the last 7 days", f"£{r7 / 100:,.2f} (30-day £{r30 / 100:,.2f})", "warn" if unusual else "ok", url_for("control.finance"),
+        "More than double the usual weekly rate" if unusual else "")
+    disputes = n("SELECT COUNT(*) FROM flags WHERE status='open' AND kind='Payment reversal'")
+    add("Payments", "Open chargebacks / reversals", disputes, "bad" if disputes else "ok", url_for("control.flags"))
+    recon = n("SELECT COUNT(*) FROM flags WHERE status='open' AND kind='Reconciliation'")
+    add("Payments", "Unresolved Stripe reconciliation differences", recon, "bad" if recon else "ok", url_for("control.flags"))
+    blocked = n("SELECT COUNT(*) FROM competitions WHERE status='live' AND game_type='' AND auto_draw=1 AND ends_at<?",
+                iso(now - timedelta(hours=1)))
+    add("Draws", "Automatic draws overdue by over an hour", blocked, "bad" if blocked else "ok", url_for("admin.dashboard"))
+    post = n("SELECT COUNT(*) FROM draw_audits WHERE phase='after' AND ok=0 AND resolved_at IS NULL")
+    add("Draws", "After-draw checks that failed", post, "bad" if post else "ok", url_for("control.risk") + "#afterdraw")
+    probs = integrity_problems(db)
+    add("Ledgers", "Integrity / ledger problems", len(probs), "bad" if probs else "ok", url_for("control.health"), "; ".join(probs[:3]))
+    big = n("SELECT COUNT(*) FROM credit_ledger WHERE created_at>? AND ref LIKE 'admin%' AND ABS(amount)>?", d7,
+            current_app.config.get("LARGE_ADJUSTMENT", 10000))
+    add("Ledgers", "Large manual wallet adjustments (7 days)", big, "warn" if big else "ok", url_for("admin.audit_log"))
+    wd = n("SELECT COUNT(*) FROM withdrawals WHERE status IN ('requested','processing') AND created_at<?", iso(now - timedelta(hours=48)))
+    add("Withdrawals", "Withdrawals waiting over 48 hours", wd, "bad" if wd else "ok", url_for("admin.payouts"))
+    mail = n("SELECT COUNT(*) FROM notifications WHERE email_status='failed' AND created_at>?", iso(now - timedelta(days=1)))
+    add("Communications", "Customer emails failed (24 hours)", mail, "warn" if mail else "ok", url_for("control.communications"))
+    after = db.execute("SELECT a.*, c.title FROM draw_audits a JOIN competitions c ON c.id=a.competition_id WHERE a.phase='after' "
+                       "ORDER BY a.ok, a.id DESC LIMIT 20").fetchall()
+    order = {"bad": 0, "warn": 1, "ok": 2}
+    rows.sort(key=lambda r: order[r["level"]])
+    return render_template("admin/risk.html", rows=rows, after=after)
+
+
+@bp.route("/risk/after-draw/<int:aid>/resolve", methods=["POST"])
+@require("audit")
+def resolve_after_draw(aid):
+    db = get_db()
+    db.execute("UPDATE draw_audits SET resolved_at=?, resolved_by=? WHERE id=?", (iso(utcnow()), g.user["id"], aid))
+    audit(db, "draw.after_check_resolved", f"afterdraw:{aid}", request.form.get("note", "")[:200])
+    flash("Marked as looked into.")
+    return redirect(url_for("control.risk") + "#afterdraw")
+
+
+@bp.route("/communications")
+@require("users.view")
+def communications():
+    """Every transactional message generated, and whether its email went out. Search by customer email."""
+    db = get_db()
+    q = request.args.get("q", "").strip()[:120]
+    status = request.args.get("status", "")
+    sql, args = ("SELECT n.id, n.created_at, n.kind, n.title, n.email, n.email_status, n.email_tries, n.email_error, n.sent_at, n.user_id "
+                 "FROM notifications n WHERE 1=1"), []
+    if q:
+        sql += " AND (n.email LIKE ? OR n.title LIKE ?)"
+        args += [f"%{q}%", f"%{q}%"]
+    if status in ("failed", "queued", "sent", "not_configured"):
+        sql += " AND n.email_status=?"
+        args.append(status)
+    rows = db.execute(sql + " ORDER BY n.id DESC LIMIT 200", args).fetchall()
+    since = iso(utcnow() - timedelta(days=1))
+    totals = dict(db.execute("SELECT COALESCE(email_status,'none'), COUNT(*) FROM notifications WHERE created_at>? GROUP BY 1",
+                             (since,)).fetchall())
+    return render_template("admin/communications.html", rows=rows, q=q, status=status, totals=totals)
+
+
+@bp.route("/communications/retry", methods=["POST"])
+@require("users.view")
+def communications_retry():
+    from .notify import flush
+    db = get_db()
+    db.execute("UPDATE notifications SET email_status='queued', email_tries=0 WHERE email_status='failed'")
+    audit(db, "email.retry_all", None, "Retried failed customer emails")
+    try:
+        flush()
+    except Exception:
+        pass
+    flash("Failed emails queued again — the outbox retries them now and every minute.")
+    return redirect(url_for("control.communications"))
+
+
+@bp.route("/emails")
+@require("settings")
+def email_previews():
+    """What customers actually receive: every important transactional email, rendered with sample details."""
+    from .mailer import render
+    site = current_app.config["SITE_URL"]
+    samples = [
+        ("Purchase confirmation", "Your entry is confirmed — PS5 Pro Bundle",
+         dict(heading="You're in!", highlight=["#104", "#2277", "#3051"], button=("See my tickets", site + "/account?tab=entries"),
+              body="Hi Sam,\n\nYour entry is confirmed. Order DBX-000123, paid 4 Oct 2026 at 19:04.\n\nPS5 Pro Bundle: 3 tickets. "
+                   "Draw: Sun 12 Oct at 20:00, automatically.\n\nYour receipt is in your account.")),
+        ("Draw result (not won)", "Draw result: PS5 Pro Bundle",
+         dict(heading="The draw has happened", highlight="Winning ticket #2741", button=("See the draw record", site + "/results"),
+              body="Hi Sam,\n\nThe PS5 Pro Bundle draw has finished. The winning ticket was #2741 — not one of yours this time "
+                   "(you had #104, #2277 and #3051).\n\nAnyone can check the draw on its draw record page.")),
+        ("Win", "You've won the PS5 Pro Bundle!",
+         dict(heading="You've won!", highlight="PS5 Pro Bundle", button=("Claim your prize", site + "/account?tab=wins"),
+              body="Hi Sam,\n\nYour ticket #2277 won the PS5 Pro Bundle. Open your prize page to choose the prize or cash and "
+                   "confirm your details. We'll never ask you to pay to claim a prize.")),
+        ("Withdrawal paid", "Your withdrawal has been paid",
+         dict(heading="Withdrawal paid", highlight="£40.00", button=("View withdrawal", site + "/account?tab=wallet"),
+              body="Hi Sam,\n\nWe've sent £40.00 to your bank account ending 1234 (reference DBX88). Faster Payments can take up "
+                   "to 2 hours to show.")),
+        ("Security: password changed", "Your password was changed",
+         dict(heading="Password changed", button=("Review account security", site + "/account?tab=profile"),
+              body="Your password was just changed and every other device was signed out. If this wasn't you, reset your password "
+                   "straight away and contact us.")),
+        ("Security: new sign-in", "New sign-in to your account",
+         dict(heading="New sign-in", button=("Review devices", site + "/account?tab=profile#devices"),
+              body="Your account was just used to sign in on Chrome on Windows. If this was you, there's nothing to do. If not, "
+                   "change your password straight away and contact us.")),
+    ]
+    which = request.args.get("show", type=int)
+    if which is not None and 0 <= which < len(samples):
+        _, subject, kw = samples[which]
+        body = kw.pop("body")
+        return Response(render(subject, body, **kw), mimetype="text/html")
+    return render_template("admin/emails.html", samples=samples)
+
+
+@bp.route("/compliance", methods=["GET", "POST"])
+@require("comps.view")
+def compliance():
+    """Before a new kind of competition or game goes live, someone responsible confirms how it fits the legal structure."""
+    from . import mechanics as mx
+    db = get_db()
+    if request.method == "POST":
+        if not can(g.user, "settings"):
+            flash("Only an administrator can record a sign-off.", "error")
+            return redirect(url_for("control.compliance"))
+        f = request.form
+        m = f.get("mechanic", "")
+        ticked = [i for i, _ in enumerate(mx.CHECKLIST) if f.get(f"c{i}")]
+        if not m or len(ticked) < len(mx.CHECKLIST):
+            flash("Every item on the checklist must be confirmed before signing off.", "error")
+        elif len(f.get("responsible", "").strip()) < 3 or len(f.get("note", "").strip()) < 20:
+            flash("Name the person responsible and explain how this mechanic fits the legal structure (and any advice taken).", "error")
+        else:
+            mx.record(db, m, g.user, f["responsible"].strip(), f["note"].strip(), ticked)
+            audit(db, "compliance.signoff", f"mechanic:{m}", f"Signed off by {f['responsible'].strip()[:80]}")
+            flash(f"Signed off: {mx.name(m)}.")
+        return redirect(url_for("control.compliance"))
+    used = {}
+    for c in db.execute("SELECT * FROM competitions WHERE status IN ('draft','live')"):
+        for m in mx.mechanics_of(db, c):
+            used[m] = used.get(m, 0) + 1
+    keys = list(mx.MECHANICS) + [m for m in used if m not in mx.MECHANICS]
+    rows = [{"key": k, "name": mx.name(k), "s": mx.signoff(db, k), "used": used.get(k, 0)} for k in keys]
+    history = db.execute("SELECT s.*, u.email FROM mechanic_signoffs s LEFT JOIN users u ON u.id=s.signed_by WHERE s.legacy=0 "
+                         "ORDER BY s.id DESC LIMIT 30").fetchall()
+    from .retention import RULES
+    return render_template("admin/compliance.html", rows=rows, checklist=mx.CHECKLIST, history=history, retention=RULES,
+                           pick=request.args.get("m", ""))

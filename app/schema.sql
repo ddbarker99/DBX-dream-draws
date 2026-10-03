@@ -429,6 +429,14 @@ CREATE TABLE IF NOT EXISTS error_log (
     trace       TEXT,
     resolved_at TEXT
 );
+-- One row per error a customer saw, so the reference on the error page (DBX-XXXXXX) leads staff straight to the logs.
+CREATE TABLE IF NOT EXISTS error_refs (
+    ref       TEXT PRIMARY KEY,
+    error_id  INTEGER REFERENCES error_log(id),
+    at        TEXT NOT NULL,
+    path      TEXT,
+    user_id   INTEGER
+);
 
 -- v13: refunds of individual orders (one row per refunded order; the wallet parts are also ledger lines refund-o<id>)
 CREATE TABLE IF NOT EXISTS refunds (
@@ -488,7 +496,7 @@ CREATE TABLE IF NOT EXISTS feedback (
 -- Internal development backlog: recurring problems turned into structured tickets, with the evidence attached.
 CREATE TABLE IF NOT EXISTS backlog (
     id          INTEGER PRIMARY KEY,
-    kind        TEXT NOT NULL DEFAULT 'improvement',  -- bug | improvement | feature
+    kind        TEXT NOT NULL DEFAULT 'friction',     -- critical_bug | friction | operations | idea
     title       TEXT NOT NULL,
     detail      TEXT,
     status      TEXT NOT NULL DEFAULT 'open',          -- open | planned | done | wont_do
@@ -552,3 +560,54 @@ CREATE TABLE IF NOT EXISTS comp_terms (
 );
 CREATE TRIGGER IF NOT EXISTS comp_terms_no_update BEFORE UPDATE ON comp_terms
 BEGIN SELECT RAISE(ABORT, 'Competition terms versions are permanent.'); END;
+
+-- Four-eye approvals (app/approvals.py): a second admin approves the highest-impact actions before they happen.
+CREATE TABLE IF NOT EXISTS approvals (
+    id            INTEGER PRIMARY KEY,
+    kind          TEXT NOT NULL,                  -- wallet_adjust | redraw | admin_access
+    target        TEXT,
+    payload       TEXT NOT NULL,                  -- JSON: exactly what will be done
+    summary       TEXT NOT NULL,
+    reason        TEXT,
+    requested_by  INTEGER NOT NULL,
+    requested_at  TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected | expired
+    decided_by    INTEGER,
+    decided_at    TEXT,
+    decision_note TEXT,
+    result        TEXT,
+    CHECK (decided_by IS NULL OR decided_by != requested_by)
+);
+CREATE INDEX IF NOT EXISTS ix_approvals_status ON approvals(status);
+CREATE TRIGGER IF NOT EXISTS approvals_no_delete BEFORE DELETE ON approvals
+BEGIN SELECT RAISE(ABORT, 'Approval records are permanent.'); END;
+CREATE TRIGGER IF NOT EXISTS approvals_final BEFORE UPDATE ON approvals WHEN OLD.status != 'pending'
+BEGIN SELECT RAISE(ABORT, 'A decided approval cannot be changed.'); END;
+
+-- The checks run immediately before and after every draw, kept permanently (shown on the public draw record).
+CREATE TABLE IF NOT EXISTS draw_audits (
+    id             INTEGER PRIMARY KEY,
+    competition_id INTEGER NOT NULL,
+    draw_id        INTEGER,
+    phase          TEXT NOT NULL,                  -- before | after
+    at             TEXT NOT NULL,
+    ok             INTEGER NOT NULL,
+    detail         TEXT NOT NULL,                  -- JSON list of [check, passed, note]
+    resolved_at    TEXT,
+    resolved_by    INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_draw_audits_comp ON draw_audits(competition_id);
+
+-- Compliance sign-off per competition mechanic (app/mechanics.py). Latest row counts; history is kept.
+CREATE TABLE IF NOT EXISTS mechanic_signoffs (
+    id          INTEGER PRIMARY KEY,
+    mechanic    TEXT NOT NULL,
+    signed_by   INTEGER,
+    signed_at   TEXT NOT NULL,
+    responsible TEXT NOT NULL,                    -- the person accountable for the business/legal decision
+    note        TEXT,
+    checklist   TEXT NOT NULL,                    -- JSON list of the checklist items confirmed
+    legacy      INTEGER NOT NULL DEFAULT 0        -- 1 = existed before the checklist; review recommended
+);
+CREATE TRIGGER IF NOT EXISTS mechanic_signoffs_permanent BEFORE UPDATE ON mechanic_signoffs
+BEGIN SELECT RAISE(ABORT, 'Sign-offs are permanent; record a new one instead.'); END;

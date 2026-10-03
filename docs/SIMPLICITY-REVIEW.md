@@ -72,3 +72,28 @@ The rule: every feature must make the main journey easier — **find a competiti
 3. New customer features start behind a **feature flag** at "Staff only".
 4. Test big UX changes with an **experiment** judged by completed purchases.
 5. Every quarter, look at each feature's use (funnel, flags, feedback). Switch off what nobody uses, and remove it a release later.
+
+## Second review (after Phase 7)
+Phase 7 added trust features. The test for each was: does it answer a question customers would otherwise have to ask
+us ("what stage is it at?", "was it fair?", "where's my receipt?", "is the site broken?")? If yes, it stays — and it
+replaces a support conversation rather than adding a screen.
+
+**Kept out of the customer's way**
+- No new items in the main menu. The draw record, status page and activity history are reached from where the question
+  arises (a finished competition, the footer, the account) rather than from navigation.
+- The FAQ page *became* the Help Centre (same address) instead of adding a second help page.
+- "Download all my data" replaced "contact us for a copy".
+- Receipts are the existing order pages, not a new section.
+
+**Staff side**
+- New tools live in the existing **More** and **Reports** menus; the Control Centre shows them only when they need
+  action (an approval waiting, the emergency lock on, an after-draw check failed).
+- Four-eye approval is *automatic*: a one-person team isn't blocked; it switches on when a second administrator exists.
+
+**Candidates to merge later (evidence first)**
+- Footer "Help" has eight links. If analytics show low use, merge *Transparency centre*, *Fair draws* and *How it works*
+  into one "How it works & fairness" page.
+- *Draw calendar* overlaps the Competitions list sorted by closing time; merge if it's rarely used after three months.
+
+**From now on**: changes go through the Development board's four questions (`docs/DEVELOPMENT-BOARD.md`), and the next
+milestone is 100 real customers using everything without help (`docs/FIRST-100-USERS.md`).

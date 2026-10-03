@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Error {{ e.ref }} · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Error reference {{ e.ref }}</h1>
+<div class="panel">
+  <dl class="facts">
+    <div><dt>Seen by the customer</dt><dd>{{ e.at|uktime('%d %b %Y, %H:%M:%S') }} on <code>{{ e.path }}</code>{% if e.user_id %} · <a href="{{ url_for('control.timeline', uid=e.user_id) }}">account #{{ e.user_id }}</a>{% endif %}</dd></div>
+    {% if e.signature %}<div><dt>Error</dt><dd>{{ e.error }}</dd></div>
+    <div><dt>This kind of error</dt><dd>{{ e.count }} time{{ 's' if e.count != 1 }} · first {{ e.first_at|uktime }} · last {{ e.last_at|uktime }} · {{ 'marked fixed ' ~ (e.resolved_at|uktime) if e.resolved_at else 'not fixed yet' }}</dd></div>{% endif %}
+  </dl>
+  {% if e.trace %}<details style="margin-top:var(--s3)"><summary>Technical detail (personal data removed)</summary><pre style="white-space:pre-wrap;font-size:12px">{{ e.trace }}</pre></details>{% endif %}
+  {% if e.eid and not e.resolved_at %}<form method="post" action="{{ url_for('control.resolve_error', eid=e.eid) }}" style="margin-top:var(--s3)"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn ghost small">Mark this kind of error fixed</button></form>{% endif %}
+</div>
+{% endblock %}

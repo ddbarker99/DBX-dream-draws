@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Account activity · {{ config.SITE_NAME }}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('public.account') }}">My account</a> › <span aria-current="page">Activity</span></nav>
+<div style="max-width:820px">
+<h1>Account activity</h1>
+<p class="muted">Everything important on your account in one place: entries, draws, prizes, refunds, withdrawals and security changes. Newest first.</p>
+<ul class="activity panel">{% for at, icon, text, link in events %}<li><time datetime="{{ at }}">{{ at|uktime('%d %b %Y, %H:%M') }}</time><span class="i" aria-hidden="true">{{ icon }}</span><span>{% if link %}<a href="{{ link }}">{{ text }}</a>{% else %}{{ text }}{% endif %}</span></li>{% else %}<li class="muted">Nothing yet.</li>{% endfor %}</ul>
+<p class="small muted" style="margin-top:var(--s3)"><a href="{{ url_for('public.account_export_all') }}">Download a complete copy of your data</a> · Something you don't recognise? <a href="{{ url_for('public.support_centre', topic='Account') }}">Tell us</a>.</p>
+</div>
+{% endblock %}

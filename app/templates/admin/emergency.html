@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Emergency lock · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Emergency lock</h1>
+{% if lock %}
+<div class="notice warn" role="status"><span><b>ON since {{ lock.at|uktime('%d %b %H:%M') }}</b> (by {{ lock.by }}): {{ lock.reason }}.{% if lock.hold_draws %} Automatic draws are held.{% endif %}</span></div>
+<form method="post" class="panel" style="max-width:720px"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <p>When you're sure everything is safe again, lift the lock. Entries reopen immediately{% if lock.hold_draws %} and any overdue automatic draws run within a minute (their readiness checks still apply){% endif %}.</p>
+  <button class="btn" name="action" value="unlock">Lift the lock — reopen entries</button></form>
+{% else %}
+<div class="panel" style="max-width:760px">
+  <p>Use this if something serious is wrong with <b>payments, ticket allocation or a competition's integrity</b>. It stops every new purchase straight away.</p>
+  <ul class="small">
+    <li><b>Stops:</b> checkout, card payments, paying from the wallet, adding funds.</li>
+    <li><b>Keeps working:</b> log in, accounts, tickets, results, draw records, withdrawals, support, free daily plays and revealing plays already bought.</li>
+    <li>Customers see a calm message and the <a href="{{ url_for('public.status_page') }}">status page</a> says entries are paused. They're never told why.</li>
+    <li>Payments already completed on Stripe are still recorded, so nobody loses money; refund them from the order page if needed.{% if open_checkouts %} <b>{{ open_checkouts }} checkout(s)</b> are in progress right now.{% endif %}</li>
+  </ul>
+  <form method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label for="er">What's wrong? <span class="muted">(audit log only)</span></label><input id="er" name="reason" required minlength="5" maxlength="300" placeholder="Tickets issued twice for order #123 — investigating">
+    <label class="check" style="margin-top:var(--s2)"><input type="checkbox" name="hold_draws" value="1"> Also hold automatic draws until I lift the lock</label>
+    <button class="btn danger" name="action" value="lock" style="margin-top:var(--s3)">Stop all purchases now</button></form>
+</div>
+{% endif %}
+<p class="small muted" style="margin-top:var(--s4)">For planned work use <a href="{{ url_for('admin.settings') }}">Site settings → Maintenance</a> instead. Every lock and unlock is in the audit log.</p>
+{% endblock %}

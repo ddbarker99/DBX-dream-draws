@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Order #{{ c.id }} · {{ config.SITE_NAME }}{% endblock %}
+{% block title %}Order #{{ c.id }} — receipt · {{ config.SITE_NAME }}{% endblock %}
 {% block robots %}<meta name="robots" content="noindex">{% endblock %}
 {% block content %}
 <nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('public.account') }}">My account</a> › <a href="{{ url_for('public.account', tab='transactions') }}">Transactions</a> › <span aria-current="page">#{{ c.id }}</span></nav>
-<div class="acct-head"><h1>Order #{{ c.id }}</h1><span class="pill {{ c.status }}">{{ {'paid':'Paid','credit_refused':'Refunded','needs_refund':'Refund due','refunded':'Refunded'}.get(c.status, c.status) }}</span></div>
+<div class="acct-head"><h1>Order #{{ c.id }} — receipt</h1><span class="pill {{ c.status }}">{{ {'paid':'Paid','credit_refused':'Refunded','needs_refund':'Refund due','refunded':'Refunded'}.get(c.status, c.status) }}</span></div>
 <div class="basket">
   <div class="stack">
     {% for l in lines %}
@@ -20,7 +20,9 @@
   <section class="panel" aria-labelledby="pay-h">
     <h2 id="pay-h" style="font-size:20px">Payment</h2>
     <dl class="facts">
-      <div><dt>Date</dt><dd>{{ (c.paid_at or c.created_at)|uktime }}</dd></div>
+      <div><dt>Reference</dt><dd>DBX-{{ '%06d'|format(c.id) }}</dd></div>
+      <div><dt>Confirmed</dt><dd>{{ (c.paid_at or c.created_at)|uktime('%d %b %Y, %H:%M:%S') }} UK time</dd></div>
+      <div><dt>Entry method</dt><dd>Online, paid</dd></div>
       <div><dt>Entries</dt><dd>{{ c.subtotal|gbp }}</dd></div>
       {% if c.promo_discount %}<div><dt>Promo code</dt><dd class="pos">−{{ c.promo_discount|gbp }}</dd></div>{% endif %}
       {% if c.credit_used %}<div><dt>Site credit</dt><dd>{{ c.credit_used|gbp }}</dd></div>{% endif %}
@@ -28,7 +30,8 @@
       {% if c.cash_used %}<div><dt>Cash winnings</dt><dd>{{ c.cash_used|gbp }}</dd></div>{% endif %}
       <div><dt>Card</dt><dd>{{ c.cash_due|gbp }}</dd></div>
     </dl>
-    <p class="small muted" style="margin:var(--s4) 0 0">Questions about this order? <a href="{{ url_for('public.contact') }}">Contact us</a> and quote #{{ c.id }}.</p>
+    <p class="small muted" style="margin:var(--s4) 0 0">This receipt stays in your account permanently. <button type="button" class="linkbtn small" onclick="window.print()">Print or save as PDF</button></p>
+    <p class="small muted" style="margin:var(--s2) 0 0">Question about this order? <a href="{{ url_for('public.support_centre', topic='Payment', order=c.id) }}">Ask us about order #{{ c.id }}</a> — we'll already know which order you mean.</p>
   </section>
 </div>
 {% endblock %}

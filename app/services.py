@@ -892,7 +892,9 @@ def run_draw(comp_id, actor=None):
     """Pick the winner from the frozen entry list and keep a permanent record. actor=None: automatic draw.
     Runs the draw-readiness checks first; a failed check is logged once and nothing is drawn."""
     try:
-        return _run_draw(comp_id, actor)
+        win_no = _run_draw(comp_id, actor)
+        verify_after_draw(comp_id)
+        return win_no
     except _DrawBlocked as e:
         with write_txn() as db:
             last = db.execute("SELECT detail FROM audit_log WHERE action='draw.blocked' AND target=? ORDER BY id DESC LIMIT 1",
@@ -918,7 +920,8 @@ def _run_draw(comp_id, actor):
                 raise PurchaseError("Postal entries are still waiting to be processed. Approve or reject them first.")
             raise PurchaseError("Some checkouts are still in progress. Try again in up to 45 minutes.")
         from .checks import blocking_problem, draw_checks
-        problem = blocking_problem(draw_checks(db, comp))
+        pre_checks = draw_checks(db, comp)
+        problem = blocking_problem(pre_checks)
         if problem:
             raise _DrawBlocked(problem)
         snap = latest_snapshot(db, comp_id)
@@ -943,12 +946,53 @@ def _run_draw(comp_id, actor):
         db.execute("UPDATE competitions SET status='drawn', entries_hash=?, winner_ticket_id=?, drawn_at=? WHERE id=?",
                    (digest, winner["id"], now, comp_id))
         _new_claim(db, comp_id, cur.lastrowid, winner, actor)
+        from .checks import record_draw_audit
+        record_draw_audit(db, comp_id, cur.lastrowid, "before", pre_checks)
         audit(db, "draw.run", f"comp:{comp_id}", f"{'Manual' if actor else 'Automatic'} draw of {len(numbers)} entries: "
               f"winning ticket #{win_no}", actor=actor or False)
         return win_no
 
 
+def verify_after_draw(comp_id):
+    """Run the after-draw checks on the latest draw and keep the result. Any failure alerts staff straight away (it
+    shows on the Risk dashboard and in system health until someone has looked into it)."""
+    from .checks import after_draw_checks, record_draw_audit
+    try:
+        with write_txn() as db:
+            d = db.execute("SELECT id FROM draws WHERE competition_id=? ORDER BY id DESC LIMIT 1", (comp_id,)).fetchone()
+            checks = after_draw_checks(db, comp_id, d["id"])
+            ok = record_draw_audit(db, comp_id, d["id"], "after", checks)
+            if not ok:
+                failed = "; ".join(f"{n} ({note})" if note else n for n, passed, note in checks if not passed)
+                audit(db, "draw.after_check_failed", f"comp:{comp_id}", failed[:400], actor=False)
+    except Exception as e:                    # the checks themselves must never undo a completed draw
+        ok, failed = False, f"after-draw checks could not run: {e}"
+        try:
+            with write_txn() as db:
+                db.execute("INSERT INTO draw_audits (competition_id, phase, at, ok, detail) VALUES (?, 'after', ?, 0, ?)",
+                           (comp_id, iso(utcnow()), json.dumps([["Checks ran", False, str(e)[:200]]])))
+        except Exception:
+            pass
+    if not ok:
+        try:
+            from flask import current_app
+            from . import mailer
+            if current_app.config.get("SUPPORT_EMAIL") and not current_app.testing:
+                mailer.send(current_app.config["SUPPORT_EMAIL"], f"⚠ After-draw check failed — competition #{comp_id}",
+                            f"Something didn't add up straight after the draw:\n\n{failed}\n\nAdmin → Reports → Risk. "
+                            "Don't announce or pay out until it's been looked into.", heading="After-draw check failed")
+        except Exception:
+            pass
+    return ok
+
+
 def redraw(comp_id, reason, actor):
+    win_no = _redraw(comp_id, reason, actor)
+    verify_after_draw(comp_id)
+    return win_no
+
+
+def _redraw(comp_id, reason, actor):
     """Pick a new winner when the first can't receive the prize (e.g. failed verification). Every previous
     winning ticket is excluded; the method is the same, with the attempt number mixed into the HMAC so it's
     still reproducible. The earlier draw records stay — this adds one, with the reason and who ran it."""
@@ -1482,6 +1526,9 @@ def due_auto_draws(force=False):
     if not force and _last_auto["t"] and (now - _last_auto["t"]).total_seconds() < 60:
         return []
     _last_auto["t"] = now
+    from .status import draws_held
+    if draws_held():
+        return []           # an emergency lock asked for automatic draws to wait until staff have checked things
     db = get_db()
     rows = db.execute("SELECT id FROM competitions WHERE status='live' AND game_type='' AND auto_draw=1 AND ends_at<?",
                       (iso(now),)).fetchall()

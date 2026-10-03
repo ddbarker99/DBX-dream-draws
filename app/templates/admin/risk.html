@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Risk dashboard · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Risk dashboard</h1>
+<p class="muted" style="max-width:760px">Unusual conditions for a person to look into. Nothing here blocks anyone automatically — it tells you where to look.</p>
+<div class="panel table-scroll" tabindex="0"><table><tr><th>Area</th><th>Signal</th><th class="num">Now</th><th>Status</th></tr>
+{% for r in rows %}<tr><td class="small">{{ r.area }}</td><td>{% if r.link %}<a href="{{ r.link }}">{{ r.what }}</a>{% else %}{{ r.what }}{% endif %}{% if r.detail %}<div class="tiny muted">{{ r.detail }}</div>{% endif %}</td><td class="num">{{ r.value }}</td>
+<td><span class="pill {{ {'ok':'live','warn':'pending','bad':'hot'}[r.level] }}">{{ {'ok':'Normal','warn':'Look into','bad':'Act now'}[r.level] }}</span></td></tr>{% endfor %}</table></div>
+<section id="afterdraw" style="margin-top:var(--s5)"><h2>After-draw checks</h2>
+<p class="small muted">Run automatically after every draw and redraw: winner record, ticket, entry list, reproducible result, exactly one prize claim.</p>
+<div class="panel table-scroll" tabindex="0"><table><tr><th>When</th><th>Competition</th><th>Result</th><th></th></tr>
+{% for a in after %}<tr><td class="small">{{ a.at|uktime('%d %b %H:%M') }}</td><td>{{ a.title }}</td><td>{% if a.ok %}<span class="pill live">All passed</span>{% else %}<span class="pill hot">Failed</span> <span class="small">{% for name, ok, note in a.detail|fromjson if not ok %}{{ name }}{% if note %} ({{ note }}){% endif %}{{ '; ' if not loop.last }}{% endfor %}</span>{% endif %}</td>
+<td>{% if not a.ok and not a.resolved_at %}<form method="post" action="{{ url_for('control.resolve_after_draw', aid=a.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="linkbtn small">Mark looked into</button></form>{% elif a.resolved_at %}<span class="small muted">looked into</span>{% endif %}</td></tr>
+{% else %}<tr><td colspan="4" class="muted">No draws yet.</td></tr>{% endfor %}</table></div></section>
+{% endblock %}

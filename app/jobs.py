@@ -175,15 +175,10 @@ def _watch():
 
 
 def _prune():
-    db = get_db()
-    n = db.execute("DELETE FROM job_runs WHERE started_at<?", (iso(utcnow() - timedelta(days=90)),)).rowcount
-    # Retention (see docs/PRIVACY-DATA-AUDIT.md): device records 90 days after last use, read notifications after a year.
-    s = db.execute("DELETE FROM user_sessions WHERE last_seen<?", (iso(utcnow() - timedelta(days=90)),)).rowcount
-    m = db.execute("DELETE FROM notifications WHERE read_at IS NOT NULL AND created_at<? AND email_status IS NOT 'failed'",
-                   (iso(utcnow() - timedelta(days=365)),)).rowcount
-    e = db.execute("DELETE FROM error_log WHERE resolved_at IS NOT NULL AND resolved_at<?", (iso(utcnow() - timedelta(days=90)),)).rowcount
-    parts = [f"{n} job record(s)" if n else "", f"{e} resolved error(s)" if e else "", f"{s} old device record(s)" if s else "", f"{m} old notification(s)" if m else ""]
-    return ", ".join(p for p in parts if p) and "removed " + ", ".join(p for p in parts if p)
+    """Apply the retention rules in app/retention.py (docs/RETENTION.md)."""
+    from .retention import apply
+    done = apply(get_db())
+    return "removed " + ", ".join(f"{n} {what.lower()}" for what, n in done) if done else ""
 
 
 def _integrity():
@@ -301,6 +296,10 @@ def health_checks(db):
 
     def add(key, name, ok, detail):
         out.append({"key": key, "name": name, "ok": ok, "detail": detail})
+
+    bad_draws = db.execute("SELECT COUNT(*) FROM draw_audits WHERE phase='after' AND ok=0 AND resolved_at IS NULL").fetchone()[0]
+    add("after_draw", "After-draw checks", bad_draws == 0,
+        "Every completed draw checked out" if not bad_draws else f"{bad_draws} draw(s) failed their after-draw check — see Risk")
 
     since = iso(now - timedelta(hours=2))
     tried = db.execute("SELECT COUNT(*) FROM checkouts WHERE stripe_session_id IS NOT NULL AND created_at>? AND created_at<?",
