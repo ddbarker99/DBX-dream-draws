@@ -1254,6 +1254,44 @@ class IntegrityTests(Base):
         self.post(f"/admin/competitions/{self.cid}/winner", {"winner_quote": "Amazing!", "consent": "1"})
         self.assertIn("Amazing!", self.client.get("/winners").get_data(as_text=True))
 
+    def test_basket_kept_through_sign_up(self):
+        guest = self.app.test_client()
+        self.add(self.cid, 3, client=guest)
+        self.signup("newbie@example.com", client=guest, name="New Person")
+        self.assertIn("3 × £2.50", guest.get("/basket").get_data(as_text=True))
+
+    def test_payment_provider_down_keeps_basket(self):
+        from unittest import mock
+        from app import payments
+        self.app.config["STRIPE_SECRET_KEY"] = "sk_test_x"
+        self.add(self.cid, 2, client=self.p)
+        with mock.patch.object(payments, "create_checkout", side_effect=RuntimeError("down")):
+            r = self.post("/basket/checkout", {}, client=self.p, follow_redirects=True)
+        html = r.get_data(as_text=True)
+        self.assertIn("you have not been charged", html)
+        self.assertIn("2 × £2.50", html)                                   # basket still there
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets"), 0)            # numbers released
+
+    def test_draw_waits_for_checkouts_in_progress(self):
+        self.add(self.cid, 2, client=self.p)
+        self.checkout(client=self.p, pay=False)
+        self.close()
+        r = self.post(f"/admin/competitions/{self.cid}/draw", follow_redirects=True)
+        self.assertIn("still in progress", r.get_data(as_text=True))
+        self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", self.cid), "live")
+
+    def test_break_blocks_free_play_and_deposits(self):
+        db = self.db()
+        db.execute("UPDATE users SET email_verified=1")
+        db.commit()
+        self.post("/admin/games/free-daily", {"kind": "spin"})
+        slug = self.q("SELECT slug FROM competitions WHERE free_daily=1")
+        self.post("/account/exclude", {"days": "7"}, client=self.p)
+        self.post(f"/free-play/{slug}", client=self.p)
+        self.post("/account/deposit", {"amount": "10"}, client=self.p)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE user_id=?", self.uid), 0)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM deposits WHERE user_id=?", self.uid), 0)
+
     def test_forgot_password_is_rate_limited(self):
         with self.assertLogs(self.app.logger, level="WARNING") as logs:
             for _ in range(5):

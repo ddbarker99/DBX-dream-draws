@@ -1013,9 +1013,13 @@ def signup():
              ref["id"] if ref else None, 1 if f.get("marketing") else 0, iso(utcnow()),
              "".join(ch for ch in f.get("phone", "") if ch.isdigit() or ch == "+")[:20] or None))
         _fail(key)
+        basket_keep, promo_keep = session.get("basket", []), session.get("promo")
         session.clear()
         session.permanent = True
         session["uid"] = cur.lastrowid
+        session["basket"] = basket_keep          # "your basket is kept" — the basket page promises it
+        if promo_keep:
+            session["promo"] = promo_keep
         session["pwv"] = _pw_version(db, cur.lastrowid)
         send_verification(db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone())
         flash("Welcome! We've emailed you a link to confirm your email address.")

@@ -189,3 +189,12 @@ python -m unittest discover tests
 - Account tabs: Overview · My entries · Wins · Wallet · Orders · Rewards · Settings.
 - Admin dashboard shows a "Site setup" checklist until POSTAL_ADDRESS, COMPANY_DETAILS, SUPPORT_EMAIL, SMTP and Stripe are set.
 - QA: `python3 -m unittest tests.test_app` and `python3 tests/qa_crawl.py` (crawls every page as guest/player/admin).
+
+## v8 rebuild (integrity, journeys, navigation)
+- **Read first:** `docs/AUDIT.md` (every URL, what changed, what still needs a decision) and `docs/QA-CHECKLIST.md` (run before every release).
+- **Draws** only run after the advertised closing time and keep a permanent snapshot of every eligible entry; results, draw records and the audit log can't be edited (database triggers). Drawn competitions can't be deleted.
+- **Postal entries:** record every envelope with the date it arrived. The system accepts or rejects it (late, wrong answer, under 18, over the per-person limit, sold out) and keeps the record. Entries whose email matches an account appear in that account.
+- **Admin roles:** `make-admin` creates an **owner** (everything). From Admin → Users you can give someone **staff** access instead: competitions, postal entries, draws and prizes, but no payouts, wallets, users, promos, stats or resets. Existing admins stay owners.
+- **Audit log:** Admin → Audit log shows every sensitive action and who did it.
+- **Withdrawals:** mark a request **Processing** while you pay it, then **Paid — money sent** only once it's gone.
+- The database upgrades itself on start; no manual steps.
