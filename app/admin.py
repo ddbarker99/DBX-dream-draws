@@ -243,6 +243,30 @@ def parse_prize_table(text):
     return out
 
 
+def parse_prize_rows(f):
+    """Prizes from the create form: the row inputs (how many / name / value / type) plus anything pasted as a list."""
+    out = []
+    rows = zip(f.getlist("prize_qty"), f.getlist("prize_name"), f.getlist("prize_each"), f.getlist("prize_type"))
+    for i, (qty, name, value, kind) in enumerate(rows, 1):
+        name = " ".join((name or "").split())[:120]
+        if not name and not (qty or "").strip() and not (value or "").strip():
+            continue                                        # an empty row
+        if not name:
+            raise ValueError(f"Prize {i}: give it a name, e.g. £10 Cash.")
+        try:
+            n = int((qty or "1").strip() or 1)
+        except ValueError:
+            raise ValueError(f"Prize {i} ({name}): 'how many' must be a whole number.")
+        if n < 1:
+            raise ValueError(f"Prize {i} ({name}): 'how many' must be at least 1.")
+        v = money((value or "0").strip().lstrip("£") or "0", f"Prize {i} value")
+        kind = kind if kind in PRIZE_TYPES else prize_kind_for(name)
+        if kind in ("cash", "credit") and v <= 0:
+            raise ValueError(f"Prize {i} ({name}): cash and credit prizes need a value.")
+        out.append((n, name, v, kind))
+    return out + parse_prize_table(f.get("prize_table"))
+
+
 def _add_prize_table(cid, rows):
     for qty, name, value, kind in rows:
         add_instant_prizes(cid, name, value, value if kind in ("cash", "credit") else 0, qty, kind)
@@ -269,7 +293,7 @@ def new_competition():
     if request.method == "POST":
         try:
             data = _parse_form(request.form, locked=False)
-            prizes = parse_prize_table(request.form.get("prize_table"))
+            prizes = parse_prize_rows(request.form)
             data["image"] = _save_image(request.files.get("image")) or request.form.get("keep_image") or None
         except ValueError as e:
             flash(str(e), "error")
@@ -293,7 +317,14 @@ def new_competition():
         flash("Saved as a draft." + (f" {sum(p[0] for p in prizes)} prizes added and sealed." if prizes else "") +
               " Check it over, then press Publish (or Schedule).")
         return redirect(url_for("admin.entries", cid=cur.lastrowid))
-    form = {"kind": request.args.get("kind", "draw")}
+    if not copy and request.args.get("kind") not in ("draw", "game", "free"):
+        return render_template("admin/new_pick.html")              # choose the type first; the form then shows only its fields
+    form = {"kind": request.args.get("kind") if request.args.get("kind") in ("draw", "game", "free") else "draw"}
+    # Sensible starting values, so a new competition needs as little typing as possible (all can be changed).
+    days = {"draw": 7, "game": 30, "free": 365}[form["kind"]]
+    end = (utcnow().astimezone(UK) + timedelta(days=days)).replace(hour=20, minute=0, second=0, microsecond=0)
+    form.update(ends_at=end.strftime("%Y-%m-%dT%H:%M"), max_tickets=1000, max_per_user=100,
+                ticket_price="0.99" if form["kind"] == "draw" else "0.50")
     if form["kind"] == "free":
         form.update(max_tickets=20000, title="Daily Free Spin", game_type="spin",
                     description="One free play every day for every verified member — no purchase needed. Win real cash or site credit.")

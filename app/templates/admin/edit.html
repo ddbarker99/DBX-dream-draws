@@ -1,64 +1,57 @@
 {% extends "base.html" %}
-{% block title %}{{ 'Edit' if c else 'New' }} · Admin{% endblock %}
-{% set kind = form.get('kind') or 'draw' %}
+{% set kind = form.get('kind') if form.get('kind') in ('draw', 'game', 'free') else 'draw' %}
+{% set kind_name = {'draw': 'prize draw', 'game': 'instant win game', 'free': 'daily free game'}[kind] %}
+{% set unit = 'ticket' if kind == 'draw' else 'play' %}
+{% block title %}{{ 'Edit' if c else 'New ' ~ kind_name }} · Admin{% endblock %}
 {% block content %}
 {% include "admin/_bar.html" %}
-<h1>{{ 'Edit: ' ~ c.title if c else 'Create something new' }}</h1>
+<h1>{{ 'Edit ' ~ kind_name ~ ': ' ~ c.title if c else 'New ' ~ kind_name }}</h1>
+{% if not c %}<p class="small muted" style="margin-top:0">{% if kind == 'draw' %}🏆 A main prize drawn on the closing date, with optional instant prizes on ticket numbers.{% elif kind == 'game' %}⚡ A scratch card, wheel or mystery box — each play wins or loses straight away.{% else %}🎁 One free play a day for verified members — no payment.{% endif %}
+  <a href="{{ url_for('admin.new_competition', pick=1) }}">Make something else instead</a></p>{% endif %}
 <form class="panel" method="post" enctype="multipart/form-data" style="max-width:860px" id="compform">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="kind" value="{{ kind }}">
   {% if form.get('keep_image') %}<input type="hidden" name="keep_image" value="{{ form.keep_image }}">{% endif %}
 
-  {% if c and locked %}<input type="hidden" name="kind" value="{{ kind }}">
-  {% else %}
-  <fieldset>
-    <legend>What are you creating?</legend>
-    <div class="three kindpick">
-      {% for k, icon, name, help in [('draw','🏆','Prize draw','A main prize drawn on the closing date. Optional instant prizes on ticket numbers.'),
-                                     ('game','⚡','Instant win game','Scratch card, wheel or mystery box. Each play wins or loses straight away.'),
-                                     ('free','🎁','Daily free game','One free play a day for verified members. Great for sign-ups.')] %}
-      <label class="kindcard"><input type="radio" name="kind" value="{{ k }}" {{ 'checked' if kind == k }}>
-        <span><b><span aria-hidden="true">{{ icon }}</span> {{ name }}</b><span class="small muted">{{ help }}</span></span></label>
-      {% endfor %}
-    </div>
-  </fieldset>
-  {% endif %}
-
-  <h2 class="formh">The prize</h2>
-  <div class="field"><label for="title">Title</label><input id="title" name="title" value="{{ form.get('title','') }}" required placeholder="PS5 Pro + 2 controllers"></div>
-  <div class="field"><label for="description">Description</label><textarea id="description" name="description" placeholder="What's included, condition, delivery…">{{ form.get('description','') }}</textarea></div>
-  <div class="field"><label for="comp_terms">Conditions specific to this competition <span class="dim">(optional)</span></label>
-    <textarea id="comp_terms" name="comp_terms" rows="4" placeholder="e.g. Delivery to UK mainland only. Cash alternative of £X available. Winner must collect within 30 days.">{{ form.get('comp_terms','') }}</textarea>
-    <span class="hint">Shown on the competition page. Every change creates a new version{% if terms_version %} (currently version {{ terms_version }}){% endif %}; each entry stays linked to the version that applied when it was made. Simple formatting: - bullet, **bold**, [link](https://…).</span></div>
+  <h2 class="formh">{{ 'The prize' if kind == 'draw' else 'The game' }}</h2>
+  <div class="field"><label for="title">Title</label><input id="title" name="title" value="{{ form.get('title','') }}" required placeholder="{{ 'PS5 Pro + 2 controllers' if kind == 'draw' else ('£1 Cash Scratcher' if kind == 'game' else 'Daily Free Spin') }}"></div>
+  <div class="field"><label for="description">Description</label><textarea id="description" name="description" placeholder="{{ 'What\'s included, condition, delivery…' if kind == 'draw' else 'What players can win and how it works…' }}">{{ form.get('description','') }}</textarea></div>
+  <div class="field"><label for="comp_terms">Conditions specific to this {{ 'competition' if kind == 'draw' else 'game' }} <span class="dim">(optional)</span></label>
+    <textarea id="comp_terms" name="comp_terms" rows="4" placeholder="{{ 'e.g. Delivery to UK mainland only. Cash alternative of £X available.' if kind == 'draw' else 'e.g. Unrevealed prizes are paid automatically after 24 hours.' }}">{{ form.get('comp_terms','') }}</textarea>
+    <span class="hint">Shown on the page. Every change creates a new version{% if terms_version %} (currently version {{ terms_version }}){% endif %}; each entry stays linked to the version that applied when it was made. Simple formatting: - bullet, **bold**, [link](https://…).</span></div>
+  {% if kind == 'draw' %}
   <div class="three">
     <div class="field"><label for="category">Category</label><select id="category" name="category">{% for k, n in categories %}<option value="{{ k }}" {{ 'selected' if form.get('category') == k }}>{{ n }}</option>{% endfor %}</select></div>
-    <div class="field only-draw"><label for="prize_value">Prize value (£)</label><input id="prize_value" name="prize_value" type="number" step="1" min="0" value="{{ form.get('prize_value','') }}" placeholder="e.g. 600"></div>
-    <div class="field only-draw"><label for="cash_alternative">Cash alternative</label><input id="cash_alternative" name="cash_alternative" value="{{ form.get('cash_alternative') or '' }}" placeholder="£550 (optional)"></div>
+    <div class="field"><label for="prize_value">Prize value (£)</label><input id="prize_value" name="prize_value" type="number" step="1" min="0" value="{{ form.get('prize_value','') }}" placeholder="e.g. 600"></div>
+    <div class="field"><label for="cash_alternative">Cash alternative</label><input id="cash_alternative" name="cash_alternative" value="{{ form.get('cash_alternative') or '' }}" placeholder="£550 (optional)"></div>
   </div>
-  <div class="field"><label for="image">Image {% if c and c.image %}<span class="dim">(leave empty to keep the current one)</span>{% elif form.get('keep_image') %}<span class="dim">(copied)</span>{% elif kind != 'draw' %}<span class="dim">(optional — games get artwork automatically)</span>{% endif %}</label><input id="image" type="file" name="image" accept="image/*"></div>
-
-  {% if not locked %}
-  <div class="field not-draw"><label for="game_type">Game style</label>
-    <select id="game_type" name="game_type">{% for k, n, i in game_types %}<option value="{{ k }}" {{ 'selected' if form.get('game_type') == k }}>{{ i }} {{ n }}</option>{% endfor %}</select></div>
+  {% else %}
+  <div class="two">
+    {% if not locked %}<div class="field"><label for="game_type">Game style</label>
+      <select id="game_type" name="game_type">{% for k, n, i in game_types %}<option value="{{ k }}" {{ 'selected' if form.get('game_type') == k }}>{{ i }} {{ n }}</option>{% endfor %}</select></div>{% endif %}
+    <div class="field"><label for="category">Category</label><select id="category" name="category">{% for k, n in categories %}<option value="{{ k }}" {{ 'selected' if form.get('category') == k }}>{{ n }}</option>{% endfor %}</select></div>
+  </div>
   {% endif %}
+  <div class="field"><label for="image">Image {% if c and c.image %}<span class="dim">(leave empty to keep the current one)</span>{% elif form.get('keep_image') %}<span class="dim">(copied)</span>{% elif kind != 'draw' %}<span class="dim">(optional — games get artwork automatically)</span>{% endif %}</label><input id="image" type="file" name="image" accept="image/*"></div>
 
   <h2 class="formh">Dates</h2>
   <div class="two">
     <div class="field"><label for="starts_at">Go live at <span class="dim">(optional)</span></label><input id="starts_at" type="datetime-local" name="starts_at" value="{{ form.get('starts_at') or '' }}"><span class="hint">Leave blank to publish by hand. Set a time, then press Schedule, to launch automatically.</span></div>
-    <div class="field"><label for="ends_at"><span class="only-draw">Draw date &amp; time (UK)</span><span class="not-draw">Closes at (UK)</span></label><input id="ends_at" type="datetime-local" name="ends_at" value="{{ form.get('ends_at','') }}" required></div>
+    <div class="field"><label for="ends_at">{{ 'Draw date & time (UK)' if kind == 'draw' else 'Closes at (UK)' }}</label><input id="ends_at" type="datetime-local" name="ends_at" value="{{ form.get('ends_at','') }}" required></div>
   </div>
 
   {% if locked %}
     <p class="notice warn" style="margin-top:16px">People have entered, so the type, price, limits, discounts and question are locked to keep it fair. You can still change the text, image and dates.</p>
   {% else %}
-  <h2 class="formh">Price and limits</h2>
+  <h2 class="formh">{{ 'Plays' if kind == 'free' else 'Price and limits' }}</h2>
   <div class="three">
-    <div class="field not-free"><label for="ticket_price">Price per <span class="only-draw">ticket</span><span class="not-draw">play</span> (£)</label><input id="ticket_price" name="ticket_price" type="number" step="0.01" min="0.01" value="{{ form.get('ticket_price','') }}" placeholder="e.g. 0.99"></div>
-    <div class="field"><label for="max_tickets">Total <span class="only-draw">tickets</span><span class="not-draw">plays</span></label><input id="max_tickets" name="max_tickets" type="number" min="1" value="{{ form.get('max_tickets','') }}" required></div>
-    <div class="field not-free"><label for="max_per_user">Max per person</label><input id="max_per_user" name="max_per_user" type="number" min="1" value="{{ form.get('max_per_user', 100) }}"></div>
+    {% if kind != 'free' %}<div class="field"><label for="ticket_price">Price per {{ unit }} (£)</label><input id="ticket_price" name="ticket_price" type="number" step="0.01" min="0.01" value="{{ form.get('ticket_price','') }}" placeholder="e.g. 0.99"></div>{% endif %}
+    <div class="field"><label for="max_tickets">Total {{ unit }}s</label><input id="max_tickets" name="max_tickets" type="number" min="1" value="{{ form.get('max_tickets','') }}" required></div>
+    {% if kind != 'free' %}<div class="field"><label for="max_per_user">Max per person</label><input id="max_per_user" name="max_per_user" type="number" min="1" value="{{ form.get('max_per_user', 100) }}"></div>{% endif %}
   </div>
-  <div class="field not-free"><label for="discount_tiers">Multi-buy discounts</label><input id="discount_tiers" name="discount_tiers" value="{{ form.get('discount_tiers') or '' }}" placeholder="Leave blank for none" aria-describedby="tiers-h"><span class="hint" id="tiers-h"><code>10:10, 25:15</code> = 10% off 10 or more, 15% off 25 or more</span></div>
+  {% if kind != 'free' %}
+  <div class="field"><label for="discount_tiers">Multi-buy discounts</label><input id="discount_tiers" name="discount_tiers" value="{{ form.get('discount_tiers') or '' }}" placeholder="Leave blank for none" aria-describedby="tiers-h"><span class="hint" id="tiers-h"><code>10:10, 25:15</code> = 10% off 10 or more, 15% off 25 or more</span></div>
 
-  <div class="not-free">
   <h2 class="formh">Entry question</h2>
   {% set qm = form.get('question_mode') or default_question_mode %}
   <div class="field"><label for="question_mode">How entry works</label>
@@ -72,34 +65,81 @@
   </div>
   <div class="field"><label for="correct">Correct answer</label>
   <select id="correct" name="correct" style="max-width:120px">{% for k in ['a','b','c'] %}<option value="{{ k }}" {{ 'selected' if form.get('correct') == k }}>{{ k|upper }}</option>{% endfor %}</select></div>
-  </div>
+  {% endif %}
   {% endif %}
 
+  {% if kind != 'free' %}
   <h2 class="formh">Options</h2>
-  <div class="field only-draw"><label for="live_url">Live draw link <span class="dim">(optional)</span></label><input id="live_url" name="live_url" value="{{ form.get('live_url') or '' }}" placeholder="https://youtube.com/live/…"></div>
-  <label class="check not-free"><input type="checkbox" name="featured" value="1" {{ 'checked' if form.get('featured') }}> <span>Feature on the home page</span></label>
-  <label class="check only-draw"><input type="checkbox" name="auto_draw" value="1" {{ 'checked' if form.get('auto_draw', 1) }}> <span>Draw automatically at the closing time (winner emailed and posted to Discord). Untick if you'll draw it live.</span></label>
+  {% if kind == 'draw' %}<div class="field"><label for="live_url">Live draw link <span class="dim">(optional)</span></label><input id="live_url" name="live_url" value="{{ form.get('live_url') or '' }}" placeholder="https://youtube.com/live/…"></div>{% endif %}
+  <label class="check"><input type="checkbox" name="featured" value="1" {{ 'checked' if form.get('featured') }}> <span>Feature on the home page</span></label>
+  {% if kind == 'draw' %}<label class="check"><input type="checkbox" name="auto_draw" value="1" {{ 'checked' if form.get('auto_draw', 1) }}> <span>Draw automatically at the closing time (winner emailed and posted to Discord). Untick if you'll draw it live.</span></label>{% endif %}
+  {% endif %}
 
   {% if not c %}
-  <h2 class="formh"><span class="only-draw">Instant prizes <span class="dim" style="font:400 14px var(--font);text-transform:none">(optional)</span></span><span class="not-draw">Prizes</span></h2>
-  <div class="field">
-    <label for="prize_table">One prize per line: <code>how many, name, value in £, type</code></label>
-    <textarea id="prize_table" name="prize_table" rows="6" placeholder="1, £100 Cash, 100, cash&#10;5, £10 Cash, 10, cash&#10;20, £2 Site Credit, 2, credit&#10;1, AirPods Pro, 229, physical">{{ form.get('prize_table','') }}</textarea>
-    <span class="hint">Types: <b>cash</b> (paid to their cash balance, withdrawable) · <b>credit</b> (site credit, spend only) · <b>physical</b> (you send it). Winning numbers are picked at random and sealed when you save. You can also add or auto-fill prizes on the next page.</span>
-  </div>
+  {% set names = form.getlist('prize_name') if form.getlist is defined else [] %}
+  {% set qtys = form.getlist('prize_qty') if form.getlist is defined else [] %}
+  {% set vals = form.getlist('prize_each') if form.getlist is defined else [] %}
+  {% set types = form.getlist('prize_type') if form.getlist is defined else [] %}
+  <h2 class="formh">{% if kind == 'draw' %}Instant prizes <span class="dim" style="font:400 14px var(--font);text-transform:none">(optional — won straight away on certain ticket numbers)</span>{% else %}Prizes{% endif %}</h2>
+  <p class="small muted" style="margin-top:0">{% if kind == 'draw' %}The main prize is the one described above. Add any instant prizes here, or leave this empty.{% else %}What players can win. The winning plays are picked at random and sealed when you save.{% endif %}
+    Start from a set: {% for key, label in (([('starter','Small cash set'),('credit','Credit & cash mix')] if kind == 'draw' else [('ladder','Cash ladder'),('credit','Credit & cash mix'),('big','One big prize + small wins')])) %}<button type="button" class="linkbtn small" data-preset="{{ key }}">{{ label }}</button>{{ ' · ' if not loop.last }}{% endfor %}</p>
+  <div class="table-scroll"><table class="prizerows" id="prizerows">
+    <thead><tr><th scope="col">How many</th><th scope="col">Prize name</th><th scope="col">Value each (£)</th><th scope="col">Type</th><th scope="col"><span class="sr-only">Remove</span></th></tr></thead>
+    <tbody>
+    {% set n_rows = [names|length, 3]|max %}
+    {% for i in range(n_rows) %}<tr>
+      <td data-label="How many"><input name="prize_qty" type="number" min="1" inputmode="numeric" value="{{ qtys[i] if i < qtys|length else '' }}" placeholder="1" aria-label="How many"></td>
+      <td data-label="Prize"><input name="prize_name" value="{{ names[i] if i < names|length else '' }}" placeholder="{{ ['£10 Cash','£2 Site Credit','AirPods Pro'][i % 3] }}" aria-label="Prize name"></td>
+      <td data-label="£ each"><input name="prize_each" type="number" min="0" step="0.01" inputmode="decimal" value="{{ vals[i] if i < vals|length else '' }}" placeholder="{{ ['10','2','229'][i % 3] }}" aria-label="Value each in pounds"></td>
+      <td data-label="Type"><select name="prize_type" aria-label="Type">{% for t, label in [('cash','Cash (withdrawable)'),('credit','Site credit'),('physical','Item we send')] %}<option value="{{ t }}" {{ 'selected' if (types[i] if i < types|length else ['cash','credit','physical'][i % 3]) == t }}>{{ label }}</option>{% endfor %}</select></td>
+      <td><button type="button" class="linkbtn small" data-remove aria-label="Remove this prize">✕</button></td></tr>{% endfor %}
+    </tbody></table></div>
+  <p style="margin:var(--s2) 0"><button type="button" class="btn ghost small" id="addprize">+ Add another prize</button></p>
+  <p class="small" id="prizesum" aria-live="polite"></p>
+  <details style="margin-top:var(--s2)"><summary class="small">Paste a list instead</summary>
+    <div class="field"><label for="prize_table">One prize per line: <code>how many, name, value in £, type</code></label>
+    <textarea id="prize_table" name="prize_table" rows="4" placeholder="1, £100 Cash, 100, cash&#10;20, £2 Site Credit, 2, credit">{{ form.get('prize_table','') }}</textarea></div></details>
+  <span class="hint">Cash goes to the winner's withdrawable balance · site credit can only be spent on entries · items are sent by you.{% if kind != 'draw' %} You can also press <b>Auto-fill prizes</b> on the next page.{% endif %}</span>
   {% endif %}
 
-  <button class="btn block" style="margin-top:var(--s5)">{{ 'Save changes' if c else 'Save as draft' }}</button>
+  <button class="btn block" style="margin-top:var(--s5)">{{ 'Save changes' if c else 'Save ' ~ kind_name ~ ' as draft' }}</button>
   {% if not c %}<p class="hint center">Nothing goes on the site until you press Publish or Schedule on the next page.</p>{% endif %}
 </form>
 {% endblock %}
 {% block scripts %}
 <script>
-(function(){var f=document.getElementById('compform');
-function sync(){var k=(f.querySelector('input[name=kind]:checked')||f.querySelector('input[name=kind]')||{}).value||'draw';
-  f.querySelectorAll('.only-draw').forEach(function(e){e.hidden=k!=='draw'});
-  f.querySelectorAll('.not-draw').forEach(function(e){e.hidden=k==='draw'});
-  f.querySelectorAll('.not-free').forEach(function(e){e.hidden=k==='free'});}
-f.addEventListener('change',function(e){if(e.target.name==='kind')sync()});sync();})();
+(function(){
+  var body=document.querySelector('#prizerows tbody');if(!body)return;
+  var UNIT={{ (unit ~ 's')|tojson }};
+  var tpl=body.rows[0].cloneNode(true);
+  var presets={
+    starter:[[1,'£50 Cash',50,'cash'],[5,'£10 Cash',10,'cash'],[10,'£5 Cash',5,'cash']],
+    credit:[[2,'£25 Cash',25,'cash'],[10,'£5 Site Credit',5,'credit'],[25,'£1 Site Credit',1,'credit']],
+    ladder:[[1,'£100 Cash',100,'cash'],[5,'£20 Cash',20,'cash'],[20,'£5 Cash',5,'cash'],[50,'£1 Cash',1,'cash']],
+    big:[[1,'£500 Cash',500,'cash'],[10,'£10 Cash',10,'cash'],[50,'£1 Site Credit',1,'credit']]};
+  function addRow(v){var r=tpl.cloneNode(true);r.querySelectorAll('input').forEach(function(i){i.value=''});
+    if(v){var f=r.querySelectorAll('input,select');f[0].value=v[0];f[1].value=v[1];f[2].value=v[2];f[3].value=v[3];}
+    body.appendChild(r);return r}
+  function money(n){return '£'+n.toLocaleString('en-GB',{minimumFractionDigits:n%1?2:0,maximumFractionDigits:2})}
+  function sum(){var count=0,total=0;
+    body.querySelectorAll('tr').forEach(function(r){var f=r.querySelectorAll('input,select');if(!f[1].value.trim())return;
+      var q=parseInt(f[0].value||'1',10)||0,v=parseFloat(f[2].value||'0')||0;count+=q;total+=q*v});
+    var out=document.getElementById('prizesum');
+    if(!count){out.textContent='';return}
+    var plays=parseInt((document.getElementById('max_tickets')||{}).value||'0',10),price=parseFloat((document.getElementById('ticket_price')||{}).value||'0');
+    var t=count+' prize'+(count==1?'':'s')+' worth '+money(total)+' in total';
+    if(plays){t+=' · about 1 in '+Math.max(1,Math.round(plays/count))+' '+UNIT+' wins';
+      if(price)t+=' · '+Math.round(total/(plays*price)*100)+'% of the most you could take ('+money(plays*price)+')';
+      if(count>plays)t+=' — more prizes than '+UNIT+'!'}
+    out.textContent=t}
+  document.getElementById('addprize').addEventListener('click',function(){addRow().querySelector('input[name=prize_name]').focus();sum()});
+  body.addEventListener('click',function(e){if(e.target.closest('[data-remove]')){var r=e.target.closest('tr');
+    if(body.rows.length>1)r.remove();else r.querySelectorAll('input').forEach(function(i){i.value=''});sum()}});
+  document.querySelectorAll('[data-preset]').forEach(function(b){b.addEventListener('click',function(){
+    var hasData=[].some.call(body.querySelectorAll('input[name=prize_name]'),function(i){return i.value.trim()});
+    if(hasData&&!confirm('Replace the prizes you have entered?'))return;
+    body.innerHTML='';presets[b.dataset.preset].forEach(addRow);sum()})});
+  document.getElementById('compform').addEventListener('input',sum);sum();
+})();
 </script>
 {% endblock %}

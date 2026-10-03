@@ -3519,3 +3519,47 @@ class Phase7TrustTests(AutoDrawBase):
             self.assertIn(text, r.get_data(as_text=True), url)
         self.assertIn("All passed", self.client.get("/admin/risk").get_data(as_text=True))
         self.assertIn("player@example.com", self.client.get("/admin/communications?q=player").get_data(as_text=True))
+
+
+class CreateFormTests(PlatformBase):
+    def test_create_form_shows_only_the_chosen_type(self):
+        self.assertIn("What are you creating?", self.client.get("/admin/competitions/new").get_data(as_text=True))
+        draw = self.client.get("/admin/competitions/new?kind=draw").get_data(as_text=True)
+        game = self.client.get("/admin/competitions/new?kind=game").get_data(as_text=True)
+        free = self.client.get("/admin/competitions/new?kind=free").get_data(as_text=True)
+        self.assertIn("New prize draw", draw)
+        self.assertIn('name="prize_value"', draw)
+        self.assertIn('name="live_url"', draw)
+        self.assertNotIn('name="game_type"', draw)
+        self.assertNotIn("What are you creating?", draw)
+        self.assertIn("New instant win game", game)
+        self.assertIn('name="game_type"', game)
+        self.assertNotIn('name="prize_value"', game)
+        self.assertNotIn('name="live_url"', game)
+        self.assertNotIn('name="auto_draw"', game)
+        self.assertIn("New daily free game", free)
+        self.assertNotIn('name="ticket_price"', free)
+        self.assertNotIn('name="question"', free)
+        self.assertNotIn('name="discount_tiers"', free)
+        self.assertNotIn('name="featured"', free)
+        # editing keeps to the competition's own type
+        edit = self.client.get(f"/admin/competitions/{self.cid}/edit").get_data(as_text=True)
+        self.assertIn("Edit prize draw", edit)
+        self.assertNotIn('name="game_type"', edit)
+
+    def test_prize_rows_on_the_create_form(self):
+        d = {"kind": "game", "game_type": "scratch", "title": "Row Game", "description": "Scratch to win cash.",
+             "ends_at": "2099-01-01T20:00", "category": "cash", "ticket_price": "1", "max_tickets": "200", "max_per_user": "50",
+             "question": "2+2?", "answer_a": "3", "answer_b": "4", "answer_c": "5", "correct": "b",
+             "prize_qty": ["2", "", "5"], "prize_name": ["£10 Cash", "", "Mug"], "prize_each": ["10", "", ""],
+             "prize_type": ["cash", "cash", "physical"]}
+        self.post("/admin/competitions/new", d)
+        cid = self.q("SELECT id FROM competitions WHERE title='Row Game'")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM instant_prizes WHERE competition_id=?", cid), 7)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM instant_prizes WHERE competition_id=? AND credit_amount=1000", cid), 2)
+        # a cash prize with no value is refused with a clear message, and the rows typed are kept
+        d.update(title="Bad Game", prize_qty=["3"], prize_name=["£5 Cash"], prize_each=[""], prize_type=["cash"])
+        html = self.post("/admin/competitions/new", d, follow_redirects=True).get_data(as_text=True)
+        self.assertIn("cash and credit prizes need a value", html)
+        self.assertIn('value="£5 Cash"', html)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM competitions WHERE title='Bad Game'"), 0)

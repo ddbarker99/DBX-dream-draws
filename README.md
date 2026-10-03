@@ -246,3 +246,4 @@ python -m unittest discover tests
 - **Database:** wallet balances can't go negative (trigger); approvals and sign-offs are permanent.
 - **How we decide what to build:** `docs/DEVELOPMENT-BOARD.md` (four columns, four questions). Next milestone: `docs/FIRST-100-USERS.md`.
 - New docs: `docs/RETENTION.md`, `docs/NEW-MECHANIC-CHECKLIST.md`, RUNBOOK §17–20.
+- **Easier creating (v14.1):** "Create" asks what you're making first; the form then shows only that type's fields (prize draw / instant win game / daily free game). Prizes are entered as rows (how many, name, £ each, type) with "+ Add another prize", quick-start sets and a live total, odds and payout %. Sensible defaults (draw in 7 days at 8pm, prices, totals) are pre-filled.

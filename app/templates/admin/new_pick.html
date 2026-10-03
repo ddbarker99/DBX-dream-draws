@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Create something new · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>What are you creating?</h1>
+<p class="muted">Pick one — the next page only asks for what that type needs.</p>
+<div class="three kindpick" style="max-width:960px">
+  {% for k, icon, name, help in [('draw','🏆','Prize draw','A main prize drawn on the closing date. Optional instant prizes on ticket numbers.'),
+                                 ('game','⚡','Instant win game','Scratch card, wheel or mystery box. Each play wins or loses straight away.'),
+                                 ('free','🎁','Daily free game','One free play a day for verified members. Great for sign-ups.')] %}
+  <a class="kindcard panel" href="{{ url_for('admin.new_competition', kind=k) }}" style="display:block;text-decoration:none">
+    <span style="display:block;font-size:32px" aria-hidden="true">{{ icon }}</span>
+    <b style="display:block;font-size:18px;margin:6px 0">{{ name }}</b>
+    <span class="small muted">{{ help }}</span></a>
+  {% endfor %}
+</div>
+{% endblock %}
