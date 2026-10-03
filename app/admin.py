@@ -3,7 +3,7 @@ import io
 import os
 import re
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 import requests
@@ -511,7 +511,14 @@ def entries(cid):
         "FROM instant_prizes ip LEFT JOIN tickets t ON t.id=ip.ticket_id LEFT JOIN users u ON u.id=t.user_id "
         "LEFT JOIN postal_entries p ON p.id=t.postal_entry_id WHERE ip.competition_id=? ORDER BY ip.value DESC, ip.number",
         (cid,)).fetchall()
+    from .checks import draw_checks, launch_checks
+    checklist, checklist_kind = None, None
+    if c["status"] == "draft":
+        checklist, checklist_kind = launch_checks(db, c), "launch"
+    elif c["status"] == "live" and not c["game_type"] and c["ends_at"] <= iso(utcnow()):
+        checklist, checklist_kind = draw_checks(db, c), "draw"
     return render_template("admin/entries.html", c=c, sold=sold, held=held, state=comp_state(c, sold), rows=rows,
+                           checklist=checklist, checklist_kind=checklist_kind,
                            winner=winner_details(db, c), postal_rejected=postal_rejected, revenue=revenue,
                            prizes=prizes, board=instant_board(db, cid, reveal=True), gi=game_info(db, c),
                            game_name=GAME_NAMES.get(c["game_type"]),
@@ -1201,6 +1208,18 @@ def free_daily_game():
 
 # ---------------- site settings ----------------
 
+@bp.route("/features", methods=["GET", "POST"])
+@require("settings")
+def features():
+    from .flags import STATES, all_flags, set_state
+    db = get_db()
+    if request.method == "POST":
+        changed = set_state(db, request.form.get("key", ""), request.form.get("state", ""), g.user)
+        flash("Saved — the change applies straight away." if changed else "No change.")
+        return redirect(url_for("admin.features"))
+    return render_template("admin/features.html", rows=all_flags(db), states=STATES)
+
+
 @bp.route("/settings", methods=["GET", "POST"])
 @require("settings")
 def settings():
@@ -1244,14 +1263,47 @@ def settings():
 @bp.route("/audit")
 @require("audit")
 def audit_log():
+    from .services import verify_audit_chain
     db = get_db()
-    target = request.args.get("target", "").strip()[:40]
-    sql, args = "SELECT * FROM audit_log", []
-    if target:
-        sql += " WHERE target=?"
-        args.append(target)
-    rows = db.execute(sql + " ORDER BY id DESC LIMIT 300", args).fetchall()
-    return render_template("admin/audit.html", rows=rows, target=target)
+    a = request.args
+    f = {k: a.get(k, "").strip()[:80] for k in ("target", "actor", "action", "q", "from", "to")}
+    where, args = [], []
+    if f["target"]:
+        where.append("target=?"); args.append(f["target"])
+    if f["actor"] == "system":
+        where.append("actor_id IS NULL")
+    elif f["actor"]:
+        where.append("actor_email LIKE ?"); args.append(f"%{f['actor']}%")
+    if f["action"]:
+        where.append("action LIKE ?"); args.append(f"{f['action']}%")
+    if f["q"]:
+        where.append("(detail LIKE ? OR target LIKE ?)"); args += [f"%{f['q']}%"] * 2
+    for key, op, extra in (("from", ">=", ""), ("to", "<", "")):
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", f[key]):
+            day = datetime.strptime(f[key], "%Y-%m-%d").replace(tzinfo=UK)
+            if key == "to":
+                day += timedelta(days=1)
+            where.append(f"created_at{op}?"); args.append(iso(day))
+    sql = "SELECT * FROM audit_log" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC"
+    if a.get("format") == "csv":
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["id", "created_at_utc", "actor", "action", "target", "detail", "row_hash"])
+        for r in db.execute(sql + " LIMIT 50000", args):
+            w.writerow([r["id"], r["created_at"], r["actor_email"] or "System", r["action"], r["target"] or "", r["detail"] or "",
+                        r["row_hash"] or ""])
+        audit(db, "audit.export", None, f"Exported audit log CSV with filters {dict((k, v) for k, v in f.items() if v)}")
+        return Response(buf.getvalue(), mimetype="text/csv",
+                        headers={"Content-Disposition": f"attachment; filename=audit-log-{utcnow():%Y%m%d}.csv"})
+    rows = db.execute(sql + " LIMIT 300", args).fetchall()
+    actions = [r[0] for r in db.execute("SELECT DISTINCT substr(action, 1, instr(action || '.', '.') - 1) FROM audit_log ORDER BY 1")]
+    chain = None
+    if a.get("verify"):
+        broken = verify_audit_chain(db)
+        total = db.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+        chain = {"ok": broken is None, "broken": broken, "total": total}
+    return render_template("admin/audit.html", rows=rows, f=f, target=f["target"], actions=actions, chain=chain,
+                           filtered=any(f.values()))
 
 
 # ---------------- redraws & prize claims ----------------

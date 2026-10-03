@@ -132,10 +132,24 @@ MIGRATIONS = [
     ("cases", "withdrawal_id", "INTEGER"),
     ("cases", "locked_by", "INTEGER"),                             # staff member currently working on it
     ("cases", "locked_at", "TEXT"),
+    # v11: tamper-evident audit log, feature flags
+    ("audit_log", "prev_hash", "TEXT"),
+    ("audit_log", "row_hash", "TEXT"),
 ]
 
 # Triggers that use columns added by MIGRATIONS, so they're created after them.
 POST_TRIGGERS = [
+    # Money and points histories are permanent: mistakes are corrected with a new adjustment line.
+    """CREATE TRIGGER IF NOT EXISTS ledger_no_update BEFORE UPDATE ON credit_ledger
+       BEGIN SELECT RAISE(ABORT, 'Wallet history is permanent: add an adjustment instead.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS ledger_no_delete BEFORE DELETE ON credit_ledger
+       WHEN NOT EXISTS (SELECT 1 FROM maintenance_unlock)
+       BEGIN SELECT RAISE(ABORT, 'Wallet history is permanent: add an adjustment instead.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS points_no_update BEFORE UPDATE ON points_ledger
+       BEGIN SELECT RAISE(ABORT, 'Points history is permanent: add an adjustment instead.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS points_no_delete BEFORE DELETE ON points_ledger
+       WHEN NOT EXISTS (SELECT 1 FROM maintenance_unlock)
+       BEGIN SELECT RAISE(ABORT, 'Points history is permanent: add an adjustment instead.'); END""",
     # Once the final entry list is frozen, tickets can't be added, removed or reassigned.
     """CREATE TRIGGER IF NOT EXISTS tickets_locked_insert BEFORE INSERT ON tickets
        WHEN (SELECT locked_at FROM competitions WHERE id=NEW.competition_id) IS NOT NULL
@@ -149,6 +163,13 @@ POST_TRIGGERS = [
     """CREATE TRIGGER IF NOT EXISTS comp_lock_permanent BEFORE UPDATE OF locked_at ON competitions
        WHEN OLD.locked_at IS NOT NULL AND NEW.locked_at IS NOT OLD.locked_at
        BEGIN SELECT RAISE(ABORT, 'A closed competition cannot be reopened.'); END""",
+    # Draw records and frozen entry lists can only be removed with their (test) competition.
+    """CREATE TRIGGER IF NOT EXISTS draws_no_delete BEFORE DELETE ON draws
+       WHEN (SELECT purging FROM competitions WHERE id=OLD.competition_id) = 0
+       BEGIN SELECT RAISE(ABORT, 'Draw records are permanent.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS snapshots_no_delete BEFORE DELETE ON entry_snapshots
+       WHEN (SELECT purging FROM competitions WHERE id=OLD.competition_id) = 0
+       BEGIN SELECT RAISE(ABORT, 'Entry snapshots are permanent.'); END""",
     # Result fields of a drawn competition only change through a recorded redraw.
     "DROP TRIGGER IF EXISTS comp_result_locked",
     """CREATE TRIGGER comp_result_locked BEFORE UPDATE ON competitions
@@ -202,8 +223,27 @@ def init_db(path):
                      "WHERE answer_correct=0 AND status='accepted' AND reject_reason IS NULL")
         for r in conn.execute("SELECT id FROM users WHERE referral_code IS NULL").fetchall():
             conn.execute("UPDATE users SET referral_code=? WHERE id=?", (secrets.token_hex(4).upper(), r["id"]))
+        _chain_old_audit_rows(conn)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
         raise
     conn.close()
+
+
+def _chain_old_audit_rows(conn):
+    """Audit entries written before the hash chain existed get hashed once, in order, so the whole log is covered."""
+    if not conn.execute("SELECT 1 FROM audit_log WHERE row_hash IS NULL LIMIT 1").fetchone():
+        return
+    from .services import audit_hash
+    conn.execute("DROP TRIGGER IF EXISTS audit_no_update")
+    prev = ""
+    for r in conn.execute("SELECT * FROM audit_log ORDER BY id").fetchall():
+        if r["row_hash"] is None:
+            h = audit_hash(prev, r["created_at"], r["actor_id"], r["actor_email"], r["action"], r["target"], r["detail"])
+            conn.execute("UPDATE audit_log SET prev_hash=?, row_hash=? WHERE id=?", (prev, h, r["id"]))
+            prev = h
+        else:
+            prev = r["row_hash"]
+    conn.execute("CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit_log "
+                 "BEGIN SELECT RAISE(ABORT, 'The audit log is append-only.'); END")

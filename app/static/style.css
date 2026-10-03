@@ -696,6 +696,18 @@ dl.facts>dt{padding-top:10px;color:var(--text-2);font-size:var(--fs-sm)}
   .toc{columns:1}
   .progress li{justify-content:center}
 }
+/* Phase 3 ops: checklists, liability, support desk, flags */
+.checklist summary{cursor:pointer}
+.checks{list-style:none;padding:0;margin:12px 0 0;display:grid;gap:6px}
+.checks li{display:flex;gap:10px;align-items:flex-start;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.03)}
+.checks li>span:first-child{font-weight:700;min-width:1.2em}
+.checks li.ok>span:first-child,.ok-t{color:var(--green)}
+.checks li.bad{background:rgba(224,16,40,.12)}
+.checks li.bad>span:first-child,.bad-t{color:#ff7b8a}
+.checks li.warn>span:first-child,.warn-t{color:var(--amber)}
+.lockbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:var(--s3)}
+.pri-high{color:#ff7b8a;font-weight:700}.pri-low{opacity:.75}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
   .reveal div{opacity:1;transform:none}

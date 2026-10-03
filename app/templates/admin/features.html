@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Features · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Features</h1>
+<p class="muted" style="max-width:720px">Switch a feature off if it misbehaves, or set it to <b>Staff only</b> to try it on the live site before customers see it. Changes apply immediately — no deploy — and are recorded in the audit log.</p>
+<div class="panel table-scroll" tabindex="0" role="region" aria-label="Features"><table>
+  <thead><tr><th scope="col">Feature</th><th scope="col">Who sees it</th><th scope="col">Last changed</th></tr></thead>
+  <tbody>{% for f in rows %}
+  <tr><td><b>{{ f.label }}</b><br><span class="small muted">{{ f.help }}</span></td>
+    <td><form method="post" class="inline-form"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="key" value="{{ f.key }}">
+      <label class="sr-only" for="st-{{ f.key }}">Who sees {{ f.label }}</label>
+      <select id="st-{{ f.key }}" name="state">{% for s in states %}<option value="{{ s }}" {{ 'selected' if s == f.state }}>{{ {'on': 'Everyone', 'staff': 'Staff only', 'off': 'Off'}[s] }}</option>{% endfor %}</select>
+      <button class="btn ghost small">Save</button></form></td>
+    <td class="small muted">{% if f.updated_at %}{{ f.updated_at|uktime }}<br>{{ f.by or '' }}{% else %}Never (on by default){% endif %}</td></tr>
+  {% endfor %}</tbody></table></div>
+{% endblock %}

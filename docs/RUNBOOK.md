@@ -83,6 +83,31 @@ Then: reconcile payments made after the backup time against Stripe (Admin → Fi
 3. Hold any pending withdrawals for the account (don't press Paid) while you contact the customer on known details.
 4. Audit log shows every action that account took.
 
+## 9. A draw is blocked by the readiness checks
+
+The draw never runs while a blocking check fails; the reason appears on the competition's admin page (**Draw-readiness checks**) and once in the audit log (`draw.blocked`).
+1. *Reservations still open / postal entries waiting:* wait for checkouts to finish (max 45 min) or process the postal queue. The draw then runs automatically.
+2. *Frozen list missing / doesn't match the tickets, paid ticket without a paid order, ticket without an owner:* **stop.** These can't happen through the app; something changed the database directly. Don't draw. Take a copy of `data/prizes.db`, check Admin → System health → Data integrity, and restore the latest verified backup into staging to compare (section 7). Announce a short delay on socials if the draw time passes.
+
+## 10. "Data integrity" is failing on System health
+
+The integrity job (every 6 hours) found a condition that should be impossible (duplicate ticket, negative balance, prize paid twice, winner not matching the draw record, broken audit chain…).
+1. Read the exact problem on System health. Don't "fix" rows by hand — wallet and points histories are append-only by design.
+2. Money problems: correct with an adjustment (Admin → Customers → the customer → wallet adjustment, with a reason). The original line stays.
+3. **Audit log chain broken** means a past entry was changed or removed outside the app. Treat as a security incident (section 8): secure the server, keep a copy of the database as evidence, and compare with the latest backup.
+
+## 11. Stripe reconciliation mismatch (Flags → Reconciliation)
+
+Every day the worker compares the last 3 days of Stripe payments and refunds with our records.
+- *Paid at Stripe but nothing issued:* the webhook was missed. Refund the customer in Stripe (or issue entries by hand only if the competition is still open), then mark the flag reviewed with what you did.
+- *Amount differs / no matching checkout:* check the payment in Stripe's dashboard; refund if in doubt.
+- *Refunded at Stripe but entries still valid:* someone refunded in Stripe directly. Cancel/refund the entries in the app so the draw doesn't include them, or record why they stand.
+- *Paid here but not at Stripe:* serious — check the checkout in Stripe; if it truly wasn't paid, contact an administrator before the draw.
+
+## 12. A feature misbehaves on the live site
+
+Admin → Settings → **Features**: switch it **Off** (or **Staff only** to keep testing it yourself). Takes effect immediately, no deploy; the change is in the audit log. Covers: Help & support centre, Save & remind me, wallet deposits, refer a friend, site search.
+
 ## Contacts to keep up to date
 - Hosting provider support: ______________________
 - Stripe support: https://support.stripe.com

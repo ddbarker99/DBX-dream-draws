@@ -35,7 +35,7 @@
         {% for kind, text in d.badges %}<span class="pill {{ kind }}">{{ text }}</span>{% endfor %}
       </div>
       <h1 id="comp-title">{{ c.title }}</h1>
-      {% if user and (live or st in ('soldout', 'ended')) and not c.free_daily %}
+      {% if user and (live or st in ('soldout', 'ended')) and not c.free_daily and feature('watchlist') %}
       <details class="watchbox"{% if watching %} open{% endif %}><summary>{{ '♥ Saved — reminders' if watching else '♡ Save & remind me' }}</summary>
         <form method="post" action="{{ url_for('public.watch', slug=c.slug) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}">
           {% if live %}<label class="check"><input type="checkbox" name="remind_close" value="1" {{ 'checked' if not watching or watching.remind_close }}> Remind me the day before it closes</label>{% endif %}

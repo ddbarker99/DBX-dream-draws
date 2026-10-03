@@ -174,6 +174,15 @@ Trigger each and check subject, wording, links and that it renders on a phone: e
 | Staging banner, noindex, emails go to staff only | Auto | |
 | Worker container running (`docker compose ps`); Health → Background jobs green | Manual | |
 | Load test on staging passes before launches | Manual | |
+| Publishing a competition with a missing description / image / question / postal address is refused with the reason; checklist shown | Auto | |
+| Draw blocked (and logged once) when the frozen entry list is missing or doesn't match | Auto | |
+| Audit log: Verify says intact; altering an entry outside the app is detected; filters and CSV export work | Auto | |
+| Wallet / points history can't be edited or deleted; Start fresh still clears test data | Auto | |
+| Integrity job: no problems on real data; a negative balance is reported on System health | Auto | |
+| Stripe reconciliation: unfulfilled payment, unknown payment, refund done in Stripe, amount mismatch, paid-here-not-at-Stripe all flagged | Auto + manual (Stripe test) | |
+| Feature flags: Off hides the feature and its links; Staff only shows it to admins; changes logged; Support role can't change them | Auto | |
+| Support case: second staff member sees "X is working on this case" and can't reply until Take over (logged) | Auto | |
+| Prize liability page totals match the competitions and wallets | Auto + manual | |
 
 ## 14. Production smoke test (after every deploy)
 

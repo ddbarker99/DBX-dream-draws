@@ -12,7 +12,7 @@ from . import db as dbmod
 from .db import parse_iso, utcnow
 
 UK = ZoneInfo("Europe/London")
-ASSET_V = "20"   # bump when style.css or images change, so browsers fetch the new copy
+ASSET_V = "21"   # bump when style.css or images change, so browsers fetch the new copy
 _PLACEHOLDERS = ("example street", "example.com", "yourdomain", "ab1 2cd")
 
 
@@ -50,6 +50,7 @@ def create_app(test_config=None):
         POSTAL_ADDRESS=_clean(_env("POSTAL_ADDRESS")),
         SUPPORT_EMAIL=_clean(_env("SUPPORT_EMAIL")),
         COMPANY_DETAILS=_env("COMPANY_DETAILS", ""),
+        REQUIRE_COMP_IMAGE=_env("REQUIRE_COMP_IMAGE", "1") == "1",   # pre-launch check: draws need a prize photo
         STRIPE_SECRET_KEY=_env("STRIPE_SECRET_KEY"),
         STRIPE_WEBHOOK_SECRET=_env("STRIPE_WEBHOOK_SECRET"),
         DEMO_PAYMENTS=_env("DEMO_PAYMENTS", "0") == "1",
@@ -168,7 +169,9 @@ def create_app(test_config=None):
             wallet = balances(dbmod.get_db(), g.user["id"])
             from .notify import unread_count
             unread = unread_count(g.user["id"])
+        from .flags import enabled as feature
         return {
+            "feature": feature,
             "csrf_token": session["csrf"], "config": app.config, "user": g.get("user"), "wallet": wallet, "unread": unread,
             "basket_count": len(session.get("basket", [])),
             "announcement": get_setting("announcement"),

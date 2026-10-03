@@ -170,7 +170,12 @@ def finance_report(db, start, end):
 @require("reports")
 def finance():
     start, end = _period()
-    return render_template("admin/finance.html", r=finance_report(get_db(), start, end),
+    import json
+    from .services import get_setting
+    db = get_db()
+    rec = json.loads(get_setting("last_reconciliation") or "null")
+    rec_open = db.execute("SELECT COUNT(*) FROM flags WHERE kind='Reconciliation' AND status='open'").fetchone()[0]
+    return render_template("admin/finance.html", r=finance_report(db, start, end), rec=rec, rec_open=rec_open,
                            start=start.strftime("%Y-%m-%d"), end=(end - timedelta(days=1)).strftime("%Y-%m-%d"))
 
 
@@ -338,9 +343,10 @@ def flags():
             flash("Saved.")
         return redirect(url_for("control.flags"))
     show = request.args.get("show", "open")
+    kind = request.args.get("kind", "")
     rows = db.execute("SELECT f.*, u.email AS reviewer FROM flags f LEFT JOIN users u ON u.id=f.reviewed_by WHERE f.status=? "
-                      "ORDER BY f.id DESC LIMIT 200", (show,)).fetchall()
-    return render_template("admin/flags.html", rows=rows, show=show)
+                      "AND (?='' OR f.kind=?) ORDER BY f.id DESC LIMIT 200", (show, kind, kind)).fetchall()
+    return render_template("admin/flags.html", rows=rows, show=show, kind=kind)
 
 
 # ---------------- support cases ----------------
@@ -354,13 +360,34 @@ def open_case(name, email, topic, message, user_id=None, competition_id=None, ch
     return cur.lastrowid
 
 
+LOCK_MINUTES = 20          # a case opened by a staff member stays theirs this long after their last action
+PRIORITY_ORDER = "CASE k.priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END"
+
+
+def _lock_holder(db, k):
+    """The other staff member currently working on this case, or None."""
+    if not k["locked_by"] or k["locked_by"] == g.user["id"] or not k["locked_at"]:
+        return None
+    if (utcnow() - parse_iso(k["locked_at"])).total_seconds() > LOCK_MINUTES * 60:
+        return None
+    return db.execute("SELECT id, name, email FROM users WHERE id=?", (k["locked_by"],)).fetchone()
+
+
+def _take_lock(db, case_id):
+    db.execute("UPDATE cases SET locked_by=?, locked_at=? WHERE id=?", (g.user["id"], iso(utcnow()), case_id))
+
+
 @bp.route("/cases")
 @require("cases")
 def cases():
     show = request.args.get("show", "open")
+    order = f"{PRIORITY_ORDER}, k.updated_at ASC" if show != "resolved" else "k.updated_at DESC"
     rows = get_db().execute(
-        "SELECT k.*, a.name AS assignee, (SELECT COUNT(*) FROM case_notes n WHERE n.case_id=k.id) AS notes FROM cases k "
-        "LEFT JOIN users a ON a.id=k.assigned_to WHERE k.status=? ORDER BY k.updated_at DESC LIMIT 200", (show,)).fetchall()
+        "SELECT k.*, a.name AS assignee, l.name AS locker, (SELECT COUNT(*) FROM case_notes n WHERE n.case_id=k.id) AS notes, "
+        "(SELECT MAX(created_at) FROM case_notes n WHERE n.case_id=k.id AND n.kind='customer') AS last_customer FROM cases k "
+        "LEFT JOIN users a ON a.id=k.assigned_to LEFT JOIN users l ON l.id=k.locked_by AND k.locked_at>? "
+        f"WHERE k.status=? ORDER BY {order} LIMIT 200",
+        (iso(utcnow() - timedelta(minutes=LOCK_MINUTES)), show)).fetchall()
     return render_template("admin/cases.html", rows=rows, show=show)
 
 
@@ -371,9 +398,22 @@ def case_detail(case_id):
     k = db.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
     if k is None:
         abort(404)
+    holder = _lock_holder(db, k)
     if request.method == "POST":
         f = request.form
         now = iso(utcnow())
+        if f.get("action") == "takeover":
+            _take_lock(db, case_id)
+            audit(db, "case.takeover", f"case:{case_id}", f"Took over from {holder['email'] if holder else 'nobody'}")
+            flash("You're now handling this case.")
+            return redirect(url_for("control.case_detail", case_id=case_id))
+        if f.get("action") == "release":
+            db.execute("UPDATE cases SET locked_by=NULL, locked_at=NULL WHERE id=? AND locked_by=?", (case_id, g.user["id"]))
+            flash("Released — someone else can pick it up.")
+            return redirect(url_for("control.cases"))
+        if holder:
+            flash(f"{holder['name']} is working on this case, so nothing was saved. Take it over first if you need to.", "error")
+            return redirect(url_for("control.case_detail", case_id=case_id))
         body = f.get("body", "").strip()[:5000]
         if f.get("action") in ("reply", "internal"):
             if not body:
@@ -383,12 +423,18 @@ def case_detail(case_id):
                        (case_id, now, g.user["id"], f["action"], body))
             if f["action"] == "reply":
                 mailer.send(k["email"], f"Re: {k['topic']} [case #{case_id}]",
-                            f"Hi {k['name'].split()[0]},\n\n{body}\n\nReply to this email to continue the conversation.",
-                            heading="A reply from our team")
+                            f"Hi {k['name'].split()[0]},\n\n{body}\n\nReply to this email, or follow it in your account under "
+                            f"Help & support, to continue the conversation.", heading="A reply from our team")
                 db.execute("UPDATE cases SET status='waiting', updated_at=? WHERE id=?", (now, case_id))
+                if k["user_id"]:
+                    from .notify import notify
+                    notify(k["user_id"], "support", f"We've replied: {k['topic']}", body[:300],
+                           link=url_for("public.case_view", case_id=case_id), dedupe_key=f"case-reply:{case_id}:{now}")
         sets = {}
         if f.get("status") in ("open", "waiting", "resolved"):
             sets["status"] = f["status"]
+        if f.get("priority") in ("high", "normal", "low"):
+            sets["priority"] = f["priority"]
         if f.get("resolution"):
             sets["resolution"] = f["resolution"].strip()[:500]
         for col in ("competition_id", "checkout_id", "user_id"):
@@ -399,9 +445,15 @@ def case_detail(case_id):
         if sets:
             sets["updated_at"] = now
             db.execute(f"UPDATE cases SET {', '.join(k_ + '=?' for k_ in sets)} WHERE id=?", [*sets.values(), case_id])
+        if sets.get("status") == "resolved":
+            db.execute("UPDATE cases SET locked_by=NULL, locked_at=NULL WHERE id=?", (case_id,))
+        else:
+            _take_lock(db, case_id)
         audit(db, "case.update", f"case:{case_id}", f"{f.get('action') or 'update'} {sets or ''}")
         flash("Saved.")
         return redirect(url_for("control.case_detail", case_id=case_id))
+    if not holder and k["status"] != "resolved":
+        _take_lock(db, case_id)
     notes = db.execute("SELECT n.*, u.name AS actor FROM case_notes n LEFT JOIN users u ON u.id=n.actor_id WHERE case_id=? ORDER BY n.id",
                        (case_id,)).fetchall()
     customer = db.execute("SELECT * FROM users WHERE id=?", (k["user_id"],)).fetchone() if k["user_id"] else \
@@ -409,7 +461,53 @@ def case_detail(case_id):
     orders = db.execute("SELECT id, status, cash_due, created_at FROM checkouts WHERE user_id=? ORDER BY id DESC LIMIT 10",
                         (customer["id"],)).fetchall() if customer else []
     comp = db.execute("SELECT id, title FROM competitions WHERE id=?", (k["competition_id"],)).fetchone() if k["competition_id"] else None
-    return render_template("admin/case.html", k=k, notes=notes, customer=customer, orders=orders, comp=comp)
+    history = None
+    if customer:
+        from .services import balances
+        uid = customer["id"]
+        history = {
+            "cases": db.execute("SELECT id, topic, status, created_at FROM cases WHERE (user_id=? OR email=?) AND id!=? ORDER BY id DESC LIMIT 10",
+                                (uid, customer["email"], case_id)).fetchall(),
+            "balances": balances(db, uid),
+            "spent": db.execute("SELECT COALESCE(SUM(cash_due + credit_used + deposit_used),0) FROM checkouts WHERE user_id=? AND status='paid'",
+                                (uid,)).fetchone()[0],
+            "withdrawals": db.execute("SELECT id, amount, status, created_at FROM withdrawals WHERE user_id=? ORDER BY id DESC LIMIT 5",
+                                      (uid,)).fetchall(),
+            "flags": db.execute("SELECT kind, detail FROM flags WHERE status='open' AND subject=?", (f"user:{uid}",)).fetchall(),
+            "wins": db.execute("SELECT COUNT(*) FROM competitions c JOIN tickets t ON t.id=c.winner_ticket_id WHERE t.user_id=?",
+                               (uid,)).fetchone()[0],
+            "on_break": bool(customer["excluded_until"] and customer["excluded_until"] > iso(utcnow())),
+        }
+    return render_template("admin/case.html", k=k, notes=notes, customer=customer, orders=orders, comp=comp,
+                           holder=holder, history=history, lock_minutes=LOCK_MINUTES)
+
+
+# ---------------- prize liability ----------------
+
+@bp.route("/liability")
+@require("reports")
+def liability():
+    from .checks import liability as instant_liability
+    db = get_db()
+    games = instant_liability(db)
+    draws = db.execute(
+        "SELECT c.id, c.title, c.prize_value, c.drawn_at, p.id AS claim_id, p.status, p.prize_choice FROM competitions c "
+        "LEFT JOIN prize_claims p ON p.id=(SELECT MAX(id) FROM prize_claims WHERE competition_id=c.id) "
+        "WHERE c.game_type='' AND c.status='drawn' AND (p.id IS NULL OR p.status NOT IN ('delivered')) ORDER BY c.drawn_at").fetchall()
+    upcoming = db.execute("SELECT id, title, prize_value, ends_at, status FROM competitions WHERE game_type='' AND status='live' "
+                          "ORDER BY ends_at").fetchall()
+    wallets = db.execute("SELECT COALESCE(SUM(CASE WHEN kind='cash' THEN amount END),0) cash, "
+                         "COALESCE(SUM(CASE WHEN kind='credit' THEN amount END),0) credit, "
+                         "COALESCE(SUM(CASE WHEN kind='deposit' THEN amount END),0) deposit FROM credit_ledger").fetchone()
+    pending_w = db.execute("SELECT COALESCE(SUM(amount),0) FROM withdrawals WHERE status IN ('requested','processing')").fetchone()[0]
+    totals = {
+        "instant_owed": sum(g_["owed_v"] for g_ in games),
+        "instant_left": sum(g_["left_v"] for g_ in games if g_["c"]["status"] == "live"),
+        "draw_owed": sum(d["prize_value"] for d in draws),
+        "draw_upcoming": sum(d["prize_value"] for d in upcoming),
+    }
+    return render_template("admin/liability.html", games=games, draws=draws, upcoming=upcoming, wallets=wallets,
+                           pending_w=pending_w, totals=totals, claim_names=CLAIM_NAMES)
 
 
 # ---------------- system health (see jobs.py) ----------------

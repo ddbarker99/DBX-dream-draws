@@ -25,6 +25,8 @@ JOBS = {
     "flag_rules": (900, "Look for patterns worth reviewing"),
     "health_alerts": (600, "Email staff when a health check fails"),
     "watch_reminders": (1800, "Remind customers about saved competitions closing soon"),
+    "integrity": (21600, "Check the data for impossible conditions"),
+    "reconcile": (86400, "Match payments and refunds against Stripe"),
     "prune": (86400, "Tidy old job history"),
 }
 _last = {}
@@ -145,11 +147,15 @@ def _watch():
     their account; by email only if they keep reminder emails switched on."""
     from .notify import notify, send_one
     from .routes import unsubscribe_link
+    from .flags import state
+    if state("watchlist") == "off":
+        return ""
+    staff_only = " AND u.is_admin=1" if state("watchlist") == "staff" else ""
     db = get_db()
     n = 0
     for r in db.execute("SELECT w.user_id, c.id, c.title, c.slug, c.ends_at, u.email, u.reminder_emails FROM watchlist w "
                         "JOIN competitions c ON c.id=w.competition_id JOIN users u ON u.id=w.user_id WHERE c.status='live' "
-                        "AND w.remind_close=1 AND c.ends_at>? AND c.ends_at<?",
+                        "AND w.remind_close=1 AND c.ends_at>? AND c.ends_at<?" + staff_only,
                         (iso(utcnow()), iso(utcnow() + timedelta(hours=24)))).fetchall():
         link = url_for("public.competition", slug=r["slug"])
         from . import UK
@@ -178,9 +184,24 @@ def _prune():
     return ", ".join(p for p in parts if p) and "removed " + ", ".join(p for p in parts if p)
 
 
+def _integrity():
+    import json
+    from .checks import integrity_problems
+    from .services import set_setting
+    problems = integrity_problems(get_db())
+    set_setting("last_integrity", json.dumps({"at": iso(utcnow()), "problems": problems[:50]}))
+    return f"{len(problems)} problem(s): " + "; ".join(problems[:3]) if problems else ""
+
+
+def _reconcile():
+    from .reconcile import run
+    return run(get_db())
+
+
 FUNCS = {"publish_scheduled": _publish_scheduled, "expire_checkouts": _expire_checkouts, "close_competitions": _close,
          "auto_draws": _draws, "settle_unrevealed": _settle, "email_outbox": _outbox, "flag_rules": _flags,
-         "health_alerts": _alerts, "watch_reminders": _watch, "prune": _prune}
+         "health_alerts": _alerts, "watch_reminders": _watch, "prune": _prune,
+         "integrity": _integrity, "reconcile": _reconcile}
 
 
 def run_all_jobs(force=False, only=None):
@@ -225,7 +246,7 @@ def health_checks(db):
     for name, (interval, _) in JOBS.items():
         r = db.execute("SELECT * FROM job_status WHERE job=?", (name,)).fetchone()
         if r is None or not r["last_started"] or (now - parse_iso(r["last_started"])).total_seconds() > max(interval * 3, 600):
-            if name not in ("prune", "flag_rules", "health_alerts"):
+            if name not in ("prune", "flag_rules", "health_alerts", "integrity", "reconcile"):
                 stale.append(name)
         elif r["last_error_at"] and (not r["last_ok"] or r["last_error_at"] > r["last_ok"]):
             stale.append(f"{name} (failing: {r['last_error']})")
@@ -251,4 +272,44 @@ def health_checks(db):
         f"Last backup restored and verified {last_backup}" if last_backup else "No verified backup recorded — run ./backup.sh")
     pay_ok = bool(current_app.config.get("STRIPE_SECRET_KEY")) or current_app.config.get("DEMO_PAYMENTS")
     add("stripe", "Payment provider", bool(pay_ok), "Configured" if pay_ok else "No Stripe key — payments are switched off")
+    import json
+    integ = json.loads(get_setting("last_integrity") or "null")
+    if integ is None:
+        add("integrity", "Data integrity", True, "Not checked yet — runs every 6 hours")
+    else:
+        add("integrity", "Data integrity", not integ["problems"],
+            ("; ".join(integ["problems"][:3]) + (" …" if len(integ["problems"]) > 3 else "")) if integ["problems"]
+            else f"No problems found (checked {integ['at']})")
+    if current_app.config.get("STRIPE_SECRET_KEY") and not current_app.config.get("DEMO_PAYMENTS"):
+        rec = json.loads(get_setting("last_reconciliation") or "null")
+        open_rec = db.execute("SELECT COUNT(*) FROM flags WHERE kind='Reconciliation' AND status='open'").fetchone()[0]
+        fresh = rec and (now - parse_iso(rec["at"])).total_seconds() < 2 * 86400
+        add("reconcile", "Stripe reconciliation", bool(fresh) and not open_rec,
+            f"{open_rec} mismatch(es) waiting in Flags" if open_rec else
+            (f"Matched {rec['sessions']} payments and {rec['refunds']} refunds ({rec['at']})" if fresh else "Hasn't run in 2 days"))
+    odd = anomalies(db, now)
+    add("anomalies", "Unusual activity", not odd, "; ".join(odd) if odd else "Nothing unusual in the last 24 hours")
+    return out
+
+
+def anomalies(db, now=None):
+    """Spikes worth a human look: refunds, withdrawals, sign-ups, prize wins."""
+    now = now or utcnow()
+    day, hour, month = iso(now - timedelta(hours=24)), iso(now - timedelta(hours=1)), iso(now - timedelta(days=30))
+    out = []
+    paid = db.execute("SELECT COUNT(*) FROM checkouts WHERE stripe_session_id IS NOT NULL AND status='paid' AND created_at>?", (day,)).fetchone()[0]
+    refunded = db.execute("SELECT COUNT(*) FROM checkouts WHERE status IN ('credit_refused','needs_refund') AND created_at>?", (day,)).fetchone()[0]
+    if refunded >= 5 and refunded >= 0.2 * (paid + refunded):
+        out.append(f"{refunded} payments refunded or awaiting refund in 24 hours (vs {paid} kept)")
+    w_day = db.execute("SELECT COALESCE(SUM(amount),0) FROM withdrawals WHERE created_at>?", (day,)).fetchone()[0]
+    w_avg = db.execute("SELECT COALESCE(SUM(amount),0) FROM withdrawals WHERE created_at>? AND created_at<=?", (month, day)).fetchone()[0] / 29
+    if w_day >= 50000 and w_day > 3 * w_avg:
+        out.append(f"Withdrawal requests of £{w_day / 100:,.0f} in 24 hours (daily average £{w_avg / 100:,.0f})")
+    signups = db.execute("SELECT COUNT(*) FROM users WHERE created_at>?", (hour,)).fetchone()[0]
+    if signups >= 50:
+        out.append(f"{signups} sign-ups in the last hour")
+    wins = db.execute("SELECT COALESCE(SUM(value),0) FROM instant_prizes WHERE won_at>?", (day,)).fetchone()[0]
+    sales = db.execute("SELECT COALESCE(SUM(amount),0) FROM orders WHERE status='paid' AND paid_at>?", (day,)).fetchone()[0]
+    if wins >= 50000 and wins > 2 * sales:
+        out.append(f"Instant prizes worth £{wins / 100:,.0f} won in 24 hours against £{sales / 100:,.0f} of sales")
     return out

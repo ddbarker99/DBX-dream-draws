@@ -27,11 +27,20 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         os.environ["DATA_DIR"] = self.tmp
         self.app = create_app({"TESTING": True, "DEMO_PAYMENTS": True, "STRIPE_WEBHOOK_SECRET": "whsec_test", "ADMIN_MFA": False,
-                               "REFERRAL_BONUS": 100})
+                               "REFERRAL_BONUS": 100, "POSTAL_ADDRESS": "DBX Dream Draws, PO Box 1, Testtown, TE1 1ST", "REQUIRE_COMP_IMAGE": False})
         self.client = self.app.test_client()
         from app import jobs, routes
         routes._FAILS.clear()          # rate limits are per process; each test starts clean
         jobs._last.clear()             # and background jobs are due straight away
+
+    def tearDown(self):
+        # Whatever a test did through the app, the data must still pass every integrity check.
+        if getattr(self, "skip_integrity", False):
+            return
+        from app.checks import integrity_problems
+        with self.app.app_context():
+            from app.db import get_db
+            self.assertEqual(integrity_problems(get_db()), [])
 
     def jobs_due(self):
         """Make every background job due on the next request (they're throttled per process and in the database)."""
@@ -67,7 +76,7 @@ class Base(unittest.TestCase):
     def make_comp(self, title="Test Prize", max_tickets=10, max_per_user=5, price="2.50", tiers="", publish=True,
                   instant=None):
         self.post("/admin/competitions/new", {
-            "title": title, "description": "Nice", "ends_at": "2099-01-01T20:00", "category": "tech",
+            "title": title, "description": "A brand new prize, delivered free to your door.", "ends_at": "2099-01-01T20:00", "category": "tech",
             "ticket_price": price, "max_tickets": str(max_tickets), "max_per_user": str(max_per_user),
             "discount_tiers": tiers, "prize_value": "500",
             "question": "2+2?", "answer_a": "3", "answer_b": "4", "answer_c": "5", "correct": "b"})
@@ -520,7 +529,7 @@ class V4Tests(Base):
 
     def comp(self, title="Draw", price="1.00", tickets=20, game="", prize=None, auto="1"):
         self.post("/admin/competitions/new", {
-            "title": title, "description": "", "ends_at": "2099-01-01T20:00", "category": "cash", "game_type": game,
+            "title": title, "description": "A brand new prize, delivered free to your door.", "ends_at": "2099-01-01T20:00", "category": "cash", "game_type": game,
             "ticket_price": price, "max_tickets": str(tickets), "max_per_user": str(tickets), "auto_draw": auto,
             "question": "2+2?", "answer_a": "3", "answer_b": "4", "answer_c": "5", "correct": "b"})
         cid = self.q("SELECT id FROM competitions ORDER BY id DESC")
@@ -899,7 +908,7 @@ class CreateTests(Base):
         self.cli("make-admin", "admin@example.com")
 
     def base(self, **kw):
-        d = {"title": "Thing", "description": "Nice", "ends_at": "2099-01-01T20:00", "category": "cash",
+        d = {"title": "Thing", "description": "A brand new prize, delivered free to your door.", "ends_at": "2099-01-01T20:00", "category": "cash",
              "ticket_price": "0.50", "max_tickets": "500", "max_per_user": "50", "question": "2+2?",
              "answer_a": "3", "answer_b": "4", "answer_c": "5", "correct": "b"}
         d.update(kw)
@@ -1674,7 +1683,7 @@ class OpsTests(PlatformTests):
 
     def test_no_question_mechanic(self):
         self.post("/admin/competitions/new", {
-            "title": "Free Draw", "description": "x", "ends_at": "2099-01-01T20:00", "category": "tech",
+            "title": "Free Draw", "description": "A brand new prize, delivered free to your door.", "ends_at": "2099-01-01T20:00", "category": "tech",
             "ticket_price": "1", "max_tickets": "10", "max_per_user": "5", "question_mode": "none"})
         cid = self.q("SELECT id FROM competitions ORDER BY id DESC")
         self.post(f"/admin/competitions/{cid}/status", {"action": "publish"})
@@ -1802,6 +1811,254 @@ class CustomerExperienceTests(PlatformTests):
         self.assertEqual(other.get(f"/support/requests/{case}").status_code, 404)
         r = self.post("/support", {"topic": "", "message": "x"}, client=self.p)
         self.assertEqual(r.status_code, 400)
+
+
+class OperationsTests(PlatformTests):
+    """Phase 3 operations: validators, draw readiness, tamper-evident audit, ledgers, integrity, reconciliation,
+    feature flags, support desk, liability."""
+
+    def test_prelaunch_validator_blocks_publish(self):
+        self.post("/admin/competitions/new", {
+            "title": "Thin", "description": "Short", "ends_at": "2099-01-01T20:00", "category": "tech",
+            "ticket_price": "1", "max_tickets": "10", "max_per_user": "5", "prize_value": "100",
+            "question": "2+2?", "answer_a": "3", "answer_b": "4", "answer_c": "5", "correct": "b"})
+        cid = self.q("SELECT id FROM competitions ORDER BY id DESC")
+        r = self.post(f"/admin/competitions/{cid}/status", {"action": "publish"}, follow_redirects=True)
+        self.assertIn("Prize description", r.get_data(as_text=True))
+        self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", cid), "draft")
+        html = self.client.get(f"/admin/competitions/{cid}").get_data(as_text=True)
+        self.assertIn("Pre-launch checks", html)
+        self.assertIn("must be fixed", html)
+        self.app.config["POSTAL_ADDRESS"] = ""
+        db = self.db()
+        db.execute("UPDATE competitions SET description='A proper description of a lovely prize.' WHERE id=?", (cid,))
+        db.commit()
+        r = self.post(f"/admin/competitions/{cid}/status", {"action": "publish"}, follow_redirects=True)
+        self.assertIn("Free postal entry address", r.get_data(as_text=True))
+        self.app.config["POSTAL_ADDRESS"] = "PO Box 1"
+        self.post(f"/admin/competitions/{cid}/status", {"action": "publish"})
+        self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", cid), "live")
+
+    def test_draw_readiness_blocks_and_logs_once(self):
+        self.add(self.cid, 2, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        self.run_jobs()                                         # freezes the entry list
+        html = self.client.get(f"/admin/competitions/{self.cid}").get_data(as_text=True)
+        self.assertIn("Draw-readiness checks", html)
+        self.assertIn("all ", html)
+        db = self.db()                                          # simulate someone deleting the frozen list by hand
+        db.execute("DROP TRIGGER snapshots_no_delete")
+        db.execute("DELETE FROM entry_snapshots")
+        db.commit()
+        for _ in range(2):
+            r = self.post(f"/admin/competitions/{self.cid}/draw", follow_redirects=True)
+        self.assertIn("Draw not run", r.get_data(as_text=True))
+        self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", self.cid), "live")
+        self.assertEqual(self.q("SELECT COUNT(*) FROM audit_log WHERE action='draw.blocked'"), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM draws"), 0)
+
+    def test_audit_chain_detects_tampering(self):
+        self.skip_integrity = True
+        self.post(f"/admin/users/{self.uid}", {"action": "verify"})
+        html = self.client.get("/admin/audit?verify=1").get_data(as_text=True)
+        self.assertIn("entries are intact", html)
+        self.assertIsNone(self.q("SELECT COUNT(*) FROM audit_log WHERE row_hash IS NULL") or None)
+        db = self.db()
+        victim = db.execute("SELECT id FROM audit_log ORDER BY id LIMIT 1 OFFSET 1").fetchone()[0]
+        db.execute("DROP TRIGGER audit_no_update")
+        db.execute("UPDATE audit_log SET detail='nothing to see' WHERE id=?", (victim,))
+        db.commit()
+        self.assertIn(f"Chain broken at entry #{victim}", self.client.get("/admin/audit?verify=1").get_data(as_text=True))
+        self.run_jobs()
+        self.assertIn("Audit log chain broken", self.client.get("/admin/health").get_data(as_text=True))
+
+    def test_old_audit_rows_are_chained_on_upgrade(self):
+        from app.db import init_db
+        from app.services import verify_audit_chain
+        db = self.db()
+        db.execute("INSERT INTO audit_log (created_at, action, detail) VALUES ('2020-01-01T00:00:00Z', 'legacy', 'before v11')")
+        db.commit()
+        init_db(self.app.config["DATABASE"])
+        db = self.db()
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM audit_log WHERE row_hash IS NULL").fetchone()[0], 0)
+        self.assertIsNone(verify_audit_chain(db))
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("UPDATE audit_log SET detail='x'")
+
+    def test_ledgers_are_append_only(self):
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "5", "kind": "credit", "reason": "Goodwill"})
+        with self.app.app_context():
+            from app.db import get_db
+            from app.services import add_points
+            add_points(get_db(), self.uid, 10, "Test points")
+        db = self.db()
+        for sql in ("UPDATE credit_ledger SET amount=99999", "DELETE FROM credit_ledger",
+                    "UPDATE points_ledger SET points=1", "DELETE FROM points_ledger"):
+            with self.assertRaises(sqlite3.DatabaseError, msg=sql):
+                db.execute(sql)
+        from app.services import start_fresh
+        with self.app.app_context():
+            out, _ = start_fresh(wallets=True)
+        self.assertGreaterEqual(out["transactions"], 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM maintenance_unlock"), 0)
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "5", "kind": "credit", "reason": "Goodwill"})
+        with self.assertRaises(sqlite3.DatabaseError):           # locked again afterwards
+            self.db().execute("DELETE FROM credit_ledger")
+
+    def test_integrity_job_reports_problems(self):
+        self.run_jobs()
+        self.assertIn("No problems found", self.client.get("/admin/health").get_data(as_text=True))
+        self.skip_integrity = True
+        db = self.db()
+        db.execute("INSERT INTO credit_ledger (user_id, amount, reason, created_at, kind) VALUES (?,?,?,?,?)",
+                   (self.uid, -500, "bad", "2026-01-01T00:00:00Z", "cash"))
+        db.execute("DELETE FROM job_status WHERE job='integrity'")
+        db.commit()
+        self.run_jobs()
+        html = self.client.get("/admin/health").get_data(as_text=True)
+        self.assertIn("negative cash balance", html)
+
+    def test_reconciliation_finds_mismatches(self):
+        from app import payments, reconcile
+        from app.db import iso, utcnow
+        from datetime import timedelta
+        self.add(self.cid, 2, client=self.p)
+        good = self.checkout(client=self.p)
+        self.add(self.cid, 1, client=self.p)
+        lost = self.checkout(client=self.p, pay=False)
+        old = iso(utcnow() - timedelta(hours=3))
+        db = self.db()
+        db.execute("UPDATE checkouts SET stripe_session_id='cs_good', created_at=? WHERE id=?", (old, good))
+        db.execute("UPDATE checkouts SET stripe_session_id='cs_lost', created_at=?, status='expired' WHERE id=?", (old, lost))
+        db.commit()
+        due = self.q("SELECT cash_due FROM checkouts WHERE id=?", good)
+        sessions = [
+            {"id": "cs_good", "client_reference_id": f"checkout-{good}", "amount_total": due, "payment_status": "paid", "payment_intent": "pi_g"},
+            {"id": "cs_lost", "client_reference_id": f"checkout-{lost}", "amount_total": 250, "payment_status": "paid", "payment_intent": "pi_l"},
+            {"id": "cs_ghost", "client_reference_id": "checkout-99999", "amount_total": 100, "payment_status": "paid", "payment_intent": "pi_x"},
+            {"id": "cs_open", "client_reference_id": f"checkout-{lost}", "amount_total": 250, "payment_status": "unpaid"},
+        ]
+        refunds = [{"id": "re_1", "payment_intent": "pi_g", "amount": 100, "status": "succeeded"}]
+        with self.app.app_context():
+            from app.db import get_db
+            found = dict(reconcile.compare(get_db(), sessions, refunds))
+        self.assertIn(f"checkout:{lost}:unfulfilled", found)
+        self.assertIn("checkout:99999:missing", found)
+        self.assertIn(f"checkout:{good}:refunded", found)
+        self.assertEqual(len(found), 3)
+        sessions[0]["amount_total"] = due + 1
+        with self.app.app_context():
+            found = dict(reconcile.compare(get_db(), sessions[:1], []))
+        self.assertEqual(list(found), [f"checkout:{good}:amount"])
+        with self.app.app_context():                            # paid here, Stripe never saw it
+            found = dict(reconcile.compare(get_db(), [], []))
+        self.assertIn(f"checkout:{good}:notpaid", found)
+        # the daily job: flags + a record on the finance page
+        self.app.config.update(DEMO_PAYMENTS=False, STRIPE_SECRET_KEY="sk_test_dummy")
+        orig = payments.list_sessions, payments.list_refunds
+        payments.list_sessions, payments.list_refunds = (lambda since: sessions[1:3]), (lambda since: [])
+        try:
+            with self.app.test_request_context():
+                summary = reconcile.run(get_db())
+        finally:
+            payments.list_sessions, payments.list_refunds = orig
+            self.app.config.update(DEMO_PAYMENTS=True, STRIPE_SECRET_KEY="")
+        self.assertIn("mismatch", summary)
+        self.assertGreaterEqual(self.q("SELECT COUNT(*) FROM flags WHERE kind='Reconciliation'"), 2)
+        self.assertIn("mismatches to review", self.client.get("/admin/finance").get_data(as_text=True))
+
+    def test_feature_flags(self):
+        self.assertEqual(self.p.get("/search?q=prize").status_code, 200)
+        self.post("/admin/features", {"key": "search", "state": "off"})
+        self.assertEqual(self.p.get("/search?q=prize").status_code, 404)
+        self.assertNotIn('href="/search"', self.p.get("/").get_data(as_text=True))
+        self.post("/admin/features", {"key": "search", "state": "staff"})
+        self.assertEqual(self.p.get("/search?q=prize").status_code, 404)
+        self.assertEqual(self.client.get("/search?q=prize").status_code, 200)      # staff can try it on the live site
+        self.assertEqual(self.q("SELECT COUNT(*) FROM audit_log WHERE action='feature.set'"), 2)
+        self.post("/admin/features", {"key": "deposits", "state": "off"})
+        self.assertEqual(self.post("/account/deposit", {"amount": "10"}, client=self.p).status_code, 404)
+        self.assertIn("Adding funds is unavailable", self.p.get("/account?tab=wallet").get_data(as_text=True))
+        self.post("/admin/features", {"key": "support_centre", "state": "off"})
+        self.assertIn("/contact", self.p.get("/support").headers["Location"])
+        self.post("/admin/features", {"key": "watchlist", "state": "off"})
+        self.assertEqual(self.post(f"/watch/{self.slug(self.cid)}", client=self.p).status_code, 404)
+        self.assertNotIn("Save &amp; remind me", self.p.get(f"/c/{self.slug(self.cid)}").get_data(as_text=True))
+        self.role("support")
+        r = self.post("/admin/features", {"key": "search", "state": "on"}, client=self.p)
+        self.assertEqual(self.q("SELECT state FROM feature_flags WHERE key='search'"), "staff")
+
+    def test_support_case_locks_and_history(self):
+        from app.control import open_case
+        with self.app.test_request_context():
+            low = open_case("Pat Player", "player@example.com", "Account", "Change my name please", user_id=self.uid)
+            high = open_case("Pat Player", "player@example.com", "Payment", "I was charged twice", user_id=self.uid)
+            from app.db import get_db
+            get_db().execute("UPDATE cases SET priority='high' WHERE id=?", (high,))
+            get_db().execute("UPDATE cases SET priority='low' WHERE id=?", (low,))
+        html = self.client.get("/admin/cases").get_data(as_text=True)
+        self.assertLess(html.index(f"#{high}<"), html.index(f"#{low}<"))          # high priority first
+        page = self.client.get(f"/admin/cases/{high}").get_data(as_text=True)     # admin opens it -> theirs
+        self.assertIn("You're handling this case", page)
+        self.assertIn("Customer history", page)
+        self.assertIn(f"#{low} Account", page)                                      # their other case
+        self.role("support")
+        page = self.p.get(f"/admin/cases/{high}").get_data(as_text=True)
+        self.assertIn("Admin Person is working on this case", page)
+        self.post(f"/admin/cases/{high}", {"action": "reply", "body": "Sorted!"}, client=self.p)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM case_notes WHERE case_id=? AND kind='reply'", high), 0)
+        self.assertIn("Admin Person", self.client.get("/admin/cases").get_data(as_text=True))
+        self.post(f"/admin/cases/{high}", {"action": "takeover"}, client=self.p)
+        self.post(f"/admin/cases/{high}", {"action": "reply", "body": "Sorted!"}, client=self.p)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM case_notes WHERE case_id=? AND kind='reply'", high), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM audit_log WHERE action='case.takeover'"), 1)
+        self.assertIn("Pat Player is working on this case", self.client.get(f"/admin/cases/{high}").get_data(as_text=True))
+        self.assertIn("replied: Payment", self.p.get("/account/notifications").get_data(as_text=True))
+
+    def test_liability_dashboard(self):
+        iw = self.make_comp("Instant", max_tickets=4, max_per_user=4, price="1.00",
+                            instant=[{"title": "£2 Credit", "value": "2", "type": "credit", "quantity": "2"}])
+        self.add(self.cid, 1, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        self.post(f"/admin/competitions/{self.cid}/draw")
+        html = self.client.get("/admin/liability").get_data(as_text=True)
+        self.assertIn("Draw winners awaiting their prize", html)
+        self.assertIn("Test Prize", html)
+        self.assertIn("Instant", html)
+        self.assertIn("£500<", html)
+        with self.assertRaises(sqlite3.DatabaseError):
+            self.db().execute("DELETE FROM draws")              # draw records can't be deleted
+        self.role("support")
+        self.assertNotIn("Draw winners", self.p.get("/admin/liability", follow_redirects=True).get_data(as_text=True))
+
+    def test_audit_viewer_filters_and_export(self):
+        self.post(f"/admin/users/{self.uid}", {"action": "verify"})
+        html = self.client.get("/admin/audit?action=comp").get_data(as_text=True)
+        self.assertIn("comp.publish", html)
+        self.assertNotIn("<code>user.", html)
+        html = self.client.get("/admin/audit?actor=system").get_data(as_text=True)
+        self.assertNotIn("admin@example.com</td>", html)
+        r = self.client.get("/admin/audit?format=csv&action=comp")
+        self.assertEqual(r.mimetype, "text/csv")
+        body = r.get_data(as_text=True)
+        self.assertTrue(body.startswith("id,created_at_utc,actor,action"))
+        self.assertIn("comp.publish", body)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM audit_log WHERE action='audit.export'"), 1)
+
+    def test_anomaly_alerts(self):
+        from app.jobs import anomalies
+        db = self.db()
+        for i in range(6):
+            db.execute("INSERT INTO checkouts (user_id, subtotal, cash_due, status, stripe_session_id, created_at) "
+                       "VALUES (?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'))", (self.uid, 100, 100, "credit_refused", f"cs_r{i}"))
+        db.commit()
+        with self.app.app_context():
+            from app.db import get_db
+            odd = anomalies(get_db())
+        self.assertTrue(any("refunded" in o for o in odd), odd)
+        self.assertIn("Unusual activity", self.client.get("/admin/health").get_data(as_text=True))
 
 
 class MigrationTest(unittest.TestCase):

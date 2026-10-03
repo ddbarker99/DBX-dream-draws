@@ -393,3 +393,17 @@ CREATE TABLE IF NOT EXISTS consent_log (
     ip         TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_consent_user ON consent_log(user_id, id);
+
+-- v11: set (inside one transaction) only while "start fresh" wipes test data, so ledger rows can be deleted.
+CREATE TABLE IF NOT EXISTS maintenance_unlock (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    reason TEXT NOT NULL
+);
+
+-- Features that can be switched off, or shown to staff only, without a deploy.
+CREATE TABLE IF NOT EXISTS feature_flags (
+    key        TEXT PRIMARY KEY,
+    state      TEXT NOT NULL DEFAULT 'on',      -- off | staff | on
+    updated_at TEXT,
+    updated_by INTEGER
+);

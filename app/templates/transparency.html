@@ -23,6 +23,6 @@
   <a class="tcard" href="{{ url_for('public.page', page='privacy') }}"><b>Privacy &amp; cookies</b><span>What we keep, why, for how long, and your rights. One essential cookie; no tracking.</span></a>
   <a class="tcard" href="{{ url_for('public.page', page='complaints') }}"><b>Complaints</b><span>How to raise a complaint and what happens next.</span></a>
   <a class="tcard" href="{{ url_for('public.page', page='about') }}"><b>Who we are</b><span>{{ config.COMPANY_DETAILS or 'The company behind ' ~ config.SITE_NAME }}.</span></a>
-  <a class="tcard" href="{{ url_for('public.support_centre') if user else url_for('public.contact') }}"><b>Contact &amp; support</b><span>Questions about an order, entry, withdrawal or prize — we reply within 1 working day.</span></a>
+  <a class="tcard" href="{{ url_for('public.support_centre') if user and feature('support_centre') else url_for('public.contact') }}"><b>Contact &amp; support</b><span>Questions about an order, entry, withdrawal or prize — we reply within 1 working day.</span></a>
 </div>
 {% endblock %}

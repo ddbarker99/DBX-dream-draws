@@ -18,6 +18,19 @@
   {% elif c.game_type and not board %}Add prizes below, then press <b>Publish</b>.
   {% else %}This is a draft — nobody can see it yet. {% if c.starts_at and c.starts_at > now_iso %}Press <b>Schedule</b> to launch it at {{ c.starts_at|uktime('%a %d %b, %H:%M') }}, or <b>Publish now</b>.{% else %}Check it over, then press <b>Publish</b>.{% endif %}{% endif %}</span></div>
 {% endif %}
+{% if checklist %}
+{% set failing = checklist|selectattr('ok', 'equalto', false)|list %}
+{% set blocking = failing|selectattr('blocking')|list %}
+<details class="panel checklist" {{ 'open' if failing }}>
+  <summary><b>{{ 'Pre-launch checks' if checklist_kind == 'launch' else 'Draw-readiness checks' }}</b> —
+    {% if blocking %}<span class="bad-t">{{ blocking|length }} must be fixed before {{ 'it can go live' if checklist_kind == 'launch' else 'the draw can run' }}</span>
+    {% elif failing %}<span class="warn-t">ready, {{ failing|length }} warning{{ 's' if failing|length != 1 }}</span>
+    {% else %}<span class="ok-t">all {{ checklist|length }} passed</span>{% endif %}</summary>
+  <ul class="checks">{% for k in checklist %}
+    <li class="{{ 'ok' if k.ok else ('bad' if k.blocking else 'warn') }}"><span aria-hidden="true">{{ '✓' if k.ok else ('✕' if k.blocking else '!') }}</span>
+      <span>{{ k.label }}{% if not k.ok %}<span class="sr-only"> — {{ 'must fix' if k.blocking else 'warning' }}</span><br><small>{{ k.detail }}</small>{% endif %}</span></li>{% endfor %}</ul>
+</details>
+{% endif %}
 <p class="muted">{{ '{:,}'.format(sold) }} / {{ '{:,}'.format(c.max_tickets) }} sold{% if held %} · {{ held }} held in checkouts{% endif %} · {{ c.ticket_price|gbp }} each · {{ revenue|gbp }} revenue · ends {{ c.ends_at|uktime }}</p>
 
 <div class="actions">

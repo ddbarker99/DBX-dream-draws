@@ -165,7 +165,7 @@ def crawl(client, who, start=("/",), limit=400):
 
 def main():
     app = create_app({"TESTING": True, "DEMO_PAYMENTS": True, "SITE_URL": "http://localhost", "ADMIN_MFA": False,
-                      "STRIPE_WEBHOOK_SECRET": "whsec_x"})
+                      "STRIPE_WEBHOOK_SECRET": "whsec_x", "POSTAL_ADDRESS": "DBX Dream Draws, PO Box 1, Testtown, TE1 1ST", "REQUIRE_COMP_IMAGE": False})
     admin, player = seed(app)
     if "--serve" in sys.argv:
         port = int(sys.argv[sys.argv.index("--serve") + 1])
@@ -204,6 +204,10 @@ def main():
         bases = {u.split("?")[0] for u in urls}
         if len(bases) > 1:
             all_problems.append(f"duplicate description {d[:50]!r} on {sorted(bases)[:5]}")
+    with app.app_context():                     # after every page has been visited, the data must still be consistent
+        from app.checks import integrity_problems
+        from app.db import get_db
+        all_problems += [f"[integrity] {p}" for p in integrity_problems(get_db())]
     print("\n".join(sorted(set(all_problems))) or "NO PROBLEMS FOUND")
     return 1 if all_problems else 0
 

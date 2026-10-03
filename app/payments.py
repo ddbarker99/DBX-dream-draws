@@ -71,3 +71,27 @@ def refund(payment_intent_id, reason="requested_by_customer", amount=None, why="
                       auth=(current_app.config["STRIPE_SECRET_KEY"], ""), timeout=20)
     r.raise_for_status()
     return r.json()
+
+
+def _list(path, since):
+    """Every object from a Stripe list endpoint created since `since` (unix seconds), following pagination."""
+    out, after = [], None
+    while True:
+        params = {"limit": 100, "created[gte]": int(since)}
+        if after:
+            params["starting_after"] = after
+        r = requests.get(f"{API}/{path}", params=params, auth=(current_app.config["STRIPE_SECRET_KEY"], ""), timeout=30)
+        r.raise_for_status()
+        body = r.json()
+        out += body.get("data", [])
+        if not body.get("has_more") or not body.get("data"):
+            return out
+        after = body["data"][-1]["id"]
+
+
+def list_sessions(since):
+    return _list("checkout/sessions", since)
+
+
+def list_refunds(since):
+    return _list("refunds", since)

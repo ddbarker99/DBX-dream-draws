@@ -207,3 +207,14 @@ python -m unittest discover tests
 - **Postal entries:** log envelopes as *received* the day they arrive, then approve or reject them in Admin → Postal. A competition can't close or draw while envelopes are waiting.
 - **Backups:** `./backup.sh` now runs `flask backup`, which restore-tests every backup. Set `BACKUP_REMOTE` for an off-site copy (rclone). Point an uptime monitor at `/healthz`.
 - **Staging:** see `docs/STAGING.md`. **Emergencies:** `docs/RUNBOOK.md`. **Mechanics:** `docs/MECHANICS.md`. **Personal data:** `docs/PRIVACY-DATA-AUDIT.md`.
+
+## v11 operations (Phase 3)
+- **Pre-launch checks:** a competition can't go live (or launch on schedule) until its checklist passes — description, image (`REQUIRE_COMP_IMAGE=0` to relax), price, limits, closing time, question, instant prizes sealed, `POSTAL_ADDRESS` set, payments configured. The checklist is on the competition's admin page.
+- **Draw-readiness checks** run before every draw (manual or automatic): closing time passed, no open reservations, postal queue processed, frozen entry list present and matching, every ticket paid and owned. A failure blocks the draw and is logged once.
+- **Tamper-evident audit log:** each entry stores a SHA-256 of the previous one. Admin → Audit log → *Verify* recomputes the chain; it also has filters (who, action, target, text, dates) and CSV export.
+- **Append-only money:** wallet and points histories can't be edited or deleted (database triggers); corrections are new adjustment lines. Draw records and frozen entry lists can't be deleted either. Only *Start fresh* (test data) can clear them.
+- **Integrity job** (every 6 h) and **daily Stripe reconciliation** report to System health and Flags. **Unusual activity** (refund, withdrawal, sign-up or prize spikes) is checked continuously and emailed to `SUPPORT_EMAIL`.
+- **Feature flags:** Admin → Settings → Features — Everyone / Staff only / Off, no deploy.
+- **Support desk:** cases sorted by priority then waiting time; opening a case marks it as yours for 20 minutes so two people don't reply; *Take over* is logged; customer history alongside.
+- **Prize liability:** Admin → Liability — prizes won but not delivered, instant prizes still to win, live draw prizes, and money held in wallets.
+

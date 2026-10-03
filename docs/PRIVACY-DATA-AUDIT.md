@@ -28,9 +28,10 @@ What DBX Dream Draws stores, where, who receives it, how long it's kept, and how
 | Notifications (title, message, delivery status) | `notifications` | Customer notification centre, email delivery tracking | **Read notifications deleted after 1 year** (automatic) |
 | Support cases: name, email, messages, internal notes | `cases`, `case_notes` | Answering and tracking support requests, complaints | 3 years after resolution |
 | Review flags (e.g. shared phone numbers) | `flags` | Fraud and abuse prevention (legitimate interest) | 2 years after review |
-| Audit log (who did what, including staff viewing a customer's timeline) | `audit_log` | Security and accountability | Permanent (append-only by design) |
+| Audit log (who did what, including staff viewing a customer's timeline; each row hash-chained to the previous one) | `audit_log` | Security and accountability | Permanent (append-only by design) |
 | Saved competitions | `watchlist` | Customer feature | Life of the account |
 | DBX Points history, referrals | `points_ledger`, `referrals` | Loyalty scheme | Life of the account |
+| Feature switches, maintenance lock | `feature_flags`, `maintenance_unlock` | Operating the site | Kept; contain **no personal data** (feature name, state, staff id who changed it) |
 | Journey counts | `funnel_counts` | Understanding drop-off | Kept; contains **no personal data** (day, step, device type, competition only) |
 | Winner photo and quote | `competitions.winner_photo/quote` + `winner_consent_at/by` | Publicity | Only with recorded consent; removed on request |
 

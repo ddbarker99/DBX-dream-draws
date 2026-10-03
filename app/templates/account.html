@@ -200,7 +200,9 @@
   </section>
 
   <section class="section" id="deposit" aria-labelledby="dep-h"><h2 id="dep-h">Add funds</h2>
-  {% if excluded %}
+  {% if not feature('deposits') %}
+    <div class="notice"><span>Adding funds is unavailable at the moment. You can still pay for entries by card at checkout.</span></div>
+  {% elif excluded %}
     <div class="notice warn"><span>Your account is on a break, so you can't add funds until {{ u.excluded_until|uktime }}.</span></div>
   {% elif not u.email_verified %}
     {{ verify_notice() }}
@@ -251,14 +253,14 @@
         <span class="hint" id="blocks-h">{% if maxb %}Up to £{{ maxb }} available. Site credit can be spent on entries but not withdrawn.{% else %}You need {{ redeem_block }} points to redeem.{% endif %}</span>
       </form>
     </section>
-    <section class="panel" aria-labelledby="ref-h">
+    {% if feature('referrals') %}<section class="panel" aria-labelledby="ref-h">
       <h2 id="ref-h" style="font-size:20px">Refer a friend</h2>
       <p class="muted">When a friend joins with your link and makes their first purchase, you get <b>{{ config.REFERRAL_BONUS|gbp }}</b> site credit.</p>
       {% set link = config.SITE_URL ~ url_for('public.referral', code=u.referral_code) %}
       <label for="reflink">Your link</label>
       <div class="refbox"><input id="reflink" value="{{ link }}" readonly><button type="button" class="btn" onclick="navigator.clipboard.writeText(document.getElementById('reflink').value);this.textContent='Copied'">Copy</button></div>
       <p class="small muted" style="margin:var(--s3) 0 0">Friends who joined with your link: <b>{{ referred }}</b></p>
-    </section>
+    </section>{% endif %}
   </div>
   <section class="section" aria-labelledby="ph-h"><h2 id="ph-h">Points history</h2>
   {% if points_rows %}

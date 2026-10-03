@@ -16,6 +16,7 @@ from .analytics import count as track, device_type
 from .security import device_name, end_session, revoke_others, start_session
 from .db import get_db, iso, parse_iso, utcnow, write_txn
 from . import UK
+from .flags import enabled as feature_on, require_feature
 from .services import (audit, entrant_count, CATEGORIES, CATEGORY_NAMES, check_promo, MIN_DEPOSIT, MAX_DEPOSIT, create_deposit, deposit_room,
                        fulfil_deposit, set_deposit_status, expire_stale_deposits, refundable_deposits, refund_deposits, MIN_WITHDRAWAL, REDEEM_BLOCK, TIERS, balances, claim_free_play, free_play_today,
                        redeem_points, tier_for, check_withdrawal, GAME_ICONS, GAME_NAMES, GAME_PRICES, GAME_TYPES, MAX_PICKS, game_info, reveal_ticket,
@@ -325,6 +326,7 @@ def results():
 
 @bp.route("/search")
 def search():
+    require_feature("search")
     db = get_db()
     q = " ".join(request.args.get("q", "").split())[:60]
     found = {"live": [], "games": [], "results": []}
@@ -343,6 +345,7 @@ def search():
 @bp.route("/watch/<slug>", methods=["POST"])
 @login_required
 def watch(slug):
+    require_feature("watchlist")
     db = get_db()
     c = db.execute("SELECT id, title FROM competitions WHERE slug=?", (slug,)).fetchone()
     if c is None:
@@ -846,6 +849,7 @@ def _own_deposit(did):
 @bp.route("/account/deposit", methods=["POST"])
 @login_required
 def deposit():
+    require_feature("deposits")
     back = url_for("public.account", tab="wallet") + "#deposit"
     from .status import payments_paused
     if payments_paused():
@@ -1018,7 +1022,7 @@ SUPPORT_TOPICS = [("Payment", "A payment or order", "high"), ("Entry", "My ticke
 
 @bp.route("/support", methods=["GET", "POST"])
 def support_centre():
-    if g.user is None:
+    if g.user is None or not feature_on("support_centre"):
         return redirect(url_for("public.contact"))
     db = get_db()
     uid = g.user["id"]

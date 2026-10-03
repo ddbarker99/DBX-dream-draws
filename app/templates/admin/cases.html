@@ -4,11 +4,11 @@
 {% block content %}
 {% include "admin/_bar.html" %}
 <h1>Support cases</h1>
-<p class="muted">Every contact-form message opens a case. Link it to the customer, order or competition, reply from here (it's emailed), and keep internal notes.</p>
+<p class="muted">Highest priority first, then whoever has waited longest. "Handling now" shows who has a case open, so two people don't answer the same customer. Every contact-form message opens a case. Link it to the customer, order or competition, reply from here (it's emailed), and keep internal notes.</p>
 <nav class="chips">{% for k, label in (('open','Open'),('waiting','Waiting on customer'),('resolved','Resolved')) %}<a class="chip" href="{{ url_for('control.cases', show=k) }}"{% if show == k %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</nav>
 <div class="panel table-scroll" tabindex="0"><table>
-  <tr><th>#</th><th>Customer</th><th>Topic</th><th>Assigned</th><th>Updated</th></tr>
-  {% for k in rows %}<tr><td><a href="{{ url_for('control.case_detail', case_id=k.id) }}">#{{ k.id }}</a></td><td>{{ k.name }}<div class="tiny muted">{{ k.email }}</div></td><td>{{ k.topic }}</td><td>{{ k.assignee or '—' }}</td><td class="small muted">{{ k.updated_at|ago }}</td></tr>
-  {% else %}<tr><td colspan="5" class="muted">No cases.</td></tr>{% endfor %}
+  <tr><th>#</th><th>Priority</th><th>Customer</th><th>Topic</th><th>Handling now</th><th>Assigned</th><th>Customer last wrote</th></tr>
+  {% for k in rows %}<tr><td><a href="{{ url_for('control.case_detail', case_id=k.id) }}">#{{ k.id }}</a></td><td><span class="pri-{{ k.priority }}">{{ k.priority|capitalize }}</span></td><td>{{ k.name }}<div class="tiny muted">{{ k.email }}</div></td><td>{{ k.topic }}</td><td class="small">{{ k.locker or '—' }}</td><td>{{ k.assignee or '—' }}</td><td class="small muted">{{ (k.last_customer or k.created_at)|ago }}</td></tr>
+  {% else %}<tr><td colspan="7" class="muted">No cases.</td></tr>{% endfor %}
 </table></div>
 {% endblock %}

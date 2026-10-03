@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Prize liability · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Prize liability</h1>
+<p class="muted" style="max-width:760px">What the business owes or may owe: prizes won but not yet delivered, instant prizes still to be won in live games, prizes of live draws, and money held in customer wallets. Values are the prize values entered on each competition.</p>
+<div class="statstrip">
+  <div><b>{{ (totals.draw_owed + totals.instant_owed)|gbp }}</b><span>Won, not yet delivered / paid</span></div>
+  <div><b>{{ totals.instant_left|gbp }}</b><span>Instant prizes still to win (live games)</span></div>
+  <div><b>{{ totals.draw_upcoming|gbp }}</b><span>Prizes of live draws</span></div>
+  <div><b>{{ wallets.cash|gbp }}</b><span>Withdrawable cash held for customers{% if pending_w %} · {{ pending_w|gbp }} requested{% endif %}</span></div>
+</div>
+<p class="small muted">Also held: {{ wallets.deposit|gbp }} of deposited funds (refundable to card) and {{ wallets.credit|gbp }} of site credit (spend-only).</p>
+
+<section class="section" aria-labelledby="dw-h"><h2 id="dw-h">Draw winners awaiting their prize</h2>
+<div class="panel table-scroll" tabindex="0" role="region" aria-labelledby="dw-h"><table>
+  <thead><tr><th scope="col">Competition</th><th scope="col">Drawn</th><th scope="col">Status</th><th scope="col" class="num">Prize value</th></tr></thead><tbody>
+  {% for d in draws %}<tr><td><a href="{{ url_for('admin.entries', cid=d.id) }}">{{ d.title }}</a></td><td class="small">{{ d.drawn_at|uktime('%d %b %Y') }} · {{ d.drawn_at|ago }}</td>
+    <td>{% if d.claim_id %}<a href="{{ url_for('admin.claim_detail', claim_id=d.claim_id) }}">{{ claim_names[d.status] }}</a>{% else %}—{% endif %}{% if d.prize_choice == 'cash' %} · cash alternative{% endif %}</td><td class="num">{{ d.prize_value|gbp }}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Every drawn prize has been delivered.</td></tr>{% endfor %}</tbody></table></div></section>
+
+<section class="section" aria-labelledby="iw-h"><h2 id="iw-h">Instant-win prizes</h2>
+<div class="panel table-scroll" tabindex="0" role="region" aria-labelledby="iw-h"><table>
+  <thead><tr><th scope="col">Game / competition</th><th scope="col" class="num">Prizes</th><th scope="col" class="num">Won</th><th scope="col" class="num">Paid / delivered</th><th scope="col" class="num">Owed</th><th scope="col" class="num">Still to win</th></tr></thead><tbody>
+  {% for g_ in games %}<tr><td><a href="{{ url_for('admin.entries', cid=g_.c.id) }}">{{ g_.c.title }}</a> <span class="tiny muted">{{ g_.c.status }}</span>
+      <div class="tiny muted">{% for t in g_.by_type %}{{ t.k }}: {{ t.w }}/{{ t.n }} won{{ ' · ' if not loop.last }}{% endfor %}{% if g_.unrevealed %} · {{ g_.unrevealed }} won but not yet revealed{% endif %}</div></td>
+    <td class="num">{{ g_.total }}<div class="tiny muted">{{ g_.total_v|gbp }}</div></td>
+    <td class="num">{{ g_.won }}<div class="tiny muted">{{ g_.won_v|gbp }}</div></td>
+    <td class="num">{{ g_.paid }}<div class="tiny muted">{{ g_.paid_v|gbp }}</div></td>
+    <td class="num">{% if g_.owed %}<b>{{ g_.owed }}</b>{% else %}0{% endif %}<div class="tiny muted">{{ g_.owed_v|gbp }}{% if g_.physical_owed %} · {{ g_.physical_owed }} physical{% endif %}</div></td>
+    <td class="num">{{ g_.left }}<div class="tiny muted">{{ g_.left_v|gbp }}</div></td></tr>
+  {% else %}<tr><td colspan="6" class="muted">No instant-win prizes yet.</td></tr>{% endfor %}</tbody></table></div></section>
+
+<section class="section" aria-labelledby="up-h"><h2 id="up-h">Live draws</h2>
+<div class="panel table-scroll" tabindex="0" role="region" aria-labelledby="up-h"><table>
+  <thead><tr><th scope="col">Competition</th><th scope="col">Closes</th><th scope="col" class="num">Prize value</th></tr></thead><tbody>
+  {% for d in upcoming %}<tr><td><a href="{{ url_for('admin.entries', cid=d.id) }}">{{ d.title }}</a></td><td class="small">{{ d.ends_at|uktime }}</td><td class="num">{{ d.prize_value|gbp }}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">No live draws.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

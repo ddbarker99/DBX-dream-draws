@@ -32,15 +32,52 @@ class PurchaseError(Exception):
     pass
 
 
+class _DrawBlocked(PurchaseError):
+    pass
+
+
 # ---------------- audit log ----------------
 
+def audit_hash(prev, created_at, actor_id, actor_email, action, target, detail):
+    body = "|".join("" if v is None else str(v) for v in (prev, created_at, actor_id, actor_email, action, target, detail))
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
 def audit(db, action, target=None, detail="", actor=None):
-    """Append a row to the permanent audit log. actor defaults to the logged-in user (None = the system)."""
+    """Append a row to the permanent audit log. actor defaults to the logged-in user (None = the system).
+    Each row stores the hash of the previous row, so editing or removing any entry breaks the chain."""
     if actor is None and has_request_context() and g.get("user") is not None:
         actor = g.user
-    db.execute("INSERT INTO audit_log (created_at, actor_id, actor_email, action, target, detail) VALUES (?,?,?,?,?,?)",
-               (iso(utcnow()), actor["id"] if actor else None, actor["email"] if actor else None, action, target,
-                str(detail)[:2000]))
+    own = not db.in_transaction
+    if own:
+        db.execute("BEGIN IMMEDIATE")        # the chain needs one writer at a time
+    try:
+        last = db.execute("SELECT row_hash FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()
+        prev = (last["row_hash"] if last else None) or ""
+        row = (iso(utcnow()), actor["id"] if actor else None, actor["email"] if actor else None, action, target,
+               str(detail)[:2000])
+        db.execute("INSERT INTO audit_log (created_at, actor_id, actor_email, action, target, detail, prev_hash, row_hash) "
+                   "VALUES (?,?,?,?,?,?,?,?)", row + (prev, audit_hash(prev, *row)))
+        if own:
+            db.execute("COMMIT")
+    except Exception:
+        if own:
+            db.execute("ROLLBACK")
+        raise
+
+
+def verify_audit_chain(db):
+    """Recompute every audit hash. Returns the id of the first entry that doesn't match (or the row after a gap),
+    else None."""
+    prev = ""
+    for r in db.execute("SELECT * FROM audit_log ORDER BY id"):
+        if r["row_hash"] is None:
+            continue
+        if r["prev_hash"] != prev or r["row_hash"] != audit_hash(prev, r["created_at"], r["actor_id"], r["actor_email"],
+                                                                 r["action"], r["target"], r["detail"]):
+            return r["id"]
+        prev = r["row_hash"]
+    return None
 
 
 # ---------------- provably fair maths ----------------
@@ -792,7 +829,20 @@ def latest_snapshot(db, comp_id):
 
 
 def run_draw(comp_id, actor=None):
-    """Pick the winner from the frozen entry list and keep a permanent record. actor=None: automatic draw."""
+    """Pick the winner from the frozen entry list and keep a permanent record. actor=None: automatic draw.
+    Runs the draw-readiness checks first; a failed check is logged once and nothing is drawn."""
+    try:
+        return _run_draw(comp_id, actor)
+    except _DrawBlocked as e:
+        with write_txn() as db:
+            last = db.execute("SELECT detail FROM audit_log WHERE action='draw.blocked' AND target=? ORDER BY id DESC LIMIT 1",
+                              (f"comp:{comp_id}",)).fetchone()
+            if not last or last["detail"] != str(e):
+                audit(db, "draw.blocked", f"comp:{comp_id}", str(e), actor=actor or False)
+        raise PurchaseError(f"Draw not run. {e}") from None
+
+
+def _run_draw(comp_id, actor):
     close_competition(comp_id)
     with write_txn() as db:
         comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
@@ -807,6 +857,10 @@ def run_draw(comp_id, actor=None):
             if db.execute("SELECT 1 FROM postal_entries WHERE competition_id=? AND status='received'", (comp_id,)).fetchone():
                 raise PurchaseError("Postal entries are still waiting to be processed. Approve or reject them first.")
             raise PurchaseError("Some checkouts are still in progress. Try again in up to 45 minutes.")
+        from .checks import blocking_problem, draw_checks
+        problem = blocking_problem(draw_checks(db, comp))
+        if problem:
+            raise _DrawBlocked(problem)
         snap = latest_snapshot(db, comp_id)
         numbers = json.loads(snap["entries"])
         if not numbers:
@@ -814,8 +868,7 @@ def run_draw(comp_id, actor=None):
         live = [r[0] for r in db.execute("SELECT number FROM tickets WHERE competition_id=? AND status='issued' ORDER BY number",
                                          (comp_id,))]
         if entries_digest(live) != snap["entries_hash"]:     # can't happen with the triggers — but never draw if it did
-            audit(db, "draw.blocked", f"comp:{comp_id}", "Entry list differs from the closing snapshot", actor=False)
-            raise PurchaseError("The entry list doesn't match the closing snapshot. The draw was not run — contact an administrator.")
+            raise _DrawBlocked("The entry list doesn't match the closing snapshot — contact an administrator.")
         digest = snap["entries_hash"]
         idx = pick_index(comp["seed"], digest, len(numbers))
         win_no = numbers[idx]
@@ -1126,8 +1179,11 @@ def _settle_referral(db, c):
         why = f"First purchase was more than {REFERRAL_DAYS} days after joining"
     if not why and c["cash_due"] + c["deposit_used"] < REFERRAL_MIN_PAID:
         why = f"First purchase didn't include £{REFERRAL_MIN_PAID / 100:.0f} paid by card or deposited funds"
-    if not why and not bonus:
-        why = "Referral rewards are switched off"
+    if not why:
+        from .flags import enabled
+        referrer = db.execute("SELECT * FROM users WHERE id=?", (r["referrer_id"],)).fetchone()
+        if not bonus or not enabled("referrals", user=referrer):
+            why = "Referral rewards are switched off"
     now = iso(utcnow())
     if why:
         db.execute("UPDATE referrals SET status='not_eligible', reason=? WHERE id=?", (why, r["id"]))
@@ -1314,6 +1370,7 @@ def start_fresh(competitions="", wallets=False, accounts=False, promos=False):
         competitions, wallets = "all", True
     out, images = {}, []
     with write_txn() as db:
+        db.execute("INSERT OR REPLACE INTO maintenance_unlock (id, reason) VALUES (1, 'start fresh')")
         if competitions in RESET_SCOPES:
             ids = [r[0] for r in db.execute(f"SELECT id FROM competitions WHERE {RESET_SCOPES[competitions]}")]
             images = _delete_comp_rows(db, ids)
@@ -1341,6 +1398,7 @@ def start_fresh(competitions="", wallets=False, accounts=False, promos=False):
                 db.execute(f"UPDATE users SET referred_by=NULL WHERE referred_by IN ({q})", players)
                 db.execute(f"DELETE FROM users WHERE id IN ({q})", players)
             out["player accounts"] = len(players)
+        db.execute("DELETE FROM maintenance_unlock")
         audit(db, "site.start_fresh", None, f"Options: competitions={competitions!r} wallets={wallets} accounts={accounts} "
               f"promos={promos}. Deleted: {out}")
     return out, images
@@ -1349,13 +1407,9 @@ def start_fresh(competitions="", wallets=False, accounts=False, promos=False):
 # ---------------- publishing & scheduled launches ----------------
 
 def publish_problem(db, comp):
-    """Why this can't go live yet, or None."""
-    if comp["game_type"] and not db.execute("SELECT 1 FROM instant_prizes WHERE competition_id=? LIMIT 1",
-                                            (comp["id"],)).fetchone():
-        return "Add prizes to this game before it goes live."
-    if parse_iso(comp["ends_at"]) <= utcnow():
-        return "The closing date is in the past — edit it first."
-    return None
+    """Why this can't go live yet (the first failed pre-launch check), or None."""
+    from .checks import blocking_problem, launch_checks
+    return blocking_problem(launch_checks(db, comp))
 
 
 _last_sched = {"t": None}

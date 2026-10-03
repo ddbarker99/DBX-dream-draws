@@ -10,6 +10,9 @@
   <button class="btn ghost small">Show</button>
   <a class="btn ghost small" href="{{ url_for('control.finance_csv', **{'from': start, 'to': end}) }}">Export card payments (CSV)</a>
 </form>
+<p class="notice {{ 'warn' if rec_open or not rec }}" style="margin-bottom:var(--s4)"><span><b>Automatic Stripe reconciliation:</b>
+  {% if rec %}last run {{ rec.at|uktime }} — {{ rec.sessions }} payments and {{ rec.refunds }} refunds from the last 3 days compared with our records.{% else %}hasn't run yet (it runs daily once live Stripe keys are set).{% endif %}
+  {% if rec_open %} <a href="{{ url_for('control.flags', kind='Reconciliation') }}">{{ rec_open }} mismatch{{ 'es' if rec_open != 1 }} to review</a>.{% elif rec %} Everything matched.{% endif %}</span></p>
 <div class="two">
   <section class="panel"><h2 style="font-size:20px">Money in by card</h2><dl class="facts">
     <div><dt>Entries paid by card</dt><dd>{{ r.card_entries|gbp }}</dd></div>

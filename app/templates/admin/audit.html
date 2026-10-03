@@ -5,7 +5,22 @@
 {% include "admin/_bar.html" %}
 <h1>Audit log</h1>
 <p class="muted">Every sensitive action — draws, cancellations, refunds, wallet adjustments, withdrawals, postal entries, limit changes and admin access — is recorded here permanently. Rows can't be edited or deleted.</p>
-{% if target %}<p class="small">Showing <b>{{ target }}</b> only. <a href="{{ url_for('admin.audit_log') }}">Show everything</a></p>{% endif %}
+<p class="small muted">Tamper protection: each entry stores a fingerprint (SHA-256) of the one before it, so changing or removing any past entry breaks the chain from that point. <a href="{{ url_for('admin.audit_log', verify=1) }}">Verify the whole log now</a>.</p>
+{% if chain %}<p class="notice {{ 'good' if chain.ok else 'bad' }}" role="status"><span>{% if chain.ok %}<b>Verified:</b> all {{ '{:,}'.format(chain.total) }} entries are intact.{% else %}<b>Chain broken at entry #{{ chain.broken }}.</b> The log may have been altered outside the app — restore from a backup and see the runbook.{% endif %}</span></p>{% endif %}
+<form class="panel filters" method="get" style="margin-bottom:var(--s4)">
+  <div class="grid4">
+    <div><label for="f-actor">Who</label><input id="f-actor" name="actor" value="{{ f.actor }}" placeholder="email, or 'system'"></div>
+    <div><label for="f-action">Action</label><select id="f-action" name="action"><option value="">Any</option>{% for x in actions %}<option {{ 'selected' if f.action == x }}>{{ x }}</option>{% endfor %}</select></div>
+    <div><label for="f-target">About</label><input id="f-target" name="target" value="{{ f.target }}" placeholder="e.g. comp:12, user:5"></div>
+    <div><label for="f-q">Text</label><input id="f-q" name="q" value="{{ f.q }}"></div>
+    <div><label for="f-from">From</label><input id="f-from" type="date" name="from" value="{{ f['from'] }}"></div>
+    <div><label for="f-to">To</label><input id="f-to" type="date" name="to" value="{{ f.to }}"></div>
+  </div>
+  <div class="actions" style="margin-top:var(--s3)"><button class="btn small">Filter</button>
+    {% if filtered %}<a class="btn ghost small" href="{{ url_for('admin.audit_log') }}">Clear</a>{% endif %}
+    <a class="btn ghost small" href="{{ url_for('admin.audit_log', format='csv', **f) }}">Export CSV</a></div>
+</form>
+{% if filtered %}<p class="small">Showing the newest 300 matching entries.</p>{% endif %}
 <div class="panel table-scroll" tabindex="0">
   {% if rows %}
   <table>
