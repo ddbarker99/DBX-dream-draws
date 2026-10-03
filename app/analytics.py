@@ -5,7 +5,8 @@ from flask import request
 
 from .db import get_db, utcnow
 
-STEPS = [("home", "Homepage"), ("competition", "Competition page"), ("add", "Added to basket"), ("basket", "Basket"),
+STEPS = [("home", "Homepage"), ("competition", "Competition page"), ("select", "Started choosing entries"),
+         ("add", "Added to basket"), ("basket", "Basket"),
          ("checkout", "Started checkout"), ("paid", "Paid")]
 BOT = ("bot", "crawl", "spider", "slurp", "preview", "monitor", "curl", "python-requests", "headless")
 

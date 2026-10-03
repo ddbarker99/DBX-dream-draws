@@ -9,6 +9,25 @@ Every change follows the same path. Nobody tries competition, payment or wallet 
 | 3. Staging | `staging.YOURDOMAIN` (`docs/STAGING.md`) | QA checklist sections for the area changed, with Stripe **test** cards; load test before big launches |
 | 4. Production | the live server | verified backup taken first; smoke test (§14 of the QA checklist); watch System health for 15 minutes |
 
+## Release checklist (copy into the release notes; every box ticked before and after)
+
+**Before**
+- [ ] CI green on the exact commit: tests, crawl, concurrency stress, performance budgets, keyboard/axe walkthrough.
+- [ ] Database changes reviewed by a second person; row added to "Per-release notes" below with the rollback note.
+- [ ] Tested on staging with Stripe test cards (the journeys the change touches + QA checklist §14).
+- [ ] Not within 2 hours of a draw or a big closing; someone available for the next hour.
+- [ ] `./backup.sh` → **Backup VERIFIED**.
+- [ ] `docker compose exec web flask --app wsgi release-check` → no new FAILs.
+- [ ] Monitoring ready: UptimeRobot on `/healthz/deep`, GitHub uptime workflow green, `SUPPORT_EMAIL` set for alerts.
+- [ ] Rollback plan understood: previous tag/zip to hand.
+
+**After**
+- [ ] `docker compose ps` — web and worker Up (healthy).
+- [ ] `release-check` again; `python tests/synthetic_check.py https://YOURDOMAIN` → ALL CHECKS PASSED.
+- [ ] Smoke test by hand: home, a competition, add to basket, checkout page (don't pay), account tabs, admin Control Centre.
+- [ ] Watch System health and Targets → Server errors for 15 minutes.
+- [ ] Note the release (RELEASE shows in error reports) and anything unusual.
+
 ## Production release, step by step
 
 ```bash
@@ -48,8 +67,7 @@ No data restore is needed, and nothing customers did since the release is lost.
 
 Removing the v11 protections (only if rolling back *and* you need the old Start-fresh wallet wipe — then redeploy v11 to put them back):
 ```bash
-docker compose exec web sqlite3 /app/data/prizes.db \
-  "DROP TRIGGER ledger_no_update; DROP TRIGGER ledger_no_delete; DROP TRIGGER points_no_update; DROP TRIGGER points_no_delete;"
+docker compose exec web python -c "import sqlite3; c=sqlite3.connect('/data/prizes.db'); c.executescript('DROP TRIGGER ledger_no_update; DROP TRIGGER ledger_no_delete; DROP TRIGGER points_no_update; DROP TRIGGER points_no_delete;')"
 ```
 
 ### When a migration itself fails

@@ -12,6 +12,9 @@ Record results in the last column: ✅ pass · ❌ fail (with a note) · — not
 | Crawl every page as guest, player and admin: no 4xx/5xx, no broken links, one `<h1>`, meta description, labelled fields, image alt text, no duplicate titles | `python tests/qa_crawl.py` → `NO PROBLEMS FOUND` | |
 | Accessibility (axe-core, WCAG 2.2 AA rules) and keyboard-only walkthrough at 390px and 1280px | `AXE_JS=… python tests/a11y_keyboard.py` → `NO PROBLEMS FOUND` | |
 | Performance budgets | `python tests/perf_budget.py` → `ALL WITHIN BUDGET` | |
+| Concurrency stress (separate processes) | `python tests/stress_concurrency.py` → `PASS` | |
+| Release check on the server | `flask --app wsgi release-check` → `READY` | |
+| Live site synthetic check after deploy | `python tests/synthetic_check.py https://YOURDOMAIN` → `ALL CHECKS PASSED` | |
 | Security attack tests | part of the unit tests (`SecurityTests`) | |
 
 ## 1. Browsers and devices (manual)

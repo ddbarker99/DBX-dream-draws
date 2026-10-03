@@ -223,3 +223,13 @@ python -m unittest discover tests
 - **Reports & targets:** Admin → Reports (definitions for your accountant: `docs/REPORTING-DEFINITIONS.md`), Admin → Targets (checkout completion, payment problems, support load, errors, server time, plus uptime/PageSpeed readings you record) and the server-error log.
 - **How we work:** `docs/DEPLOY.md` (dev → staging → prod, rollback), `docs/DEFINITION-OF-DONE.md`, `docs/USABILITY-TEST.md` — run the usability test before adding more features.
 
+## v12 production hardening (Phase 4)
+- **Read first:** `docs/PRODUCTION-AUDIT.md` (audit of every area), `docs/ARCHITECTURE.md`, `docs/DATABASE.md`, `docs/DEPENDENCIES.md`, `docs/MONITORING.md`, `docs/CAPACITY.md`, `docs/PENTEST-SCOPE.md`, incident procedures in `docs/RUNBOOK.md` (§1–16), release checklist in `docs/DEPLOY.md`.
+- **Database safety rules** stop overselling, double payouts and edits to final records even if the code had a bug.
+- **Admin:** sensitive actions ask you to confirm it's you (password/MFA) if you haven't in 10 minutes; admin times out after 30 minutes idle; wallet adjustments over £100 need an Administrator (`ADMIN_IDLE_MINUTES`, `ADMIN_STEPUP_MINUTES`, `LARGE_ADJUSTMENT`).
+- **Monitoring:** `/healthz/deep` for UptimeRobot; scheduled GitHub uptime check (set repository variable `SITE_URL`); new alerts for payment-rate drops, blocked draws, slow pages, database errors; immediate emails for new server errors and chargebacks.
+- **Releases:** `docker compose exec web flask --app wsgi release-check` before and after every deploy.
+- **Stripe webhook:** add the events `charge.refunded` and `charge.dispute.created`.
+- **nginx:** updated `deploy/nginx-prizecomp.conf` (caching, gzip, login rate limit) — merge it with certbot's HTTPS lines.
+- **Phase 5 groundwork:** support cases are tagged with what the customer needed (required to resolve); Admin → Cases → *Support insights* shows the top reasons, trend and where the fix belongs, next to the journey funnel (now including "started choosing entries").
+

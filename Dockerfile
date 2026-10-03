@@ -4,7 +4,7 @@ WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
-COPY wsgi.py .
+COPY wsgi.py RELEASE ./
 RUN useradd -r -u 1000 web && mkdir -p /data && chown web /data
 USER web
 EXPOSE 8000

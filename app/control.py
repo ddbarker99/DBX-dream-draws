@@ -453,6 +453,23 @@ def open_case(name, email, topic, message, user_id=None, competition_id=None, ch
     return cur.lastrowid
 
 
+# What the customer actually needed — recorded by staff on every case, so the roadmap comes from evidence.
+# key: (label, where the fix usually belongs)
+CASE_REASONS = {
+    "where_tickets": ("Where are my ticket numbers?", "My tickets page and the order confirmation (screen and email)"),
+    "draw_when": ("When / how is the draw?", "Draw date and method on the competition page; result notifications"),
+    "cash_credit": ("Cash vs site credit confusion", "Wallet wording and the checkout payment summary"),
+    "paid_no_entry": ("Paid but no entries / charged twice", "Checkout confirmation, payment failure messages, reconciliation"),
+    "withdrawal": ("Withdrawal timing or problem", "Withdrawal status page and expectations shown before requesting"),
+    "prize": ("Prize claim / delivery", "Prize-claim updates and winner notifications"),
+    "login": ("Can't log in / password / email confirmation", "Login, password reset and verification emails"),
+    "free_entry": ("Free postal entry question", "Free-entry page clarity"),
+    "limits": ("Limits, breaks or responsible play", "Responsible play page and limit-change messages"),
+    "bug": ("Something broken on the site", "Error log on the Targets page — fix the bug"),
+    "complaint": ("Complaint about a decision or result", "Terms, transparency centre, complaints process"),
+    "other": ("Other", "Read these cases — maybe a new category is needed"),
+}
+
 LOCK_MINUTES = 20          # a case opened by a staff member stays theirs this long after their last action
 PRIORITY_ORDER = "CASE k.priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END"
 
@@ -528,6 +545,11 @@ def case_detail(case_id):
             sets["status"] = f["status"]
         if f.get("priority") in ("high", "normal", "low"):
             sets["priority"] = f["priority"]
+        if f.get("reason") in CASE_REASONS:
+            sets["reason"] = f["reason"]
+        if sets.get("status") == "resolved" and not (sets.get("reason") or k["reason"]):
+            flash("Choose what the customer needed before resolving — it's how we decide what to improve.", "error")
+            return redirect(url_for("control.case_detail", case_id=case_id))
         if f.get("resolution"):
             sets["resolution"] = f["resolution"].strip()[:500]
         for col in ("competition_id", "checkout_id", "user_id"):
@@ -572,7 +594,31 @@ def case_detail(case_id):
             "on_break": bool(customer["excluded_until"] and customer["excluded_until"] > iso(utcnow())),
         }
     return render_template("admin/case.html", k=k, notes=notes, customer=customer, orders=orders, comp=comp,
-                           holder=holder, history=history, lock_minutes=LOCK_MINUTES)
+                           holder=holder, history=history, lock_minutes=LOCK_MINUTES, reasons=CASE_REASONS)
+
+
+@bp.route("/support-insights")
+@require("cases")
+def support_insights():
+    """Phase 5: what customers keep asking, compared with the previous 30 days, and where the fix belongs."""
+    db = get_db()
+    now = utcnow()
+    a, b, c_ = iso(now - timedelta(days=60)), iso(now - timedelta(days=30)), iso(now)
+
+    def counts(since, until):
+        return dict(db.execute("SELECT COALESCE(reason, 'untagged'), COUNT(*) FROM cases WHERE created_at>=? AND created_at<? "
+                               "GROUP BY 1", (since, until)).fetchall())
+    cur, prev = counts(b, c_), counts(a, b)
+    orders = _sum(db, "SELECT COUNT(*) FROM checkouts WHERE status='paid' AND paid_at>=?", b)
+    rows = sorted(({"key": k, "label": v[0], "fix": v[1], "n": cur.get(k, 0), "prev": prev.get(k, 0),
+                    "per100": round(100 * cur.get(k, 0) / orders, 1) if orders else None}
+                   for k, v in CASE_REASONS.items()), key=lambda r: -r["n"])
+    steps = db.execute("SELECT step, SUM(n) FROM funnel_counts WHERE day>=? GROUP BY step", (b[:10],)).fetchall()
+    from .analytics import STEPS
+    got = dict(steps)
+    funnel = [(label, got.get(key, 0)) for key, label in STEPS if key != "home"]
+    return render_template("admin/support_insights.html", rows=rows, untagged=cur.get("untagged", 0), orders=orders,
+                           funnel=funnel)
 
 
 # ---------------- measurable targets (docs/TARGETS.md) ----------------

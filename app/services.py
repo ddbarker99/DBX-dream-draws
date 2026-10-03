@@ -1023,13 +1023,6 @@ def set_setting(key, value):
                      (key, value))
 
 
-def json_list(s):
-    try:
-        return json.loads(s) if s else []
-    except ValueError:
-        return []
-
-
 # ---------------- instant-win games ----------------
 
 GAME_TYPES = [("scratch", "Scratch card", "🎟️"), ("spin", "Spin the wheel", "🎡"), ("box", "Mystery box", "🎁")]

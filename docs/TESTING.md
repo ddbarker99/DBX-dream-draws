@@ -2,7 +2,10 @@
 
 | Command | What it covers | When |
 |---|---|---|
-| `python -m pytest -q tests/test_app.py` | 130+ tests: sign-up, login, MFA, roles, ticket allocation, limits, closing and snapshots, postal entries, checkout and payment idempotency, wallets, refunds, withdrawals, instant wins, draws and redraws, notifications, pre-launch and draw-readiness checks, audit chain, ledgers, reconciliation, feature flags, support desk, reports, error tracking, disaster-recovery drill, security attacks. After **every** test the data must pass `integrity_problems()`. | Every change (CI) |
+| `python -m pytest -q tests/test_app.py` | 160+ tests, including end-to-end money journeys through the Stripe webhook path, database-rule tests, parallel job idempotency and chaos tests (provider down, email down, DB error mid-payment, draw crash, restart mid-checkout, worker down); also: sign-up, login, MFA, roles, ticket allocation, limits, closing and snapshots, postal entries, checkout and payment idempotency, wallets, refunds, withdrawals, instant wins, draws and redraws, notifications, pre-launch and draw-readiness checks, audit chain, ledgers, reconciliation, feature flags, support desk, reports, error tracking, disaster-recovery drill, security attacks. After **every** test the data must pass `integrity_problems()`. | Every change (CI) |
+| `python tests/stress_concurrency.py` | Separate processes racing for the same tickets: no duplicate ownership, no overselling, no double charges, integrity clean | Every change (CI) |
+| `python tests/synthetic_check.py https://YOURDOMAIN` | Read-only check of the live site's critical pages and deep health | Every 15 min (GitHub uptime workflow) and after deploys |
+| `flask release-check` | Settings, backups, integrity and health before/after a release | Every release |
 | `python tests/qa_crawl.py` | Every page as guest, player and admin: no errors or broken links; one h1; labels; alt text; titles/descriptions/canonicals; data integrity afterwards | Every change (CI) |
 | `python tests/perf_budget.py` | Page weight, requests, inline JS, server time against budgets | Every change (CI) |
 | `AXE_JS=… python tests/a11y_keyboard.py` | Real browser, 390px and 1280px: keyboard-only journeys, focus visibility, traps, menu, axe-core WCAG AA, CSP violations | Every change (CI) |

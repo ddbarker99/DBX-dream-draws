@@ -27,9 +27,17 @@ Last reviewed: 3 October 2026. Re-run on every release (CI does it automatically
 3. **Server error on an invalid date** in the audit-log filter. Now ignored.
 4. **Missing browser protections.** Added `Content-Security-Policy` (same-site only; Stripe allowed as a form target), `Permissions-Policy`, `Cross-Origin-Opener-Policy`, and `Strict-Transport-Security` on HTTPS. Session cookies are now `Secure` by default when `SITE_URL` is https.
 
+## Added in Phase 4
+- Admin step-up confirmation (password or MFA within 10 minutes) for money, results and access changes; 30-minute admin idle timeout; large wallet adjustments limited to Administrators; reasons required.
+- Database-level rules against overselling, double payouts and editing final records.
+- nginx rate limiting of authentication endpoints across all workers; `X-Forwarded-For` overwritten by nginx.
+- Error reports scrubbed of personal data and secrets.
+- Chargebacks / Stripe-side refunds flagged immediately.
+- Scope for the independent test: `docs/PENTEST-SCOPE.md`.
+
 ## Known limitations / follow-ups
 - The CSP still allows inline scripts (`'unsafe-inline'`) because templates use small inline handlers. Moving them into `static/app.js` would allow a strict policy.
 - `GET /checkout/<id>/cancel` changes state (Stripe's cancel link must be a GET). Impact is limited to the owner's own pending checkout, and it's owner-only.
-- Rate limits are per web worker, in memory. With several gunicorn workers the effective limit is multiplied; account lockout still triggers. Consider a shared store if abuse appears.
+- App rate limits are per web worker, in memory; nginx now adds a shared per-IP limit on login, sign-up, reset and MFA (install the updated `deploy/nginx-prizecomp.conf`).
 - The app trusts one proxy hop for the client IP (`ProxyFix x_for=1`); nginx must stay in front and the app port must stay bound to 127.0.0.1 (as in `docker-compose.yml`).
 - Recommended before launch: an independent penetration test of staging by a CREST-accredited tester; keep this file updated with their findings.

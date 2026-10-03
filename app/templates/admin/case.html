@@ -28,6 +28,8 @@
     <label for="checkout_id">Order</label><select id="checkout_id" name="checkout_id"><option value="">—</option>{% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if k.checkout_id == o.id }}>#{{ o.id }} · {{ o.status }} · {{ o.cash_due|gbp }} · {{ o.created_at|uktime('%d %b') }}</option>{% endfor %}</select>
     <label for="competition_id">Competition ID</label><input id="competition_id" name="competition_id" inputmode="numeric" value="{{ k.competition_id or '' }}">{% if comp %}<span class="hint">{{ comp.title }}</span>{% endif %}
     <label for="priority">Priority</label><select id="priority" name="priority">{% for p_ in ('high','normal','low') %}<option value="{{ p_ }}" {{ 'selected' if k.priority == p_ }}>{{ p_|capitalize }}</option>{% endfor %}</select>
+    <label for="reason">What did the customer need?</label><select id="reason" name="reason"><option value="">— choose —</option>{% for key, v in reasons.items() %}<option value="{{ key }}" {{ 'selected' if k.reason == key }}>{{ v[0] }}</option>{% endfor %}</select>
+    <span class="hint">Required before resolving. Feeds Support insights.</span>
     <label for="status">Status</label><select id="status" name="status">{% for s_ in ('open','waiting','resolved') %}<option {{ 'selected' if k.status == s_ }}>{{ s_ }}</option>{% endfor %}</select>
     <label for="resolution">Resolution</label><input id="resolution" name="resolution" value="{{ k.resolution or '' }}">
     <label class="check"><input type="checkbox" name="assign" value="me"> Assign to me</label>

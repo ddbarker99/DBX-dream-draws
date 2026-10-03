@@ -1837,6 +1837,15 @@ def health():
         return jsonify({"ok": False}), 503
 
 
+@bp.route("/j/select/<int:cid>", methods=["POST"])
+def journey_select(cid):
+    """The entry form was first used on this page view (sent once by the page). Counted anonymously, like every
+    journey step — no cookie, no identifier."""
+    if get_db().execute("SELECT 1 FROM competitions WHERE id=? AND status='live'", (cid,)).fetchone():
+        track("select", cid)
+    return "", 204
+
+
 @bp.route("/healthz/deep")
 def health_deep():
     """For uptime monitors that should catch more than "the server answers": the database can be written to, the

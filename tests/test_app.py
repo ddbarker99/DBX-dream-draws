@@ -2836,6 +2836,36 @@ class MonitoringTests(PlatformBase):
         self.assertIn("Card payments completed", html)
 
 
+class EvidenceTests(PlatformBase):
+    """Phase 5 groundwork: anonymous funnel including "started choosing entries"; support reasons."""
+
+    def test_select_step_counted_anonymously(self):
+        ua = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile/15E148"}
+        self.p.get(f"/c/{self.slug(self.cid)}", headers=ua)
+        self.assertIn("journey", self.p.get(f"/c/{self.slug(self.cid)}", headers=ua).get_data(as_text=True).lower())
+        r = self.post(f"/j/select/{self.cid}", client=self.p, headers=ua)
+        self.assertEqual(r.status_code, 204)
+        self.assertEqual(self.q("SELECT n FROM funnel_counts WHERE step='select'"), 1)
+        self.assertEqual(self.q("SELECT device FROM funnel_counts WHERE step='select'"), "mobile")
+        self.post(f"/j/select/{self.cid}", client=self.p, headers={"User-Agent": "Googlebot/2.1"})
+        self.assertEqual(self.q("SELECT SUM(n) FROM funnel_counts WHERE step='select'"), 1)        # bots ignored
+        cols = [r[1] for r in self.db().execute("PRAGMA table_info(funnel_counts)")]
+        self.assertEqual(sorted(cols), ["comp_id", "day", "device", "n", "step"])                   # no identifiers
+
+    def test_cases_need_a_reason_and_feed_insights(self):
+        from app.control import open_case
+        with self.app.test_request_context():
+            cid = open_case("Pat", "player@example.com", "Entry", "Where are my numbers?", user_id=self.uid)
+        self.post(f"/admin/cases/{cid}", {"status": "resolved"})
+        self.assertEqual(self.q("SELECT status FROM cases WHERE id=?", cid), "open")
+        self.post(f"/admin/cases/{cid}", {"status": "resolved", "reason": "where_tickets"})
+        self.assertEqual(self.q("SELECT status FROM cases WHERE id=?", cid), "resolved")
+        html = self.client.get("/admin/support-insights").get_data(as_text=True)
+        self.assertIn("Where are my ticket numbers?", html)
+        self.assertIn("My tickets page", html)
+        self.assertIn("Started choosing entries", html)
+
+
 class MigrationTest(unittest.TestCase):
     def test_v1_database_upgrades_in_place(self):
         tmp = tempfile.mkdtemp()

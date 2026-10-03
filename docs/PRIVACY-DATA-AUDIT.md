@@ -18,7 +18,7 @@ What DBX Dream Draws stores, where, who receives it, how long it's kept, and how
 | Spending limits, breaks, pending limit changes | `users`, `audit_log` | Responsible play | Life of the account + 1 year |
 | Admin MFA secret (encrypted at rest only by disk), hashed recovery codes, admin role | `users` | Admin security | While an admin |
 | Device sessions: IP address, browser string, sign-in and last-seen times | `user_sessions` | Signing out other devices, security alerts, fraud review | **Deleted 90 days after last use** (automatic, `prune` job) |
-| Orders, checkouts, Stripe session IDs, amounts, card-funding outcome (not card numbers) | `checkouts`, `orders`, `deposits` | Contract, accounting, refunds | 6 years (tax/accounting) |
+| Orders, checkouts, Stripe session and payment IDs, amounts, card-funding outcome (not card numbers) | `checkouts`, `orders`, `deposits` | Contract, accounting, refunds | 6 years (tax/accounting) |
 | Tickets and entry numbers | `tickets` | Running draws, publishing entry lists | Permanent for drawn competitions (draw integrity); deleted with test competitions |
 | Frozen entry lists, draw records | `entry_snapshots`, `draws` | Proving draws were fair | Permanent (ticket numbers and account IDs only) |
 | Wallet movements | `credit_ledger` | Balances, accounting | 6 years |
@@ -26,7 +26,7 @@ What DBX Dream Draws stores, where, who receives it, how long it's kept, and how
 | Postal entries: name, email, address, phone, date of birth, answer, arrival date, outcome | `postal_entries` | Free entry route, eligibility, limits | 2 years after the competition, then delete the address/phone/DOB |
 | Prize claims: status, notes, evidence files | `prize_claims`, `claim_events`, `data/evidence` | Verifying winners, delivering prizes | 6 years (evidence of prize fulfilment) |
 | Notifications (title, message, delivery status) | `notifications` | Customer notification centre, email delivery tracking | **Read notifications deleted after 1 year** (automatic) |
-| Support cases: name, email, messages, internal notes | `cases`, `case_notes` | Answering and tracking support requests, complaints | 3 years after resolution |
+| Support cases: name, email, messages, internal notes, reason category | `cases`, `case_notes` | Answering and tracking support requests, complaints | 3 years after resolution |
 | Review flags (e.g. shared phone numbers) | `flags` | Fraud and abuse prevention (legitimate interest) | 2 years after review |
 | Audit log (who did what, including staff viewing a customer's timeline; each row hash-chained to the previous one) | `audit_log` | Security and accountability | Permanent (append-only by design) |
 | Saved competitions | `watchlist` | Customer feature | Life of the account |

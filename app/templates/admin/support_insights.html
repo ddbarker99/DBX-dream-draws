@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Support insights · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Support insights</h1>
+<p class="muted" style="max-width:760px">What customers needed help with in the last 30 days, and where the fix usually belongs. If the same question keeps coming up, improve the page instead of answering it again. {% if untagged %}<b>{{ untagged }} case{{ 's' if untagged != 1 }} not tagged yet.</b>{% endif %}</p>
+<div class="panel table-scroll" tabindex="0" role="region" aria-label="Reasons"><table>
+  <thead><tr><th scope="col">Customers asked about</th><th scope="col" class="num">Last 30 days</th><th scope="col" class="num">Previous 30</th><th scope="col" class="num">Per 100 orders</th><th scope="col">Where to fix it</th></tr></thead><tbody>
+  {% for r in rows %}<tr><td>{{ r.label }}</td><td class="num"><b>{{ r.n }}</b></td><td class="num muted">{{ r.prev }}{% if r.n > r.prev and r.prev %} <span class="bad-t">↑</span>{% elif r.n < r.prev %} <span class="ok-t">↓</span>{% endif %}</td>
+    <td class="num">{{ r.per100 if r.per100 is not none else '—' }}</td><td class="small">{{ r.fix }}</td></tr>{% endfor %}
+  </tbody></table></div>
+
+<section class="section" aria-labelledby="fn-h"><h2 id="fn-h">Where people leave (last 30 days)</h2>
+<p class="small muted">Anonymous journey counts — no cookies or identifiers. The biggest drop between two steps is the first place to investigate. Details per device and competition: <a href="{{ url_for('control.analytics') }}">Journey analytics</a>.</p>
+<div class="panel table-scroll" tabindex="0" role="region" aria-labelledby="fn-h"><table>
+  <thead><tr><th scope="col">Step</th><th scope="col" class="num">People</th><th scope="col" class="num">Of previous step</th></tr></thead><tbody>
+  {% for label, n in funnel %}<tr><td>{{ label }}</td><td class="num">{{ '{:,}'.format(n) }}</td><td class="num">{% if not loop.first and funnel[loop.index0 - 1][1] %}{{ (100 * n / funnel[loop.index0 - 1][1])|round(0)|int }}%{% else %}—{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div></section>
+{% endblock %}

@@ -108,6 +108,43 @@ Every day the worker compares the last 3 days of Stripe payments and refunds wit
 
 Admin → Settings → **Features**: switch it **Off** (or **Staff only** to keep testing it yourself). Takes effect immediately, no deploy; the change is in the audit log. Covers: Help & support centre, Save & remind me, wallet deposits, refer a friend, site search.
 
+## 13. A customer's balance looks wrong
+
+Balances are never stored as a single number: each is the sum of the customer's wallet history (Admin → Customers → the customer → Timeline). So "wrong" means either a missing/extra history line or a misunderstanding.
+
+1. Open the customer's **timeline** and read every wallet line with its reason and reference (order, prize, refund, withdrawal, deposit). Compare with what the customer expected — most cases are cash vs site credit confusion (tag the case "Cash vs site credit").
+2. Check Admin → System health → **Data integrity**: it would show negative balances, prizes paid twice, deposits or withdrawals without a matching line.
+3. If money really is missing or extra: correct it with a **wallet adjustment** (needs a reason; over £100 needs an Administrator; you'll be asked to confirm it's you). Never delete or edit a history line — the database refuses anyway.
+4. If several customers are affected at once: pause payments, take a backup (`./backup.sh`), and treat it as a bug — check Admin → Targets → Server errors and the recent release.
+5. Reply to the customer with what happened and the adjustment reference. Tag the case.
+
+## 14. Customer information may have been exposed (data breach)
+
+Examples: a page showed another customer's details, an export was sent to the wrong person, a laptop with exports was lost, the server or an admin account was accessed by someone else.
+
+1. **Contain** within the hour: revoke the access (password reset signs out every device; remove admin roles; rotate keys in `.env` — Stripe, SMTP, SECRET_KEY — and restart), put the site in maintenance mode if the leak is ongoing.
+2. **Preserve evidence**: `./backup.sh`, copy `docker compose logs` to a safe place, export the audit log (Admin → Audit log → Export CSV). Don't delete anything.
+3. **Assess**: whose data, which fields (`docs/PRIVACY-DATA-AUDIT.md` lists what's stored), how many people, how long, likely consequences.
+4. **Report to the ICO within 72 hours** of becoming aware if it's likely to risk people's rights and freedoms (ico.org.uk → report a breach). If unsure, report — late reporting is worse. Record the decision either way.
+5. **Tell affected customers without undue delay** if the risk is high (e.g. bank details, ID documents): what happened, what data, what you've done, what they should do.
+6. Fix the cause, add a test that would have caught it, and record everything in a support case marked "complaint/incident".
+
+## 15. Security incident (server, admin account or payment keys compromised)
+
+1. Pause payments and turn on maintenance mode.
+2. Rotate every secret: Stripe secret key and webhook secret (Stripe dashboard → Developers), SMTP password, `SECRET_KEY` (signs everyone out), the VPS root/SSH keys, Hostinger account password + 2FA.
+3. Revoke admin access for any affected account; re-enrol MFA.
+4. Check the audit log (verify the chain: Admin → Audit log → Verify), Flags → Payment reversal / Reconciliation, and Stripe's dashboard for refunds or payouts you didn't make.
+5. If the server itself may be compromised, **rebuild it from clean** following `docs/DISASTER-RECOVERY.md` §4 using a backup from before the incident, rather than trying to clean it.
+6. Follow §14 for customer data. Consider an independent security review before reopening.
+
+## 16. Chargeback or refund made directly in Stripe
+
+You'll get an email and a **Payment reversal** flag (Admin → Flags) as soon as Stripe tells us.
+1. Open the flag: it names the checkout/deposit and customer.
+2. Chargeback: gather evidence (order, tickets, terms acceptance, IP/device from the timeline) and respond in Stripe within its deadline. If the entries should no longer count and the draw hasn't happened, cancel/refund through the app so records match.
+3. A refund done in Stripe's dashboard doesn't remove entries or wallet credit by itself — decide, then use the app (refund, adjustment) so both sides agree. Mark the flag reviewed with what you did.
+
 ## Contacts to keep up to date
 - Hosting provider support: ______________________
 - Stripe support: https://support.stripe.com

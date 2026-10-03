@@ -278,3 +278,6 @@ These weren't something code could settle on its own:
 4. **Independent penetration test** of staging before launch.
 5. **First DR drill on the server** (`flask dr-drill`) and a yearly full rebuild exercise.
 6. **Record outside measurements** (uptime, PageSpeed) on Admin → Targets monthly.
+
+# Phase 4 (production hardening)
+Full audit: `docs/PRODUCTION-AUDIT.md`. New URLs: `/healthz/deep`, `/api/competitions`, `/j/select/<id>` (anonymous journey count), `/admin/mfa/confirm` (step-up), `/admin/support-insights`, `/admin/errors/<id>/resolve`. New commands: `flask release-check`. New tests: `MoneyJourneyTests`, `HardeningTests`, `AdminHardeningTests`, `MonitoringTests`, `EvidenceTests`, `tests/stress_concurrency.py`, `tests/synthetic_check.py`.
