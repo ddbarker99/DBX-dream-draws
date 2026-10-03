@@ -13,6 +13,17 @@
     <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required>
     <button class="btn block" style="margin-top:var(--s4)">Continue</button>
   </form>
+{% elif mode == 'confirm' %}
+  <h1>Confirm it's you</h1>
+  <p class="muted">Sensitive actions — money, results and admin access — need a fresh confirmation. It lasts {{ config.ADMIN_STEPUP_MINUTES }} minutes.</p>
+  <form method="post" action="{{ url_for('security.confirm', next=next) }}" data-once>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    {% if use_mfa %}<label for="code">6-digit code from your authenticator app (or a recovery code)</label>
+    <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required>
+    {% else %}<label for="password">Your password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" autofocus required>{% endif %}
+    <button class="btn block" style="margin-top:var(--s4)">Confirm</button>
+  </form>
 {% elif mode == 'setup' %}
   <h1>Turn on two-step verification</h1>
   <p class="muted">Admin accounts can move money and run draws, so they need a second step at sign-in.</p>

@@ -64,7 +64,10 @@ def create_app(test_config=None):
         SOCIAL={k: _env(k.upper() + "_URL") for k in ("facebook", "instagram", "tiktok", "youtube", "discord", "twitch")},
         TRUSTPILOT_URL=_env("TRUSTPILOT_URL"),
         BLOCK_CREDIT_CARDS=_env("BLOCK_CREDIT_CARDS", "1") == "1",
-        ADMIN_MFA=_env("ADMIN_MFA", "1") == "1",          # two-step verification for every admin account
+        ADMIN_MFA=_env("ADMIN_MFA", "1") == "1",
+        ADMIN_IDLE_MINUTES=int(_env("ADMIN_IDLE_MINUTES", "30")),       # admin pages need re-confirmation after this idle time
+        ADMIN_STEPUP_MINUTES=int(_env("ADMIN_STEPUP_MINUTES", "10")),   # sensitive actions need a confirmation this recent
+        LARGE_ADJUSTMENT=int(float(_env("LARGE_ADJUSTMENT", "100")) * 100),  # wallet adjustments above this: Administrator only          # two-step verification for every admin account
         STAGING=_env("STAGING", "0") == "1",
         SIGNUP_RATE_LIMIT=int(_env("SIGNUP_RATE_LIMIT", "10")),   # sign-ups per IP per hour (raise on staging for load tests)              # banner, noindex, every email goes to SUPPORT_EMAIL
         MAX_CONTENT_LENGTH=8 * 1024 * 1024,

@@ -14,6 +14,7 @@ PERMISSIONS = {
     "postal": "Receive and process postal entries",
     "prizes": "Manage winners, prize claims and physical prize fulfilment",
     "money": "Withdrawals, refunds, wallet adjustments and promo codes",
+    "money.large": "Wallet adjustments above the large-adjustment limit",
     "reports": "Revenue, reconciliation and performance reports",
     "users.view": "Look up customers and their timelines",
     "users.verify": "Mark a customer's email as verified",

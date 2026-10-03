@@ -1024,7 +1024,15 @@ def user_detail(uid):
             except ValueError as e:
                 flash(str(e), "error")
                 return redirect(url_for("admin.user_detail", uid=uid))
-            reason = f.get("reason", "").strip() or "Adjustment by admin"
+            reason = f.get("reason", "").strip()
+            if len(reason) < 5:
+                flash("Give a reason for the adjustment (it's kept permanently in their history).", "error")
+                return redirect(url_for("admin.user_detail", uid=uid))
+            limit = current_app.config.get("LARGE_ADJUSTMENT", 10000)
+            if abs(amt) > limit and not can(g.user, "money.large"):
+                flash(f"Adjustments over £{limit / 100:.0f} need an Administrator.", "error")
+                audit(db, "wallet.adjust_refused", f"user:{uid}", f"{amt:+}p over the large-adjustment limit")
+                return redirect(url_for("admin.user_detail", uid=uid))
             kind = "cash" if f.get("kind") == "cash" else "credit"
             with write_txn() as wdb:
                 if amt < 0 and balance(wdb, uid, kind) + amt < 0:
