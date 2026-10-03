@@ -416,7 +416,7 @@ def reserve_checkout(user, lines, promo_code="", use_credit=False, idem_key=None
                 raise PurchaseError("A competition in your basket has closed — please remove it.")
             if comp["free_daily"]:
                 raise PurchaseError("The daily free game can't be bought — claim your free play on its page.")
-            if ln.get("answer") != comp["correct"]:
+            if comp["question_mode"] != "none" and ln.get("answer") != comp["correct"]:
                 raise PurchaseError(f"The answer for {comp['title']} isn't right.")
             picks = sorted(set(int(n) for n in (ln.get("numbers") or [])))
             qty = len(picks) if picks else int(ln["qty"])
@@ -525,6 +525,10 @@ def fulfil_checkout(cid, stripe_session_id=None, amount_paid=None):
             db.execute("UPDATE promo_codes SET uses=uses+1 WHERE id=?", (c["promo_id"],))
         award_points(db, c["user_id"], c["cash_due"] + c["deposit_used"], f"c{cid}", f"Order #{cid}")
         _settle_referral(db, c)
+        if c["device"]:
+            from .analytics import count
+            for o in db.execute("SELECT competition_id FROM orders WHERE checkout_id=?", (cid,)).fetchall():
+                count("paid", o[0], c["device"], db)
         return "paid"
 
 
@@ -571,7 +575,7 @@ def postal_problem(db, comp, entry):
         return "Competition is no longer accepting entries"
     if parse_iso(entry["received_at"]) > parse_iso(comp["ends_at"]):
         return "Arrived after the competition closed"
-    if not entry["answer_correct"]:
+    if comp["question_mode"] != "none" and not entry["answer_correct"]:
         return "Wrong answer"
     if entry["dob"] and _age_on(_date.fromisoformat(entry["dob"]), _date.today()) < 18:
         return "Under 18"

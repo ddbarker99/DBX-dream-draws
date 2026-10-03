@@ -12,6 +12,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from . import mailer, payments
 from .notify import notify, tell, unread_count
+from .analytics import count as track, device_type
 from .security import device_name, end_session, revoke_others, start_session
 from .db import get_db, iso, parse_iso, utcnow, write_txn
 from .services import (audit, entrant_count, CATEGORIES, CATEGORY_NAMES, check_promo, MIN_DEPOSIT, MAX_DEPOSIT, create_deposit, deposit_room,
@@ -142,6 +143,7 @@ def home():
     games = [x for x in cards if x["game"] and x["state"] == "live" and not x["c"]["free_daily"]]
     _shuffle(games)                                    # fresh random order every visit
     draws = [x for x in cards if not x["game"] and x["state"] == "live"]
+    track("home")
     featured = next((x for x in draws if x["c"]["featured"]), None)
     ending = sorted([x for x in draws if x is not featured], key=lambda x: x["hours_left"])[:8]
     return render_template("home.html", featured=featured, ending=ending, n_draws=len(draws), games=games[:4],
@@ -188,6 +190,8 @@ def competition(slug):
     if c is None:
         abort(404)
     data = card_data(db, c)
+    if data["state"] == "live":
+        track("competition", c["id"])
     mine = []
     if g.user:
         mine = db.execute(
@@ -493,6 +497,8 @@ def _totals(db, total):
 def basket():
     db = get_db()
     lines, total, gross = _basket_view(db)
+    if lines:
+        track("basket")
     session["basket_idem"] = secrets.token_urlsafe(16)   # new key per view: a double-click shares it, a fresh visit doesn't
     return render_template("basket.html", lines=lines, total=total, gross=gross, t=_totals(db, total),
                            closed=any(not ln["open"] for ln in lines), clash=any(ln["clash"] for ln in lines),
@@ -512,10 +518,11 @@ def basket_add():
     if c["free_daily"]:
         flash("This game is free — claim your daily play instead.", "error")
         return redirect(back)
-    if not request.form.get("answer"):
+    no_q = c["question_mode"] == "none"
+    if not no_q and not request.form.get("answer"):
         flash("Choose an answer to the question first.", "error")
         return redirect(back)
-    if request.form.get("answer") != c["correct"]:
+    if not no_q and request.form.get("answer") != c["correct"]:
         flash("That answer isn't right — have another look at the question.", "error")
         return redirect(back)
     try:
@@ -547,7 +554,8 @@ def basket_add():
     if len(b) >= MAX_BASKET_LINES:
         flash("Your basket is full — check out first.", "error")
         return redirect(back)
-    b.append({"comp_id": c["id"], "qty": qty, "numbers": nums, "answer": request.form["answer"]})
+    b.append({"comp_id": c["id"], "qty": qty, "numbers": nums, "answer": request.form.get("answer", "")})
+    track("add", c["id"])
     session["basket"] = b
     word = "play" if c["game_type"] else "ticket"
     flash(f"Added {qty} {word}{'s' if qty != 1 else ''} for {c['title']} to your basket.")
@@ -630,6 +638,10 @@ def checkout():
     if not created:                                  # second press of the same Pay button
         return redirect(url_for("public.checkout_pay", cid=cid))
     session.pop("basket_idem", None)
+    dev = device_type()
+    db.execute("UPDATE checkouts SET device=? WHERE id=?", (dev, cid))
+    for ln in lines:
+        track("checkout", ln["comp_id"], dev)
     session["held"] = {"cid": cid, "basket": lines, "promo": promo}   # restored if payment is cancelled
     session["basket"] = []
     session.pop("promo", None)
@@ -1068,7 +1080,7 @@ def signup():
         f = request.form
         email, name, pw = f.get("email", "").strip().lower(), " ".join(f.get("name", "").split()), f.get("password", "")
         key = "signup:" + (request.remote_addr or "?")
-        if _too_many(key, limit=10, window=3600):
+        if _too_many(key, limit=current_app.config["SIGNUP_RATE_LIMIT"], window=3600):
             flash("Too many sign-ups from this connection — please try again in an hour.", "error")
             return render_template("signup.html", form=f, errors={}), 429
         try:

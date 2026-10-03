@@ -95,8 +95,11 @@ def render(subject, body, button=None, heading=None, highlight=None, preheader=N
 
 
 def _build(to, subject, body, button=None, heading=None, highlight=None, preheader=None):
-    """-> (text, EmailMessage or None if SMTP isn't configured)."""
+    """-> (to, subject, text, EmailMessage or None if SMTP isn't configured). Staging rewrites the recipient."""
     cfg = current_app.config
+    if cfg.get("STAGING"):                    # never email real customers from staging
+        body = f"[STAGING — originally to {to}]\n\n" + body
+        to, subject = cfg.get("SUPPORT_EMAIL") or to, "[STAGING] " + subject
     text = body
     if highlight:
         text += "\n\n" + (highlight if isinstance(highlight, str) else ", ".join(map(str, highlight)))
@@ -104,7 +107,7 @@ def _build(to, subject, body, button=None, heading=None, highlight=None, prehead
         text += f"\n\n{button[0]}: {button[1]}"
     text += f"\n\n— {cfg['SITE_NAME']}\n{cfg['SITE_URL']}"
     if not cfg.get("SMTP_HOST"):
-        return text, None
+        return to, subject, text, None
     msg = EmailMessage()
     name, addr = parseaddr(cfg["MAIL_FROM"])
     msg["From"] = formataddr((name or cfg["SITE_NAME"], addr or cfg["MAIL_FROM"]))
@@ -116,7 +119,7 @@ def _build(to, subject, body, button=None, heading=None, highlight=None, prehead
         msg["Reply-To"] = cfg["SUPPORT_EMAIL"]
     msg.set_content(text)
     msg.add_alternative(render(subject, body, button, heading, highlight, preheader), subtype="html")
-    return text, msg
+    return to, subject, text, msg
 
 
 def _transmit(msg, settings):
@@ -139,7 +142,7 @@ def _settings():
 
 def deliver(to, subject, body, button=None, heading=None, highlight=None, preheader=None):
     """Send now and report the outcome: 'sent', 'not_configured', or raises on failure (the outbox retries)."""
-    text, msg = _build(to, subject, body, button, heading, highlight, preheader)
+    to, subject, text, msg = _build(to, subject, body, button, heading, highlight, preheader)
     if msg is None:
         current_app.logger.warning("EMAIL NOT SENT (SMTP not set in .env) to=%s subject=%s\n%s", to, subject, text)
         return "not_configured"
@@ -150,7 +153,7 @@ def deliver(to, subject, body, button=None, heading=None, highlight=None, prehea
 
 def send(to, subject, body, button=None, heading=None, highlight=None, preheader=None):
     """Fire-and-forget, for staff alerts. Customer emails go through notify.notify() so they're tracked and retried."""
-    text, msg = _build(to, subject, body, button, heading, highlight, preheader)
+    to, subject, text, msg = _build(to, subject, body, button, heading, highlight, preheader)
     if msg is None:
         current_app.logger.warning("EMAIL NOT SENT (SMTP not set in .env) to=%s subject=%s\n%s", to, subject, text)
         return

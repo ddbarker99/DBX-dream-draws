@@ -10,8 +10,11 @@
   <li><strong>Before launch</strong> we generate a random secret seed and publish its SHA-256 hash on the competition page.</li>
   <li><strong>At the draw</strong> we take every confirmed ticket number, sort them, join them with commas and hash the list (the <em>entries hash</em>).</li>
   <li>The winning position is <code>HMAC-SHA256(seed, entries hash)</code> read as a number, modulo the number of tickets. The ticket at that position in the sorted list wins.</li>
+  <li><strong>At closing time</strong> the full list of confirmed entries — paid and free — is frozen and its hash recorded. Nothing can be added, removed or changed after that, and the draw is made from exactly that list.</li>
   <li><strong>After the draw</strong> we reveal the seed. Check its hash matches the one published at launch, open the competition's entry list from <a href="{{ url_for('public.results') }}">Draw results</a>, and recompute the winner yourself.</li>
 </ol>
+<h2>Redraws</h2>
+<p>If a winner can't receive the prize under our terms (for example, they fail age verification), a redraw picks a new winner from the same frozen list with every previous winning ticket removed. It uses the same seed, with the attempt number added so it can be checked: <code>HMAC-SHA256(seed, hash_of_remaining_tickets + ":redraw:" + attempt)</code>, where attempt is 2 for the first redraw. The original result and the reason stay on the competition's page.</p>
 <h2>Instant wins</h2>
 <p>Instant-win numbers are chosen at random and sealed before a competition goes live. We publish a hash of every number and prize plus a secret salt. When the competition closes, we reveal the salt and any unclaimed numbers so you can confirm the list never changed.</p>
 <h2>Check a main draw yourself (Python)</h2>

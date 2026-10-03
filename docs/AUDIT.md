@@ -141,3 +141,78 @@ These weren't something code could settle on its own:
 6. **Draw corrections.** Results can't be edited (by design). If a correction were ever legally required, it would be a manual, documented database operation; the policy for announcing it publicly should be written down.
 7. **Sign-up reveals that an email already has an account.** Kept deliberately (customers otherwise can't tell why sign-up failed); login and password reset do not reveal it.
 8. **Real-world payment testing.** Webhooks, duplicates, wrong amounts and late payments are covered by automated tests with simulated Stripe events. Run the Stripe test-mode checklist in `QA-CHECKLIST.md` against the live server before switching to live keys.
+
+---
+
+# Platform phase (automation, reliability, transparency, operations)
+
+## New and changed URLs
+
+| URL | Purpose | Indexed? | Notes |
+|---|---|---|---|
+| `/results` | Permanent, searchable archive of every completed draw | Yes (page 1) | Was a redirect; `/winners?tab=results` now 301s here |
+| `/search?q=` | Search live competitions, instant wins and past results | No | Linked from the header and mobile menu |
+| `/watch/<slug>` (POST) | Save / unsave a competition | n/a | |
+| `/account/notifications` | Customer notification centre | No | Header bell shows unread count |
+| `/account/sessions/revoke` (POST) | Sign out a device / all other devices | n/a | |
+| `/healthz` | Uptime-monitor endpoint (200 / 503) | No | |
+| `/admin/` | **DBX Control Centre** | No | Competitions list moved to `/admin/competitions` |
+| `/admin/postal`, `/admin/postal/<id>` | Postal queue: approve / reject | No | |
+| `/admin/prizes`, `/admin/prizes/<id>`, `/admin/evidence/<file>` | Winner claims workflow, private evidence | No | |
+| `/admin/competitions/<id>/redraw` (POST) | Redraw with recorded reason | n/a | |
+| `/admin/finance`, `/admin/finance/payments.csv` | Reconciliation and Stripe-matching export | No | Finance / Administrator |
+| `/admin/customers/<id>/timeline` | Chronological customer history | No | Viewing is audited |
+| `/admin/flags` | Fraud & abuse review queue | No | |
+| `/admin/cases`, `/admin/cases/<id>` | Support case system | No | Contact form opens a case |
+| `/admin/health` | Job runs, health checks, failed emails | No | |
+| `/admin/analytics`, `/admin/performance` | Customer journey funnel; competition performance | No | |
+| `/admin/mfa/`, `/admin/mfa/setup` | Admin two-step verification | No | |
+
+## Brief item → where it's built
+
+| # | Item | Where |
+|---|---|---|
+| 1 | Lifecycle Draft → … → Completed, entry list locked at close | `services.lifecycle_stage`, `close_competition`, `entry_snapshots`, lock triggers in `db.POST_TRIGGERS`, admin competition page stepper |
+| 2 | Draw audit, redraw with reason, corrections recorded | `draws` (+ `redraw_of`, `reason`, `winner_user_id`, `snapshot_id`), `services.redraw`, trigger `comp_result_locked` |
+| 3 | Postal entries first-class: receive → validate → approve/reject, same pool and limits | `receive_postal` / `process_postal`, `/admin/postal`, closing waits for envelopes |
+| 4 | Operations dashboard | `/admin/` Control Centre |
+| 5 | Financial reconciliation | `/admin/finance` (self-checking sources = entry value), payments CSV |
+| 6 | Customer timelines | `/admin/customers/<id>/timeline` |
+| 7 | Fraud & abuse flags (review, never automatic bans) | `control.run_flag_rules`, `/admin/flags`, `flag_rules` job |
+| 8 | Prize management workflow | `prize_claims`, `claim_events`, `/admin/prizes` |
+| 9 | Reliable notifications, no duplicates on retry | `notify.py` (dedupe keys, tracked outbox, retries), `email_outbox` job |
+| 10 | In-app notification centre | `/account/notifications` |
+| 11 | Winner/result archive | `/results`, permanent result pages, sitemap |
+| 12 | Entry verification | "Find a ticket" in My entries; public lists show own tickets, first name + initial only, no paid/free label |
+| 13 | Instant wins auditable | Result stored server-side at purchase (sealed numbers); reveal only displays it; refresh/other device shows the same result (existing tests) |
+| 14 | Concurrency | `OpsTests` (40 people racing for one number, stampede on a 25-ticket competition), `tests/load_test.py` |
+| 15 | Idempotent payments | Checkout one-time key, idempotent fulfilment, amount check, deduplicated notifications (tests) |
+| 16 | Health monitoring and alerts | `jobs.health_checks`, `health_alerts` job (emails SUPPORT_EMAIL), Control Centre |
+| 17 | Backups with restore testing | `flask backup` / `restore-test`, `backup.sh`, health check "Backups" |
+| 18 | Staging | `STAGING=1`, `docker-compose.staging.yml`, `docs/STAGING.md` |
+| 19 | Automated tests | 125 tests + crawler; GitHub Actions workflow |
+| 20 | Role-based admin permissions | `perms.py`: Support, Competition manager, Finance, Administrator |
+| 21 | Admin MFA, sessions, login alerts, logging | `security.py` |
+| 22 | Journey analytics without tracking | `analytics.py`, `funnel_counts`, `/admin/analytics` |
+| 23 | Competition performance | `/admin/performance` (period-over-period) |
+| 24 | Search and discovery | `/search`, header search, competitions filters, `/results` |
+| 25 | Watchlist | `watchlist`, reminders (email only with marketing consent) |
+| 26 | Referrals | `referrals` table, clear rules, history in account, shared-connection flag |
+| 27 | DBX Points history | `points_ledger`, account points history with values |
+| 28 | Support case system | `cases`, `case_notes`, contact form integration |
+| 29 | Site status / maintenance | `status.py`, automatic payment pause after provider errors |
+| 30 | Observability | `job_runs`, `job_status`, audit log, Health page |
+| 31 | Traffic spikes | Load test script, worker container (jobs off the request path), self-hosted assets |
+| 32 | Emergency procedures | `docs/RUNBOOK.md` |
+| 33 | Data/privacy audit | `docs/PRIVACY-DATA-AUDIT.md`, privacy policy updated, retention pruning job |
+| 34 | Mechanics legal review, configurable mechanics | `docs/MECHANICS.md`, per-competition entry question mode + site default |
+| 35 | Feature discipline | Every item above answers ease of use, trust, less manual work or reliability; nothing was added for its own sake |
+
+## Still needs a decision or outside check (platform phase)
+
+1. **Legal review of mechanics** (`docs/MECHANICS.md`), especially instant-win games and whether to keep the multiple-choice question.
+2. **Off-site backups:** set `BACKUP_REMOTE` (rclone) so backups survive losing the VPS.
+3. **Uptime monitor:** point an external service (e.g. UptimeRobot) at `/healthz` so you're alerted even if the server itself is down — the internal health alerts can't send if the server is off.
+4. **Admin MFA enrolment:** every admin will be asked to enrol on next sign-in; keep recovery codes safe.
+5. **Load test on staging** with production-like hardware before the first big launch.
+6. **Retention clean-ups** marked "manual" in the privacy audit should be scheduled (quarterly).

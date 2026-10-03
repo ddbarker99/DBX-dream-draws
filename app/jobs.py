@@ -163,7 +163,12 @@ def _watch():
 def _prune():
     db = get_db()
     n = db.execute("DELETE FROM job_runs WHERE started_at<?", (iso(utcnow() - timedelta(days=90)),)).rowcount
-    return f"{n} old job record(s) removed" if n else ""
+    # Retention (see docs/PRIVACY-DATA-AUDIT.md): device records 90 days after last use, read notifications after a year.
+    s = db.execute("DELETE FROM user_sessions WHERE last_seen<?", (iso(utcnow() - timedelta(days=90)),)).rowcount
+    m = db.execute("DELETE FROM notifications WHERE read_at IS NOT NULL AND created_at<? AND email_status IS NOT 'failed'",
+                   (iso(utcnow() - timedelta(days=365)),)).rowcount
+    parts = [f"{n} job record(s)" if n else "", f"{s} old device record(s)" if s else "", f"{m} old notification(s)" if m else ""]
+    return ", ".join(p for p in parts if p) and "removed " + ", ".join(p for p in parts if p)
 
 
 FUNCS = {"publish_scheduled": _publish_scheduled, "expire_checkouts": _expire_checkouts, "close_competitions": _close,

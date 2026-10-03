@@ -153,6 +153,28 @@ Trigger each and check subject, wording, links and that it renders on a phone: e
 | Expired session: next action asks to log in and returns to the same page | |
 | Data access / account closure request via the contact form is answered within the policy's timescale | |
 
+## 13b. Platform (admin, automation, reliability)
+
+| Check | Type | Result |
+|---|---|---|
+| Admin sign-in asks for MFA; wrong code refused and logged; recovery code works once | Auto | |
+| Support / Competition manager / Finance roles can only open their own areas | Auto | |
+| Competition closes at its time only after payments and postal envelopes are resolved; entry list frozen (counts shown) | Auto | |
+| Redraw needs a reason, excludes previous winners, recomputes by the published formula, original kept | Auto | |
+| Prize claim moves through every status with notes/evidence; delivered → competition Completed | Auto | |
+| Postal queue: receive → approve/reject; invalid entries can't be approved | Auto | |
+| Control Centre shows today's money, entries, sign-ups, attention items and health | Auto + manual | |
+| Finance report balances (sources = entry value); payments CSV matches Stripe's report line by line | Auto + manual (Stripe) | |
+| Customer timeline lists orders, tickets, wallet, prizes, withdrawals, limits, cases; viewing is audited | Auto | |
+| Flags raised for shared phones / failed payments; review and dismiss | Auto | |
+| Contact form opens a case; reply emails the customer | Auto | |
+| Notifications appear once each in the account even if a webhook repeats | Auto | |
+| Pause payments / maintenance mode; automatic pause after provider errors | Auto | |
+| `flask backup` passes its restore test; Health shows the verified time | Auto | |
+| Staging banner, noindex, emails go to staff only | Auto | |
+| Worker container running (`docker compose ps`); Health → Background jobs green | Manual | |
+| Load test on staging passes before launches | Manual | |
+
 ## 14. Production smoke test (after every deploy)
 
 Click every link in the header, footer and mobile menu, and every button on: home, one competition, one game, basket, checkout (Stripe test mode on a staging copy), account (every tab), free entry, terms. Confirm `DEMO_PAYMENTS=0`, Stripe live keys, webhook secret and SMTP are set (the admin dashboard's setup checklist shows any that are missing).

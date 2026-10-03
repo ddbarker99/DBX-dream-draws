@@ -101,16 +101,17 @@
       <input type="hidden" name="slug" value="{{ c.slug }}">
       <input type="hidden" name="numbers" id="numbers">
       <h2 style="font-size:20px">Enter now</h2>
-      <fieldset>
+      {% set no_q = c.question_mode == 'none' %}
+      {% if not no_q %}<fieldset>
         <legend><span class="muted small">Step 1 ·</span> {{ c.question }}</legend>
         <div class="answers">
           {% for k in ['a','b','c'] %}<label><input type="radio" name="answer" value="{{ k }}" required> {{ c['answer_' + k] }}</label>{% endfor %}
         </div>
         <p class="hint" style="color:#ff8a95" id="ans-err" role="alert" hidden>Choose an answer to continue.</p>
-      </fieldset>
+      </fieldset>{% endif %}
 
       <fieldset style="margin-top:var(--s4)">
-        <legend><span class="muted small">Step 2 ·</span> How many {{ unit }}s?</legend>
+        <legend>{% if not no_q %}<span class="muted small">Step 2 ·</span> {% endif %}How many {{ unit }}s?</legend>
         {% if not c.game_type %}
         <div class="modeswitch" role="group" aria-label="How to choose numbers">
           <button type="button" id="m-lucky" aria-pressed="true" onclick="setMode('lucky')">Lucky dip</button>
@@ -184,7 +185,7 @@
     <section aria-labelledby="how-h">
       <h2 id="how-h">How to enter</h2>
       <ol class="howlist">
-        <li><b>Answer the question</b> — one correct answer is needed per entry.</li>
+        {% if c.question_mode != 'none' %}<li><b>Answer the question</b> — one correct answer is needed per entry.</li>{% endif %}
         <li><b>Choose your {{ unit }}s</b> — {% if c.game_type %}how many plays you'd like{% else %}a lucky dip, or pick your own numbers{% endif %} (up to {{ c.max_per_user }} per person).</li>
         <li><b>Check out</b> — pay by debit card, Apple Pay or Google Pay, or use your wallet balance. Your {{ unit }} numbers are confirmed on screen and by email.</li>
         {% if c.game_type %}<li><b>Reveal your plays</b> — any prize is paid to your wallet when you reveal it, or automatically after 24 hours.</li>{% endif %}
@@ -232,7 +233,7 @@
     <section aria-labelledby="free-h">
       <h2 id="free-h">Free entry</h2>
       <div class="panel">
-        <p class="small" style="margin-top:0">You can enter this {{ 'game' if c.game_type else 'competition' }} <b>free by post</b>, with exactly the same chance of winning. Write the name “{{ c.title }}”, your answer to the question, your name, address, email, phone number and date of birth, and post it{% if config.POSTAL_ADDRESS %} to <b>{{ config.POSTAL_ADDRESS }}</b>{% endif %}. It must arrive before {{ c.ends_at|uktime('%d %b %Y, %H:%M') }}.</p>
+        <p class="small" style="margin-top:0">You can enter this {{ 'game' if c.game_type else 'competition' }} <b>free by post</b>, with exactly the same chance of winning. Write the name “{{ c.title }}”{% if c.question_mode != 'none' %}, your answer to the question{% endif %}, your name, address, email, phone number and date of birth, and post it{% if config.POSTAL_ADDRESS %} to <b>{{ config.POSTAL_ADDRESS }}</b>{% endif %}. It must arrive before {{ c.ends_at|uktime('%d %b %Y, %H:%M') }}.</p>
         <a href="{{ url_for('public.page', page='free-entry') }}">Full free entry instructions</a>
       </div>
     </section>
@@ -324,7 +325,7 @@ function drawPicked(){var p=document.getElementById('picked');p.innerHTML='';Arr
   document.getElementById('pick-err').hidden=true;upd()}
 form.addEventListener('change',function(e){if(e.target.name==='answer')document.getElementById('ans-err').hidden=true});
 form.addEventListener('submit',function(e){
-  if(!form.querySelector('input[name=answer]:checked')){e.preventDefault();var a=document.getElementById('ans-err');a.hidden=false;form.querySelector('input[name=answer]').focus();return}
+  if(form.querySelector('input[name=answer]')&&!form.querySelector('input[name=answer]:checked')){e.preventDefault();var a=document.getElementById('ans-err');a.hidden=false;form.querySelector('input[name=answer]').focus();return}
   if(mode==='pick'){if(!sel.size){e.preventDefault();document.getElementById('pick-err').hidden=false;return}
     document.getElementById('numbers').value=Array.from(sel).join(',')}else document.getElementById('numbers').value=''});
 upd();

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Performance · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<div class="row" style="flex-wrap:wrap"><h1 style="margin:0">Competition performance</h1><a class="btn ghost small" href="{{ url_for('control.analytics') }}">Customer journey →</a></div>
+<form class="inline-form" method="get" style="flex-wrap:wrap;margin:var(--s4) 0">
+  <label for="from">From</label><input id="from" type="date" name="from" value="{{ start }}">
+  <label for="to">To</label><input id="to" type="date" name="to" value="{{ end }}">
+  <button class="btn ghost small">Show</button><span class="small muted">Compared with the previous period of the same length ({{ pstart }} – {{ pend }}).</span>
+</form>
+{% macro delta(k, money=False) %}{% set a, b = now[k], prev[k] %}<b>{{ a|gbp if money else '{:,}'.format(a) }}</b>
+  <span class="small {{ 'pos' if a > b else ('neg' if a < b else 'muted') }}">{% if b %}{{ '%+d'|format(((a - b) * 100 / b)|round|int) }}%{% elif a %}new{% else %}—{% endif %}</span>{% endmacro %}
+<div class="statstrip">
+  <div>{{ delta('revenue', True) }}<span>Revenue</span></div>
+  <div>{{ delta('paid_entries') }}<span>Paid entries</span></div>
+  <div>{{ delta('free_entries') }}<span>Free (postal) entries</span></div>
+  <div>{{ delta('players') }}<span>Paying customers</span></div>
+  <div>{{ delta('avg_order', True) }}<span>Average paid order</span></div>
+  <div>{{ delta('refunds', True) }}<span>Refunds</span></div>
+  <div>{{ delta('instant_cost', True) }}<span>Instant prizes won</span></div>
+  <div>{{ delta('margin', True) }}<span>Revenue − prizes − refunds</span></div>
+</div>
+<div class="panel table-scroll" tabindex="0" style="margin-top:var(--s4)"><table>
+  <tr><th>Competition</th><th class="num">Paid</th><th class="num">Free</th><th class="num">Entrants</th><th class="num">Revenue</th><th class="num">Avg order</th><th class="num">Conversion</th><th class="num">Refunds</th><th class="num">Prize cost</th><th class="num">Net</th></tr>
+  {% for r in rows %}{% set m = r.m %}<tr><td><a href="{{ url_for('admin.entries', cid=r.c.id) }}">{{ r.c.title }}</a><div class="tiny muted">{{ r.c.status }}{% if r.c.game_type %} · game{% endif %}</div></td>
+    <td class="num">{{ '{:,}'.format(m.paid_entries) }}</td><td class="num">{{ m.free_entries }}</td><td class="num">{{ m.entrants }}</td>
+    <td class="num">{{ m.revenue|gbp }}</td><td class="num">{{ m.avg_order|gbp }}</td><td class="num">{{ (m.conversion ~ '%') if m.conversion is not none else '—' }}</td>
+    <td class="num">{{ m.refunds|gbp if m.refunds else '—' }}</td><td class="num">{{ (m.instant_cost + m.draw_cost)|gbp }}</td><td class="num {{ 'neg' if m.margin < 0 }}">{{ m.margin|gbp }}</td></tr>
+  {% else %}<tr><td colspan="10" class="muted">No activity in this period.</td></tr>{% endfor %}
+</table></div>
+<p class="small muted">Conversion = visits to the competition page that ended in a paid order (from the cookie-free journey counts). Prize cost includes instant prizes won in the period and the main prize's value if it was drawn in the period. <a href="{{ url_for('admin.stats') }}">30-day revenue chart and game payback</a>.</p>
+{% endblock %}

@@ -2,3 +2,5 @@
 data/
 backups/
 __pycache__/
+data-staging/
+.env.staging

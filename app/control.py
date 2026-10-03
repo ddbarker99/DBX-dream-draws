@@ -83,6 +83,7 @@ def centre():
         live.append({"c": c, "sold": sold, "stage": lifecycle_stage(db, c),
                      "revenue": _sum(db, "SELECT SUM(amount) FROM orders WHERE competition_id=? AND status='paid'", c["id"]),
                      "instant_left": _sum(db, "SELECT COUNT(*) FROM instant_prizes WHERE competition_id=? AND ticket_id IS NULL", c["id"]),
+                     "postal": _sum(db, "SELECT COUNT(*) FROM postal_entries WHERE competition_id=? AND status='received'", c["id"]),
                      "hours": (parse_iso(c["ends_at"]) - utcnow()).total_seconds() / 3600})
     from .jobs import health_checks
     return render_template("admin/centre.html", money=money, attention=attention_items(db), live=live,
@@ -425,3 +426,92 @@ def health():
     runs = db.execute("SELECT * FROM job_runs ORDER BY id DESC LIMIT 100").fetchall()
     failed_mail = db.execute("SELECT * FROM notifications WHERE email_status='failed' ORDER BY id DESC LIMIT 20").fetchall()
     return render_template("admin/health.html", checks=health_checks(db), runs=runs, failed_mail=failed_mail)
+
+
+# ---------------- journey analytics & competition performance ----------------
+
+@bp.route("/analytics")
+@require("reports")
+def analytics():
+    from .analytics import STEPS
+    db = get_db()
+    start, end = _period()
+    device = request.args.get("device", "")
+    comp = request.args.get("comp", type=int)
+    where, args = "day>=? AND day<?", [start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")]
+    if device in ("mobile", "tablet", "desktop"):
+        where += " AND device=?"
+        args.append(device)
+    rows = []
+    for step, label in STEPS:
+        w, a = where, list(args)
+        if comp and step not in ("home", "basket"):
+            w += " AND comp_id=?"
+            a.append(comp)
+        rows.append({"step": step, "label": label, "n": _sum(db, f"SELECT SUM(n) FROM funnel_counts WHERE {w} AND step=?", *a, step)})
+    for i, r in enumerate(rows):
+        prev = rows[i - 1]["n"] if i else None
+        r["rate"] = round(100 * r["n"] / prev) if prev else None
+    by_device = db.execute(f"SELECT device, step, SUM(n) FROM funnel_counts WHERE day>=? AND day<? GROUP BY device, step",
+                           args[:2]).fetchall()
+    dev = {}
+    for d, st, n in by_device:
+        dev.setdefault(d, {})[st] = n
+    comps = db.execute("SELECT id, title FROM competitions WHERE status IN ('live','drawn') ORDER BY id DESC LIMIT 100").fetchall()
+    return render_template("admin/analytics.html", rows=rows, dev=dev, comps=comps, comp=comp, device=device,
+                           start=start.strftime("%Y-%m-%d"), end=(end - timedelta(days=1)).strftime("%Y-%m-%d"))
+
+
+def comp_metrics(db, cid, a, b):
+    paid = "o.status='paid' AND o.paid_at>=? AND o.paid_at<?"
+    m = {
+        "paid_entries": _sum(db, f"SELECT SUM(o.quantity) FROM orders o WHERE o.competition_id=? AND {paid}", cid, a, b),
+        "free_entries": _sum(db, "SELECT COUNT(*) FROM tickets WHERE competition_id=? AND postal_entry_id IS NOT NULL AND created_at>=? "
+                                 "AND created_at<?", cid, a, b),
+        "revenue": _sum(db, f"SELECT SUM(o.amount) FROM orders o WHERE o.competition_id=? AND {paid}", cid, a, b),
+        "orders": _sum(db, f"SELECT COUNT(*) FROM orders o WHERE o.competition_id=? AND {paid}", cid, a, b),
+        "entrants": _sum(db, "SELECT COUNT(DISTINCT COALESCE(user_id, -postal_entry_id)) FROM tickets WHERE competition_id=? "
+                             "AND status='issued' AND created_at>=? AND created_at<?", cid, a, b),
+        "refunds": _sum(db, "SELECT SUM(l.amount) FROM credit_ledger l JOIN orders o ON l.ref IN ('refund-o' || o.id, "
+                            "'refund-o' || o.id || '-credit', 'refund-o' || o.id || '-deposit') WHERE o.competition_id=? "
+                            "AND l.created_at>=? AND l.created_at<?", cid, a, b),
+        "instant_cost": _sum(db, "SELECT SUM(value) FROM instant_prizes WHERE competition_id=? AND won_at>=? AND won_at<?", cid, a, b),
+        "views": _sum(db, "SELECT SUM(n) FROM funnel_counts WHERE comp_id=? AND step='competition' AND day>=? AND day<?", cid, a[:10], b[:10]),
+        "buyers_views": _sum(db, "SELECT SUM(n) FROM funnel_counts WHERE comp_id=? AND step='paid' AND day>=? AND day<?", cid, a[:10], b[:10]),
+    }
+    c = db.execute("SELECT * FROM competitions WHERE id=?", (cid,)).fetchone()
+    m["draw_cost"] = c["prize_value"] if c["drawn_at"] and a <= c["drawn_at"] < b else 0
+    m["avg_order"] = m["revenue"] // m["orders"] if m["orders"] else 0
+    m["conversion"] = round(100 * m["buyers_views"] / m["views"], 1) if m["views"] else None
+    m["margin"] = m["revenue"] - m["instant_cost"] - m["draw_cost"] - m["refunds"]
+    return m
+
+
+@bp.route("/performance")
+@require("reports")
+def performance():
+    db = get_db()
+    start, end = _period()
+    span = end - start
+    pstart, pend = start - span, start
+    a, b, pa, pb = iso(start), iso(end), iso(pstart), iso(pend)
+    rows = []
+    for c in db.execute("SELECT * FROM competitions WHERE status!='draft' AND (ends_at>=? OR status='live') ORDER BY ends_at DESC "
+                        "LIMIT 200", (pa,)).fetchall():
+        m = comp_metrics(db, c["id"], a, b)
+        if any(m[k] for k in ("paid_entries", "free_entries", "views", "refunds")) or c["status"] == "live":
+            rows.append({"c": c, "m": m})
+    keys = ("paid_entries", "free_entries", "revenue", "orders", "refunds", "instant_cost", "draw_cost", "margin")
+    now = {k: sum(r["m"][k] for r in rows) for k in keys}
+    prev = {k: 0 for k in keys}
+    for c in db.execute("SELECT id FROM competitions WHERE status!='draft'").fetchall():
+        pm = comp_metrics(db, c["id"], pa, pb)
+        for k in keys:
+            prev[k] += pm[k]
+    now["avg_order"] = now["revenue"] // now["orders"] if now["orders"] else 0
+    prev["avg_order"] = prev["revenue"] // prev["orders"] if prev["orders"] else 0
+    now["players"] = _sum(db, "SELECT COUNT(DISTINCT user_id) FROM checkouts WHERE status='paid' AND paid_at>=? AND paid_at<?", a, b)
+    prev["players"] = _sum(db, "SELECT COUNT(DISTINCT user_id) FROM checkouts WHERE status='paid' AND paid_at>=? AND paid_at<?", pa, pb)
+    return render_template("admin/performance.html", rows=rows, now=now, prev=prev,
+                           start=start.strftime("%Y-%m-%d"), end=(end - timedelta(days=1)).strftime("%Y-%m-%d"),
+                           pstart=pstart.strftime("%d %b"), pend=(pend - timedelta(days=1)).strftime("%d %b"))

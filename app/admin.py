@@ -186,8 +186,9 @@ def _parse_form(f, locked):
         data["starts_at"] = iso(start)
     else:
         data["starts_at"] = None
-    if kind == "free" and not locked:
-        data["question"] = data["question"] or "Free game — no question"
+    data["question_mode"] = f.get("question_mode") if f.get("question_mode") in ("multiple_choice", "none") else "multiple_choice"
+    if (kind == "free" or data["question_mode"] == "none") and not locked:
+        data["question"] = data["question"] or ("Free game — no question" if kind == "free" else "No question — free draw")
         for k in ("answer_a", "answer_b", "answer_c"):
             data[k] = data[k] or "-"
         data["correct"] = data["correct"] if data["correct"] in ("a", "b", "c") else "a"
@@ -207,7 +208,7 @@ def _parse_form(f, locked):
         if not all(data[k] for k in ("question", "answer_a", "answer_b", "answer_c")) or data["correct"] not in "abc":
             raise ValueError("Fill in the question, all three answers and pick the correct one.")
     else:
-        for k in ("question", "answer_a", "answer_b", "answer_c", "correct", "discount_tiers", "game_type", "free_daily"):
+        for k in ("question", "answer_a", "answer_b", "answer_c", "correct", "discount_tiers", "game_type", "free_daily", "question_mode"):
             data.pop(k, None)
     return data
 
@@ -272,7 +273,7 @@ def new_competition():
             data["image"] = _save_image(request.files.get("image")) or request.form.get("keep_image") or None
         except ValueError as e:
             flash(str(e), "error")
-            return render_template("admin/edit.html", c=None, form=request.form, locked=False, categories=CATEGORIES, game_types=GAME_TYPES)
+            return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=None, form=request.form, locked=False, categories=CATEGORIES, game_types=GAME_TYPES)
         db = get_db()
         slug = base = slugify(data["title"])
         n = 2
@@ -300,7 +301,7 @@ def new_competition():
         form = _form_from(_comp(copy))
         form["title"] = form["title"] + " (copy)"
         form["keep_image"] = form.get("image")
-    return render_template("admin/edit.html", c=None, form=form, locked=False, categories=CATEGORIES, game_types=GAME_TYPES)
+    return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=None, form=form, locked=False, categories=CATEGORIES, game_types=GAME_TYPES)
 
 
 @bp.route("/competitions/<int:cid>/edit", methods=["GET", "POST"])
@@ -321,17 +322,17 @@ def edit_competition(cid):
                 data["image"] = img
         except ValueError as e:
             flash(str(e), "error")
-            return render_template("admin/edit.html", c=c, form=request.form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
+            return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=c, form=request.form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
         if c["status"] == "live" and data["ends_at"] != c["ends_at"] and data["ends_at"] <= iso(utcnow()):
             flash("A live competition's closing time can't be moved into the past.", "error")
-            return render_template("admin/edit.html", c=c, form=request.form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
+            return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=c, form=request.form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
         changed = {k: (c[k], v) for k, v in data.items() if k in c.keys() and c[k] != v and k != "description"}
         db.execute(f"UPDATE competitions SET {','.join(k + '=?' for k in data)} WHERE id=?", [*data.values(), cid])
         if changed:
             audit(db, "comp.edit", f"comp:{cid}", "; ".join(f"{k}: {o!r} → {n!r}" for k, (o, n) in changed.items()))
         flash("Saved.")
         return redirect(url_for("admin.entries", cid=cid))
-    return render_template("admin/edit.html", c=c, form=_form_from(c), locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
+    return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=c, form=_form_from(c), locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
 
 
 @bp.route("/competitions/<int:cid>/status", methods=["POST"])
@@ -1202,6 +1203,12 @@ def settings():
         flash({"ok": "Everything's open again.", "payments_paused": "Payments paused — customers see your message.",
                "maintenance": "Maintenance mode on. Admins can still use the site; customers see the maintenance page."}[mode])
         return redirect(url_for("admin.settings"))
+    if request.method == "POST" and request.form.get("default_question_mode"):
+        v = request.form["default_question_mode"] if request.form["default_question_mode"] in ("multiple_choice", "none") else "multiple_choice"
+        set_setting("default_question_mode", v)
+        audit(get_db(), "site.mechanics", None, f"Default entry mechanic for new competitions set to {v}")
+        flash("Default for new competitions saved. Existing competitions keep their own setting.")
+        return redirect(url_for("admin.settings"))
     if request.method == "POST":
         for k in keys:
             v = request.form.get(k, "").strip()
@@ -1216,7 +1223,8 @@ def settings():
         return redirect(url_for("admin.settings"))
     from .status import state
     return render_template("admin/settings.html", s={k: get_setting(k) for k in keys}, state=state(),
-                           status_message=get_setting("site_status_message"), mode=get_setting("site_status", "ok"))
+                           status_message=get_setting("site_status_message"), mode=get_setting("site_status", "ok"),
+                           default_qm=get_setting("default_question_mode", "multiple_choice"))
 
 
 # ---------------- audit log ----------------

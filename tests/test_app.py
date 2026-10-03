@@ -1435,9 +1435,17 @@ class PlatformTests(Base):
         self.assertEqual(rows[1]["method"], "redraw")
         self.assertNotEqual(rows[1]["winning_number"], first)
         self.assertEqual(self.q("SELECT status FROM prize_claims WHERE id=?", claim), "forfeited")
+        # anyone can recompute the redraw with the published formula
+        snap = json.loads(self.q("SELECT entries FROM entry_snapshots"))
+        remaining = [n for n in snap if n != first]
+        seed = self.q("SELECT seed FROM competitions WHERE id=?", self.cid)
+        digest = hashlib.sha256(",".join(map(str, sorted(remaining))).encode()).hexdigest()
+        i = int(hmac.new(seed.encode(), f"{digest}:redraw:2".encode(), hashlib.sha256).hexdigest(), 16) % len(remaining)
+        self.assertEqual(rows[1]["winning_number"], sorted(remaining)[i])
         db = self.db()
         with self.assertRaises(sqlite3.DatabaseError):          # result only changes through a recorded redraw
-            db.execute("UPDATE competitions SET winner_ticket_id=(SELECT MIN(id) FROM tickets) WHERE id=?", (self.cid,))
+            db.execute("UPDATE competitions SET winner_ticket_id=(SELECT MIN(t.id) FROM tickets t, competitions c "
+                       "WHERE c.id=? AND t.id!=c.winner_ticket_id) WHERE id=?", (self.cid, self.cid))
         new_claim = self.q("SELECT MAX(id) FROM prize_claims")
         for st in ("contacted", "verification", "verified", "chosen", "fulfilment", "delivered"):
             self.post(f"/admin/prizes/{new_claim}", {"status": st})
@@ -1595,6 +1603,103 @@ class CustomerFeatureTests(PlatformTests):
         self.post("/signup", {"name": "Twin Person", "email": "twin@example.com", "dob": "1990-01-01", "phone": "07700900111",
                               "password": "supersecret123", "agree": "1"}, client=twin)
         self.assertEqual(self.q("SELECT reason FROM referrals ORDER BY id DESC"), "Same phone number as the referrer")
+
+
+class OpsTests(PlatformTests):
+    """Concurrency, backups, configurable mechanics, journey counts and staging."""
+
+    def racers(self, n, numbers="", qty=1, cid=None):
+        out = []
+        from app import routes
+        for i in range(n):
+            routes._FAILS.clear()                      # sign-up rate limit: every test client shares one IP
+            c = self.app.test_client()
+            self.signup(f"racer{i}@example.com", client=c)
+            r = self.add(cid or self.cid, qty, numbers=numbers, client=c)
+            out.append((c, self.csrf(c)))
+        return out
+
+    def race(self, clients):
+        barrier = threading.Barrier(len(clients))
+        results = []
+
+        def go(c, token):
+            barrier.wait()
+            r = c.post("/basket/checkout", data={"csrf": token})
+            m = re.search(r"/checkout/(\d+)/demo-pay", r.headers.get("Location", ""))
+            if m:
+                c.post(f"/checkout/{m.group(1)}/demo-pay", data={"csrf": token})
+            results.append(bool(m))
+
+        threads = [threading.Thread(target=go, args=ct) for ct in clients]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        return results
+
+    def test_forty_people_racing_for_one_number(self):
+        clients = self.racers(40, numbers="5")
+        wins = self.race(clients)
+        self.assertEqual(sum(wins), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE number=5"), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM checkouts WHERE status='paid'"), 1)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE status='held'"), 0)
+
+    def test_stampede_never_oversells(self):
+        cid = self.make_comp("Stampede", max_tickets=25, max_per_user=5)
+        clients = self.racers(30, cid=cid)
+        self.race(clients)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE competition_id=?", cid), 25)
+        self.assertEqual(self.q("SELECT COUNT(DISTINCT number) FROM tickets WHERE competition_id=?", cid), 25)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM checkouts WHERE status='paid'"), 25)
+
+    def test_backup_is_restore_tested(self):
+        self.add(self.cid, 2, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        self.post(f"/admin/competitions/{self.cid}/draw")
+        r = self.cli("backup")
+        self.assertEqual(r.exit_code, 0, r.output)
+        self.assertIn("Every stored draw still recomputes", r.output)
+        self.assertIn("VERIFIED", r.output)
+        self.assertIsNotNone(self.q("SELECT value FROM settings WHERE key='last_backup_verified'"))
+        self.assertIn("Last backup restored and verified", self.client.get("/admin/health").get_data(as_text=True))
+
+    def test_no_question_mechanic(self):
+        self.post("/admin/competitions/new", {
+            "title": "Free Draw", "description": "x", "ends_at": "2099-01-01T20:00", "category": "tech",
+            "ticket_price": "1", "max_tickets": "10", "max_per_user": "5", "question_mode": "none"})
+        cid = self.q("SELECT id FROM competitions ORDER BY id DESC")
+        self.post(f"/admin/competitions/{cid}/status", {"action": "publish"})
+        self.assertEqual(self.q("SELECT question_mode FROM competitions WHERE id=?", cid), "none")
+        self.assertNotIn('name="answer"', self.p.get(f"/c/{self.slug(cid)}").get_data(as_text=True))
+        self.post("/basket/add", {"slug": self.slug(cid), "quantity": "2"}, client=self.p)
+        self.assertIsNotNone(self.checkout(client=self.p))
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE competition_id=?", cid), 2)
+
+    def test_journey_counts_have_no_identifiers(self):
+        self.p.get("/")
+        self.p.get(f"/c/{self.slug(self.cid)}")
+        self.add(self.cid, 1, client=self.p)
+        self.p.get("/basket")
+        self.checkout(client=self.p)
+        steps = dict(self.db().execute("SELECT step, SUM(n) FROM funnel_counts GROUP BY step").fetchall())
+        for st in ("home", "competition", "add", "basket", "checkout", "paid"):
+            self.assertGreaterEqual(steps.get(st, 0), 1, st)
+        cols = [r[1] for r in self.db().execute("PRAGMA table_info(funnel_counts)")]
+        self.assertEqual(cols, ["day", "step", "device", "comp_id", "n"])                 # nothing about the person
+        self.client.get("/", headers={"User-Agent": "Googlebot/2.1"})
+        self.assertIn("Customer journey", self.client.get("/admin/analytics").get_data(as_text=True))
+        self.assertIn("Competition performance", self.client.get("/admin/performance").get_data(as_text=True))
+
+    def test_staging_never_emails_customers(self):
+        self.app.config["STAGING"] = True
+        self.app.config["SUPPORT_EMAIL"] = "staff@example.com"
+        with self.assertLogs(self.app.logger, level="WARNING") as logs:
+            self.post("/forgot", {"email": "player@example.com"})
+        out = "\n".join(logs.output)
+        self.assertIn("to=staff@example.com", out)
+        self.assertIn("[STAGING]", out)
+        self.assertIn("STAGING", self.client.get("/").get_data(as_text=True))
 
 
 class MigrationTest(unittest.TestCase):

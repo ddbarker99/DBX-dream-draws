@@ -1,3 +1,4 @@
+import json
 import os
 import secrets
 from datetime import timezone
@@ -62,6 +63,8 @@ def create_app(test_config=None):
         TRUSTPILOT_URL=_env("TRUSTPILOT_URL"),
         BLOCK_CREDIT_CARDS=_env("BLOCK_CREDIT_CARDS", "1") == "1",
         ADMIN_MFA=_env("ADMIN_MFA", "1") == "1",          # two-step verification for every admin account
+        STAGING=_env("STAGING", "0") == "1",
+        SIGNUP_RATE_LIMIT=int(_env("SIGNUP_RATE_LIMIT", "10")),   # sign-ups per IP per hour (raise on staging for load tests)              # banner, noindex, every email goes to SUPPORT_EMAIL
         MAX_CONTENT_LENGTH=8 * 1024 * 1024,
         SEND_FILE_MAX_AGE_DEFAULT=60 * 60 * 24 * 30,   # static files carry ?v= so they can be cached hard
         SESSION_COOKIE_HTTPONLY=True,
@@ -148,6 +151,8 @@ def create_app(test_config=None):
         resp.headers.setdefault("X-Frame-Options", "DENY")
         # Logged-in pages show balances, free plays and tickets that change after every action:
         # never let the browser (or the Back button) show a stale copy.
+        if app.config["STAGING"]:
+            resp.headers["X-Robots-Tag"] = "noindex, nofollow"
         if g.get("user") and resp.mimetype == "text/html":
             resp.headers["Cache-Control"] = "no-store, max-age=0"
         return resp
@@ -257,6 +262,40 @@ def create_app(test_config=None):
             if not loop:
                 break
             time.sleep(20)
+
+    @app.cli.command("backup")
+    def backup_cmd():
+        """Back up the database and files, then prove the backup restores."""
+        from .backups import make_backup, restore_test
+        out_db, files = make_backup(app.config["DATABASE"])
+        rep = restore_test(out_db, app.config["DATABASE"], files)
+        for c in rep["checks"]:
+            click.echo(f"{'OK ' if c['ok'] else 'FAIL'} {c['name']} {c['detail']}")
+        with app.test_request_context("/__backup__"):
+            from .services import audit, set_setting
+            db = dbmod.get_db()
+            if rep["ok"]:
+                set_setting("last_backup_verified", dbmod.iso(utcnow()))
+            audit(db, "backup.verified" if rep["ok"] else "backup.failed", None,
+                  f"{os.path.basename(out_db)}: " + "; ".join(f"{c['name']}: {'ok' if c['ok'] else 'FAILED ' + c['detail']}" for c in rep["checks"]),
+                  actor=False)
+            db.execute("INSERT INTO job_runs (job, started_at, finished_at, ok, changed, error) VALUES ('backup',?,?,?,?,?)",
+                       (dbmod.iso(utcnow()), dbmod.iso(utcnow()), 1 if rep["ok"] else 0, os.path.basename(out_db) if rep["ok"] else None,
+                        None if rep["ok"] else json.dumps(rep["checks"])))
+            dbmod.close_db()
+        click.echo(f"Backup {'VERIFIED' if rep['ok'] else 'FAILED'}: {out_db}")
+        if not rep["ok"]:
+            raise SystemExit(1)
+
+    @app.cli.command("restore-test")
+    @click.argument("path")
+    def restore_test_cmd(path):
+        """Restore a backup file into a scratch copy and check it."""
+        from .backups import restore_test
+        rep = restore_test(path, app.config["DATABASE"], path.replace("prizes-", "files-").replace(".db", ".tar.gz"))
+        for c in rep["checks"]:
+            click.echo(f"{'OK ' if c['ok'] else 'FAIL'} {c['name']} {c['detail']}")
+        raise SystemExit(0 if rep["ok"] else 1)
 
     @app.cli.command("list-admins")
     def list_admins():

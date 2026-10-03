@@ -25,6 +25,15 @@
   <label class="check" style="margin-top:12px"><input type="checkbox" name="announce" value="1"> Also post to Discord</label>
   <button class="btn block" style="margin-top:16px">Save</button>
 </form>
+<form class="panel" method="post" style="max-width:720px;margin-top:20px">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <h2 style="margin-top:0;font-size:20px">Competition mechanics</h2>
+  <p class="small muted">The default entry structure for <b>new</b> competitions. Each competition can still be set individually. Decide this with legal advice — see docs/MECHANICS.md.</p>
+  <label for="dqm">Default</label><select id="dqm" name="default_question_mode">
+    <option value="multiple_choice" {{ 'selected' if default_qm == 'multiple_choice' }}>Multiple-choice question</option>
+    <option value="none" {{ 'selected' if default_qm == 'none' }}>No question (free draw, relying on the free postal route)</option></select>
+  <button class="btn ghost" style="margin-top:var(--s3)">Save default</button>
+</form>
 <div class="panel" style="max-width:720px;margin-top:20px;border-color:#7a1622">
   <h2 style="margin-top:0;font-size:20px">Start fresh</h2>
   <p class="small muted">Delete test competitions, games, orders, wallets or player accounts before launch.</p>

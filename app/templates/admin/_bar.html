@@ -7,7 +7,7 @@
   {% if can('prizes') %}<a class="{{ 'on' if ep in ('admin.prizes','admin.claim_detail') }}" href="{{ url_for('admin.prizes') }}">Winners</a>{% endif %}
   {% if can('money') %}<a class="{{ 'on' if ep == 'admin.payouts' }}" href="{{ url_for('admin.payouts') }}">Payouts</a>{% endif %}
   {% if can('reports') %}<a class="{{ 'on' if ep == 'control.finance' }}" href="{{ url_for('control.finance') }}">Finance</a>
-  <a class="{{ 'on' if ep in ('admin.stats','control.analytics') }}" href="{{ url_for('admin.stats') }}">Performance</a>{% endif %}
+  <a class="{{ 'on' if ep in ('admin.stats','control.analytics','control.performance') }}" href="{{ url_for('control.performance') }}">Performance</a>{% endif %}
   {% if can('users.view') %}<a class="{{ 'on' if ep in ('admin.users','admin.user_detail','control.timeline') }}" href="{{ url_for('admin.users') }}">Customers</a>{% endif %}
   {% if can('cases') %}<a class="{{ 'on' if ep in ('control.cases','control.case_detail') }}" href="{{ url_for('control.cases') }}">Cases</a>{% endif %}
   {% if can('flags') %}<a class="{{ 'on' if ep == 'control.flags' }}" href="{{ url_for('control.flags') }}">Flags</a>{% endif %}

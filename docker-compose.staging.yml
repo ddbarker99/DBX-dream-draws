@@ -1,0 +1,24 @@
+# Staging: the same app with its own data, Stripe TEST keys and STAGING=1.
+#   cp .env.example .env.staging   (SITE_URL=https://staging.yourdomain, Stripe sk_test_..., STAGING=1)
+#   docker compose -p dbx-staging -f docker-compose.staging.yml up -d --build
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    env_file: .env.staging
+    environment:
+      STAGING: "1"
+      SECURE_COOKIES: "1"
+    ports:
+      - "127.0.0.1:8100:8000"
+    volumes:
+      - ./data-staging:/data
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env.staging
+    environment:
+      STAGING: "1"
+    command: ["flask", "--app", "wsgi", "run-jobs", "--loop"]
+    volumes:
+      - ./data-staging:/data

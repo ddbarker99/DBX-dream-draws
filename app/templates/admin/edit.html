@@ -57,6 +57,12 @@
 
   <div class="not-free">
   <h2 class="formh">Entry question</h2>
+  {% set qm = form.get('question_mode') or default_question_mode %}
+  <div class="field"><label for="question_mode">How entry works</label>
+    <select id="question_mode" name="question_mode" aria-describedby="qm-h">
+      <option value="multiple_choice" {{ 'selected' if qm == 'multiple_choice' }}>Multiple-choice question (entrants must answer correctly)</option>
+      <option value="none" {{ 'selected' if qm == 'none' }}>No question — free draw relying on the free postal entry route</option></select>
+    <span class="hint" id="qm-h">Which structure applies is a legal decision — see docs/MECHANICS.md and take advice. A simple question is unlikely to make a competition "skill-based" on its own; every competition keeps a free entry route either way.</span></div>
   <div class="field"><label for="question">Question</label><input id="question" name="question" value="{{ form.get('question','') }}" placeholder="What is the capital of Scotland?"></div>
   <div class="three">
     {% for k in ['a','b','c'] %}<div class="field"><label for="answer_{{ k }}">Answer {{ k|upper }}</label><input id="answer_{{ k }}" name="answer_{{ k }}" value="{{ form.get('answer_' ~ k,'') if form.get('answer_' ~ k) != '-' else '' }}"></div>{% endfor %}

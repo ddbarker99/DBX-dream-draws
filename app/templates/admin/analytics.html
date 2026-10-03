@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Customer journey · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Customer journey</h1>
+<p class="muted">Counted on our own server, with no cookies or identifiers — so it shows where people drop off, not who they are. Bots are excluded. “Paid” counts orders, so one checkout with two competitions counts once per competition.</p>
+<form class="inline-form" method="get" style="flex-wrap:wrap;margin-bottom:var(--s4)">
+  <label for="from">From</label><input id="from" type="date" name="from" value="{{ start }}">
+  <label for="to">To</label><input id="to" type="date" name="to" value="{{ end }}">
+  <label for="device">Device</label><select id="device" name="device"><option value="">All</option>{% for d in ('mobile','tablet','desktop') %}<option {{ 'selected' if device == d }}>{{ d }}</option>{% endfor %}</select>
+  <label for="comp">Competition</label><select id="comp" name="comp"><option value="">All</option>{% for c in comps %}<option value="{{ c.id }}" {{ 'selected' if comp == c.id }}>{{ c.title }}</option>{% endfor %}</select>
+  <button class="btn ghost small">Show</button>
+</form>
+<div class="panel">
+  {% set top = rows[0].n or 1 %}{% set maxn = rows|map(attribute='n')|max or 1 %}
+  <ol class="funnel">{% for r in rows %}<li><span class="lbl">{{ r.label }}</span>
+    <span class="barwrap"><i style="width:{{ (100 * r.n / maxn)|round(1) }}%"></i></span>
+    <b class="num">{{ '{:,}'.format(r.n) }}</b><span class="small muted">{% if r.rate is not none %}{{ r.rate }}% of previous step{% if r.rate < 100 %} · {{ 100 - r.rate }}% dropped{% endif %}{% endif %}</span></li>{% endfor %}</ol>
+</div>
+<h2>By device</h2>
+<div class="panel table-scroll" tabindex="0"><table>
+  <tr><th>Device</th>{% for s in rows %}<th class="num">{{ s.label }}</th>{% endfor %}<th class="num">Competition → paid</th></tr>
+  {% for d, st in dev.items() %}<tr><td>{{ d }}</td>{% for s in rows %}<td class="num">{{ '{:,}'.format(st.get(s.step, 0)) }}</td>{% endfor %}
+    <td class="num">{% if st.get('competition') %}{{ (100 * st.get('paid', 0) / st.get('competition'))|round(1) }}%{% else %}—{% endif %}</td></tr>
+  {% else %}<tr><td colspan="8" class="muted">No visits counted yet.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

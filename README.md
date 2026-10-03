@@ -198,3 +198,12 @@ python -m unittest discover tests
 - **Audit log:** Admin → Audit log shows every sensitive action and who did it.
 - **Withdrawals:** mark a request **Processing** while you pay it, then **Paid — money sent** only once it's gone.
 - The database upgrades itself on start; no manual steps.
+
+## v9 platform (operations, automation, reliability)
+- **Admin home is now the Control Centre** (`/admin/`): money today, entries, sign-ups, live and ending competitions, instant prizes left, and a list of everything that needs a person, plus system health.
+- **Roles:** Support, Competition manager, Finance, Administrator (Admin → Customers → the person → Admin access). `make-admin` creates an Administrator.
+- **Two-step verification** is required for every admin on their next sign-in (any authenticator app). Set `ADMIN_MFA=0` only for local development.
+- **Worker container:** `docker compose up -d` now also starts `worker`, which closes competitions, runs draws, sends and retries emails, checks health and raises review flags every 20 seconds, even when nobody is browsing.
+- **Postal entries:** log envelopes as *received* the day they arrive, then approve or reject them in Admin → Postal. A competition can't close or draw while envelopes are waiting.
+- **Backups:** `./backup.sh` now runs `flask backup`, which restore-tests every backup. Set `BACKUP_REMOTE` for an off-site copy (rclone). Point an uptime monitor at `/healthz`.
+- **Staging:** see `docs/STAGING.md`. **Emergencies:** `docs/RUNBOOK.md`. **Mechanics:** `docs/MECHANICS.md`. **Personal data:** `docs/PRIVACY-DATA-AUDIT.md`.

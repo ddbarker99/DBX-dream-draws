@@ -30,7 +30,7 @@
 <section class="section" aria-labelledby="end-h"><h2 id="end-h">Drawing in the next 48 hours</h2>
 <div class="panel table-scroll" tabindex="0"><table>
   <tr><th>Competition</th><th>Closes</th><th class="num">Sold</th><th>Postal waiting</th></tr>
-  {% for x in ending %}<tr><td><a href="{{ url_for('admin.entries', cid=x.c.id) }}">{{ x.c.title }}</a></td><td>{{ x.c.ends_at|uktime('%a %d %b %H:%M') }}</td><td class="num">{{ '{:,}'.format(x.sold) }} / {{ '{:,}'.format(x.c.max_tickets) }}</td><td>{{ '' }}</td></tr>{% endfor %}
+  {% for x in ending %}<tr><td><a href="{{ url_for('admin.entries', cid=x.c.id) }}">{{ x.c.title }}</a></td><td>{{ x.c.ends_at|uktime('%a %d %b %H:%M') }}</td><td class="num">{{ '{:,}'.format(x.sold) }} / {{ '{:,}'.format(x.c.max_tickets) }}</td><td>{% if x.postal %}<a href="{{ url_for('admin.postal_queue') }}"><span class="pill hot">{{ x.postal }} waiting</span></a>{% else %}<span class="muted">none</span>{% endif %}</td></tr>{% endfor %}
 </table></div></section>
 {% endif %}
 

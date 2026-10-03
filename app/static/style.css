@@ -594,6 +594,11 @@ dl.facts>dt{padding-top:10px;color:var(--text-2);font-size:var(--fs-sm)}
 .tl time{font-size:var(--fs-xs);color:var(--text-3)}
 .tl span{font-size:var(--fs-sm);color:var(--text-2)}
 .note-internal{border-style:dashed}
+.funnel{list-style:none;padding:0;margin:0;display:grid;gap:var(--s3)}
+.funnel li{display:grid;grid-template-columns:150px 1fr 70px minmax(120px,auto);gap:var(--s3);align-items:center}
+.funnel .barwrap{height:14px;background:var(--surface-3);border-radius:99px;overflow:hidden}
+.funnel .barwrap i{display:block;height:100%;background:var(--red-fill)}
+@media (max-width:640px){.funnel li{grid-template-columns:1fr 60px}.funnel .barwrap,.funnel li>span.small{grid-column:1 / -1}}
 .note-reply{border-color:var(--green-line)}
 .lifecycle{display:flex;flex-wrap:wrap;gap:6px;list-style:none;padding:0;margin:var(--s3) 0}
 .lifecycle li{font-size:var(--fs-xs);padding:4px 10px;border-radius:99px;background:var(--surface-2);border:1px solid var(--line);color:var(--text-3)}

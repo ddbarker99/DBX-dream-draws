@@ -1,0 +1,91 @@
+# DBX Dream Draws — emergency procedures
+
+Decide calmly, from this page, not under pressure. Every procedure ends with **record what happened** (Admin → Audit log shows what the system did; add your notes to a support case or the competition's history).
+
+**First look:** Admin → Control Centre (needs attention + system health) and Admin → Health (job runs, failed emails). Public uptime check: `https://YOURDOMAIN/healthz`.
+
+**Golden rules**
+1. Never edit the database by hand to change entries or a result. Draw records, entry snapshots and the audit log are protected by triggers for a reason.
+2. Never run a draw early, and never "re-run" a draw to get a different winner. A redraw is only for a winner who can't receive the prize under the terms, and it records a reason publicly.
+3. If unsure, **pause payments** (Admin → Settings → Site status) — it stops new money coming in while you think, and customers see your message.
+4. Tell customers what's happening (status message, Discord, email) — silence damages trust more than delay.
+
+---
+
+## 1. The website goes down shortly before a draw
+
+Draws don't need the website to be up — the `worker` container runs them. But the entry list is only frozen once the closing time has passed **and** all in-progress payments and postal entries are resolved.
+
+1. Check containers: `docker compose ps`. Restart: `docker compose up -d`.
+2. Check logs: `docker compose logs --tail=200 web worker`.
+3. If the site was down **before** the closing time, customers couldn't enter for part of the period. Decide with the terms (section 22): either let the draw run at the advertised time (normal) or, if the outage was long and material, postpone — **only** by editing the closing time *before* it passes (a live competition's closing time can't be moved into the past, and every change is logged old → new) and announcing it. Never change the time after it has passed.
+4. Once back: Control Centre → "Draws due" should show the competition; the worker draws it within a minute.
+
+## 2. The payment provider (Stripe) fails
+
+Symptoms: "Card payments" health check red, customers report errors, Control Centre shows failed checkouts.
+
+1. The site **pauses card payments automatically** after 3 provider errors in 10 minutes (for 15 minutes) and shows customers a message. To pause for longer: Admin → Settings → Site status → *Pause payments*, with a message.
+2. Check https://status.stripe.com.
+3. Customers' numbers are only reserved while they pay; failed checkouts release them automatically. Nobody is charged twice: every checkout has a one-time key and Stripe confirmations are idempotent.
+4. Payments that arrive late or don't match are flagged **Refund due** (Admin → Payouts). Refund them in Stripe, then mark them refunded on that page.
+5. When Stripe recovers: set Site status back to *Normal*.
+
+## 3. A draw job fails or a draw is overdue
+
+Symptoms: "Automatic draws" health check red ("overdue"), Control Centre "Competitions past closing that haven't closed".
+
+1. Admin → Health → recent job runs: read the error.
+2. Most common cause: **postal entries still waiting** for that competition. Process them in Admin → Postal. The competition then closes and draws automatically.
+3. Second cause: a checkout still within its reservation. Wait — it resolves within 45 minutes of starting.
+4. If the job keeps failing with an error: run the draw manually from the competition's admin page (Competition manager or Administrator, with MFA). It uses the same frozen snapshot and method and is recorded as *manual*.
+5. If the draw refuses because "the entry list doesn't match the closing snapshot": **stop**. Don't draw. Pause payments, restore the latest verified backup to a scratch copy (`flask --app wsgi restore-test data/backups/<file>`) and investigate with a developer. Announce a short delay.
+
+## 4. Entries become temporarily unavailable (entering is broken)
+
+1. Pause payments with a clear message.
+2. Check `docker compose logs web`, disk space (Health → Disk space), database (Health → Database integrity).
+3. If the database integrity check fails: put the site in **maintenance mode**, stop the containers, copy `data/prizes.db` aside, restore the latest backup that passed its restore test (see section 7), restart, and reconcile any payments taken since the backup using Admin → Finance → payments CSV and Stripe's dashboard.
+
+## 5. An incorrect result is displayed
+
+First establish *what* is wrong.
+
+- **The page shows the wrong winner/number but the draw record is right** (display bug): put the site in maintenance mode if it's public-facing, fix and redeploy, then post a correction. The draw record is the truth.
+- **The draw itself was made from the wrong entries or the winner is ineligible** (e.g. an entry that broke the rules): don't edit anything. If the winner can't receive the prize under the terms, mark their claim *Forfeited* with notes and evidence, then **Redraw** with the reason. The original draw and the reason stay public.
+- **Something else** (a systemic fault affecting fairness): pause payments, preserve evidence (backup now: `./backup.sh`), contact your solicitor, and follow terms section 22 ("restore entrants to the position they should have been in"). Possible remedies include a re-run with the regulator's/solicitor's agreement, or refunds. Record every decision in a support case linked to the competition.
+
+## 6. Emails stop sending
+
+Health → Email sending red. Emails are queued and retried automatically (up to 5 times); nothing is lost while it's down.
+
+1. Check SMTP settings in `.env` and the mailbox provider's status.
+2. Health → Failed emails shows the error. Once fixed, press *Run jobs now* — the outbox retries.
+3. Customers can still see everything in their account's notification centre.
+
+## 7. Restoring from backup
+
+Backups run nightly (`./backup.sh`) and each one is **restore-tested** (integrity check, opens with the current app, row counts, every draw recomputed). Only use a backup that passed — `backups.log` and Admin → Audit log (`backup.verified`) show which.
+
+```bash
+docker compose stop web worker
+cp data/prizes.db data/prizes-broken-$(date +%F-%H%M).db         # keep the broken copy
+cp data/backups/prizes-YYYYMMDD-HHMMSS.db data/prizes.db
+tar xzf data/backups/files-YYYYMMDD-HHMMSS.tar.gz -C data            # uploads + evidence
+docker compose up -d
+```
+Then: reconcile payments made after the backup time against Stripe (Admin → Finance), and tell affected customers.
+
+## 8. Suspected account takeover or staff account compromise
+
+1. Admin → Customers → the account → note recent activity on the **timeline** (sign-ins, withdrawals, payout destination changes).
+2. Revoke admin access (Administrator only) if it's a staff account; reset their password (signs out every device) and re-enrol MFA.
+3. Hold any pending withdrawals for the account (don't press Paid) while you contact the customer on known details.
+4. Audit log shows every action that account took.
+
+## Contacts to keep up to date
+- Hosting provider support: ______________________
+- Stripe support: https://support.stripe.com
+- Email provider: ______________________
+- Solicitor: ______________________
+- Developer on call: ______________________

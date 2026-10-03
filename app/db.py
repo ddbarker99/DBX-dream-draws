@@ -121,6 +121,8 @@ MIGRATIONS = [
     ("draws", "reason", "TEXT"),
     ("draws", "winner_user_id", "INTEGER"),
     ("draws", "snapshot_id", "INTEGER"),
+    ("checkouts", "device", "TEXT"),                         # mobile | tablet | desktop, for journey counts only
+    ("competitions", "question_mode", "TEXT NOT NULL DEFAULT 'multiple_choice'"),  # multiple_choice | none
 ]
 
 # Triggers that use columns added by MIGRATIONS, so they're created after them.
