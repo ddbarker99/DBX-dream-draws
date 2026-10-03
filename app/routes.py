@@ -17,7 +17,7 @@ from .security import device_name, end_session, revoke_others, start_session
 from .db import get_db, iso, parse_iso, utcnow, write_txn
 from . import UK
 from .flags import enabled as feature_on, require_feature
-from .services import (audit, entrant_count, CATEGORIES, CATEGORY_NAMES, check_promo, MIN_DEPOSIT, MAX_DEPOSIT, create_deposit, deposit_room,
+from .services import (to_pence, audit, entrant_count, CATEGORIES, CATEGORY_NAMES, check_promo, MIN_DEPOSIT, MAX_DEPOSIT, create_deposit, deposit_room,
                        fulfil_deposit, set_deposit_status, expire_stale_deposits, refundable_deposits, refund_deposits, MIN_WITHDRAWAL, REDEEM_BLOCK, TIERS, balances, claim_free_play, free_play_today,
                        redeem_points, tier_for, check_withdrawal, GAME_ICONS, GAME_NAMES, GAME_PRICES, GAME_TYPES, MAX_PICKS, game_info, reveal_ticket,
                        unplayed, PurchaseError, balance, checkout_summary, comp_state,
@@ -67,8 +67,11 @@ def _fail(key):
     _FAILS.setdefault(key, []).append(utcnow().timestamp())
 
 
-def safe_next(target):
-    return target if target and target.startswith("/") and not target.startswith("//") else url_for("public.home")
+def safe_next(target, default=None):
+    """Only same-site paths. Browsers treat a backslash like a slash, so "/\\evil.com" would leave the site."""
+    ok = target and target.startswith("/") and not target.startswith("//") and "\\" not in target \
+        and not any(ord(ch) < 32 for ch in target)
+    return target if ok else (default or url_for("public.home"))
 
 
 def _shuffle(items):
@@ -856,7 +859,7 @@ def deposit():
         flash(payments_paused(), "error")
         return redirect(back)
     try:
-        amount = round(float(request.form.get("amount", "").replace("£", "").strip()) * 100)
+        amount = to_pence(request.form.get("amount", ""))
         did = create_deposit(g.user, amount)
     except ValueError:
         flash("Enter an amount in pounds, e.g. 20.", "error")
@@ -1513,7 +1516,7 @@ def set_limits():
             new[k] = None
             continue
         try:
-            v = round(float(raw) * 100)
+            v = to_pence(raw)
         except ValueError:
             flash(f"Enter a number for your {k} limit.", "error")
             return redirect(url_for("public.account", tab="safer"))
@@ -1572,7 +1575,7 @@ def withdraw():
     """Two steps: 'review' checks everything and shows the details back; 'confirm' makes the request."""
     back = url_for("public.account", tab="wallet") + "#withdraw"
     try:
-        amount = round(float(request.form.get("amount", "").replace("£", "").strip()) * 100)
+        amount = to_pence(request.form.get("amount", ""))
     except ValueError:
         flash("Enter the amount you'd like to withdraw, e.g. 25.", "error")
         return redirect(back)
@@ -1658,7 +1661,7 @@ def notification_open(nid):
     if n is None:
         abort(404)
     db.execute("UPDATE notifications SET read_at=COALESCE(read_at, ?) WHERE id=?", (iso(utcnow()), nid))
-    return redirect(n["link"] if n["link"] and n["link"].startswith("/") else url_for("public.notifications"))
+    return redirect(safe_next(n["link"], url_for("public.notifications")))
 
 
 @bp.route("/account/notifications/read", methods=["POST"])

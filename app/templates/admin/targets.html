@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Targets · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Targets</h1>
+<p class="muted" style="max-width:760px">The measurable targets agreed for the site (see <code>docs/TARGETS.md</code>). Green means on target. Figures measured outside the app (uptime monitor, PageSpeed Insights, usability tests) are recorded below.</p>
+<div class="panel table-scroll" tabindex="0" role="region" aria-label="Targets"><table>
+  <thead><tr><th scope="col">Target</th><th scope="col" class="num">Now</th><th scope="col" class="num">Goal</th><th scope="col">Status</th></tr></thead><tbody>
+  {% for t in rows %}<tr><td>{{ t.label }}<div class="tiny muted">{{ t.how }}</div></td>
+    <td class="num">{% if t.value is none %}—{% else %}{{ t.value }}{{ t.unit }}{% endif %}</td>
+    <td class="num">{{ '≥' if t.op == '>=' else '≤' }} {{ t.target }}{{ t.unit }}</td>
+    <td>{% if t.ok is none %}<span class="pill">No data yet</span>{% elif t.ok %}<span class="pill paid">On target</span>{% else %}<span class="pill needs_refund">Off target</span>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+
+<form class="panel" method="post" style="margin-top:var(--s4);max-width:760px"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <h2 style="font-size:20px;margin-top:0">Record an outside measurement</h2>
+  <div class="grid4">{% for key, label, unit, op, target in external %}
+    <div><label for="x-{{ key }}">{{ label }}{% if unit %} ({{ unit }}){% endif %}</label><input id="x-{{ key }}" name="{{ key }}" inputmode="decimal"></div>{% endfor %}</div>
+  <button class="btn ghost small" style="margin-top:var(--s3)">Save readings</button>
+</form>
+
+<section class="section" id="errors" aria-labelledby="err-h"><h2 id="err-h">Server errors</h2>
+<p class="small muted">Every error customers hit is recorded here, grouped by where it happened. Mark one fixed once the fix is deployed; it comes back if it happens again.</p>
+<div class="panel table-scroll" tabindex="0" role="region" aria-labelledby="err-h"><table>
+  <thead><tr><th scope="col">Error</th><th scope="col">Page</th><th scope="col" class="num">Times</th><th scope="col">Last</th><th scope="col"><span class="sr-only">Action</span></th></tr></thead><tbody>
+  {% for e in errors %}<tr><td><code class="small">{{ e.error }}</code><details><summary class="tiny">Details</summary><pre class="tiny" style="white-space:pre-wrap">{{ e.trace }}</pre></details></td>
+    <td class="small">{{ e.path }}</td><td class="num">{{ e.count }}</td><td class="small">{{ e.last_at|ago }}</td>
+    <td>{% if can('audit') %}<form method="post" action="{{ url_for('control.resolve_error', eid=e.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn ghost small">Mark fixed</button></form>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">No unresolved errors.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

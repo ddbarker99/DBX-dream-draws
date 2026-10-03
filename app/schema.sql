@@ -407,3 +407,25 @@ CREATE TABLE IF NOT EXISTS feature_flags (
     updated_at TEXT,
     updated_by INTEGER
 );
+
+-- Request counts and server-time buckets per day (no personal data, no URLs).
+CREATE TABLE IF NOT EXISTS request_stats (
+    day    TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    n      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, metric)
+);
+
+-- Server errors, grouped by where they happened.
+CREATE TABLE IF NOT EXISTS error_log (
+    id          INTEGER PRIMARY KEY,
+    signature   TEXT NOT NULL UNIQUE,
+    first_at    TEXT NOT NULL,
+    last_at     TEXT NOT NULL,
+    count       INTEGER NOT NULL DEFAULT 1,
+    endpoint    TEXT,
+    path        TEXT,
+    error       TEXT,
+    trace       TEXT,
+    resolved_at TEXT
+);

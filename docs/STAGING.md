@@ -6,11 +6,13 @@ Nobody experiments with competition or payment logic on the live site. Every cha
 
 ```bash
 pip install -r requirements.txt pytest
-python -m pytest -q tests/test_app.py     # 125+ tests: registration, login, ticket allocation, limits, closing,
+python -m pytest -q tests/test_app.py     # 130+ tests: registration, login, ticket allocation, limits, closing,
                                           # postal entries, checkout, wallets, discounts, refunds, withdrawals,
                                           # instant wins, draws/redraws, permissions, MFA, notifications, backups
 python tests/qa_crawl.py                  # every page as guest / player / admin: no errors, broken links, SEO gaps
+python tests/perf_budget.py               # page weight and speed budgets
 ```
+Full list in `docs/TESTING.md`; the release path and migration rollback notes are in `docs/DEPLOY.md`.
 These also run automatically on GitHub for every push and pull request (`.github/workflows/tests.yml`). **Don't deploy a red build.**
 
 ## 2. Staging (every release)
@@ -45,4 +47,4 @@ docker compose up -d --build
 ```
 Then the 2-minute smoke test in `QA-CHECKLIST.md` §14, and watch Control Centre → System health for 15 minutes.
 
-**Rolling back:** redeploy the previous zip/commit. The database upgrades itself forwards only (new columns/tables); older code ignores them, so rolling back the code is safe without restoring data.
+**Rolling back:** redeploy the previous zip/commit. The database upgrades itself forwards only (new columns/tables); older code ignores them, so rolling back the code is safe without restoring data. Per-release exceptions are listed in `docs/DEPLOY.md`.

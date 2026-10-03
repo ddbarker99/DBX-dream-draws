@@ -14,7 +14,7 @@ from . import UK, mailer
 from .notify import notify, tell
 from .perms import can, require, ROLES
 from .db import get_db, iso, utcnow, write_txn
-from .services import (receive_postal, process_postal, postal_problem, POSTAL_REJECT_REASONS, redraw, update_claim,
+from .services import (to_pence, receive_postal, process_postal, postal_problem, POSTAL_REJECT_REASONS, redraw, update_claim,
                        CLAIM_STATUSES, CLAIM_NAMES, lifecycle_stage, LIFECYCLE_NAMES, latest_snapshot, audit, cancel_competition, mark_withdrawal_processing, CATEGORIES, CATEGORY_NAMES, balances, prize_kind, refund_competition, GAME_NAMES, GAME_TYPES, game_info, PurchaseError, add_credit, add_instant_prizes, add_postal_entry,
                        balance, comp_state, get_setting, instant_board, new_seed, public_name,
                        remove_instant_prize_group, run_draw, set_setting, settle_withdrawal, site_stats, sold_count,
@@ -48,7 +48,7 @@ def slugify(s):
 
 def money(v, field):
     try:
-        return round(float(v or 0) * 100)
+        return to_pence(v or 0)
     except ValueError:
         raise ValueError(f"{field} must be a number.")
 
@@ -196,7 +196,7 @@ def _parse_form(f, locked):
         raise ValueError("Live draw link must start with https://")
     if not locked:
         try:
-            data["ticket_price"] = 0 if kind == "free" else round(float(f.get("ticket_price", "")) * 100)
+            data["ticket_price"] = 0 if kind == "free" else to_pence(f.get("ticket_price", ""))
             data["max_tickets"] = int(f.get("max_tickets", ""))
             data["max_per_user"] = int(f.get("max_per_user") or 0) if kind != "free" else 366
         except ValueError:
@@ -1280,7 +1280,10 @@ def audit_log():
         where.append("(detail LIKE ? OR target LIKE ?)"); args += [f"%{f['q']}%"] * 2
     for key, op, extra in (("from", ">=", ""), ("to", "<", "")):
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", f[key]):
-            day = datetime.strptime(f[key], "%Y-%m-%d").replace(tzinfo=UK)
+            try:
+                day = datetime.strptime(f[key], "%Y-%m-%d").replace(tzinfo=UK)
+            except ValueError:
+                continue
             if key == "to":
                 day += timedelta(days=1)
             where.append(f"created_at{op}?"); args.append(iso(day))

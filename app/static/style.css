@@ -135,6 +135,8 @@ label,.label{display:block;font-weight:600;font-size:var(--fs-sm);margin:0 0 6px
 input,select,textarea{width:100%;min-height:46px;background:#0d090a;border:1px solid var(--line-2);color:var(--text);border-radius:var(--r);padding:10px 12px;font:var(--fs-md) var(--font)}
 input::placeholder,textarea::placeholder{color:var(--text-3)}
 input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--focus);outline-offset:1px;border-color:transparent}
+/* date fields: Chrome focuses the day/month/year segments without :focus-visible on the field itself */
+input[type=date]:focus,input[type=date]:focus-within{outline:3px solid var(--focus);outline-offset:1px;border-color:transparent}
 input[aria-invalid="true"]{border-color:var(--red)}
 textarea{min-height:130px;resize:vertical}
 input[type=checkbox],input[type=radio]{width:20px;height:20px;min-height:0;accent-color:var(--red);flex:none}

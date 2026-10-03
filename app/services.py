@@ -28,6 +28,15 @@ CATEGORIES = [
 CATEGORY_NAMES = dict(CATEGORIES)
 
 
+def to_pence(text):
+    """'£12.50' -> 1250. Raises ValueError for anything that isn't a finite amount (including 'inf' and 'nan')."""
+    import math
+    v = float(str(text).replace("£", "").replace(",", "").strip())
+    if not math.isfinite(v) or abs(v) > 10_000_000:
+        raise ValueError("not a sensible amount")
+    return round(v * 100)
+
+
 class PurchaseError(Exception):
     pass
 

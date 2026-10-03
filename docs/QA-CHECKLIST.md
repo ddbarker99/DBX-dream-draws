@@ -10,7 +10,9 @@ Record results in the last column: ✅ pass · ❌ fail (with a note) · — not
 |---|---|---|
 | Unit and integration tests | `python -m pytest -q tests/test_app.py` | |
 | Crawl every page as guest, player and admin: no 4xx/5xx, no broken links, one `<h1>`, meta description, labelled fields, image alt text, no duplicate titles | `python tests/qa_crawl.py` → `NO PROBLEMS FOUND` | |
-| Accessibility (axe-core, WCAG 2.2 AA rules) on public and account pages at 390px and 1280px | Run axe in the browser devtools or Playwright | |
+| Accessibility (axe-core, WCAG 2.2 AA rules) and keyboard-only walkthrough at 390px and 1280px | `AXE_JS=… python tests/a11y_keyboard.py` → `NO PROBLEMS FOUND` | |
+| Performance budgets | `python tests/perf_budget.py` → `ALL WITHIN BUDGET` | |
+| Security attack tests | part of the unit tests (`SecurityTests`) | |
 
 ## 1. Browsers and devices (manual)
 
@@ -183,6 +185,9 @@ Trigger each and check subject, wording, links and that it renders on a phone: e
 | Feature flags: Off hides the feature and its links; Staff only shows it to admins; changes logged; Support role can't change them | Auto | |
 | Support case: second staff member sees "X is working on this case" and can't reply until Take over (logged) | Auto | |
 | Prize liability page totals match the competitions and wallets | Auto + manual | |
+| `flask dr-drill` passes on the server; System health shows the drill | Manual (quarterly) | |
+| Reports page figures for a test day match a hand count (and Stripe for card totals) | Auto + manual | |
+| Targets page: a forced error appears in the error log and on System health | Auto | |
 
 ## 14. Production smoke test (after every deploy)
 

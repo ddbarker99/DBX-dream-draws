@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Business reports · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Business reports</h1>
+<p class="muted" style="max-width:760px">Headline figures for the period, compared with the period of the same length just before it. Each figure has one fixed definition (see <code>docs/REPORTING-DEFINITIONS.md</code>) — <b>agree them with your accountant before relying on them for tax or accounts</b>. Per-competition figures are under <a href="{{ url_for('control.performance', **{'from': start, 'to': end}) }}">Performance</a>.</p>
+<form class="inline-form" method="get" style="flex-wrap:wrap;margin-bottom:var(--s4)">
+  <label for="from">From</label><input id="from" type="date" name="from" value="{{ start }}">
+  <label for="to">To</label><input id="to" type="date" name="to" value="{{ end }}">
+  <button class="btn ghost small">Show</button>
+  <a class="btn ghost small" href="{{ url_for('control.reports', format='csv', **{'from': start, 'to': end}) }}">Export CSV</a>
+</form>
+<div class="statstrip">
+  <div><b>{{ r.net_entries|gbp }}</b><span>Net entry value</span></div>
+  <div><b>{{ r.customer_money|gbp }}</b><span>Paid with customers' own money</span></div>
+  <div><b>{{ r.prize_costs|gbp }}</b><span>Prize costs</span></div>
+  <div><b>{{ r.contribution|gbp }}</b><span>Estimated contribution</span></div>
+</div>
+<div class="two">
+<section class="panel" aria-labelledby="m-h"><h2 id="m-h" style="font-size:20px">Money</h2>
+  <div class="table-scroll" tabindex="0" role="region" aria-labelledby="m-h"><table>
+  <thead><tr><th scope="col">Figure</th><th scope="col" class="num">This period</th><th scope="col" class="num">Previous</th></tr></thead><tbody>
+  {% for k, label in rows %}<tr><td>{{ label }}</td><td class="num">{{ r[k]|gbp }}</td><td class="num muted">{{ p[k]|gbp }}</td></tr>{% endfor %}
+  </tbody></table></div></section>
+<div class="stack">
+<section class="panel" aria-labelledby="c-h"><h2 id="c-h" style="font-size:20px">Customers &amp; volume</h2>
+  <div class="table-scroll" tabindex="0" role="region" aria-labelledby="c-h"><table>
+  <thead><tr><th scope="col">Figure</th><th scope="col" class="num">This period</th><th scope="col" class="num">Previous</th></tr></thead><tbody>
+  {% for k, label in counts %}<tr><td>{{ label }}</td><td class="num">{{ '{:,}'.format(r[k]) }}</td><td class="num muted">{{ '{:,}'.format(p[k]) }}</td></tr>{% endfor %}
+  <tr><td>Average order</td><td class="num">{{ r.avg_order|gbp }}</td><td class="num muted">{{ p.avg_order|gbp }}</td></tr>
+  <tr><td>Average per paying customer</td><td class="num">{{ r.avg_customer|gbp }}</td><td class="num muted">{{ p.avg_customer|gbp }}</td></tr>
+  </tbody></table></div></section>
+<form class="panel" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <h2 style="font-size:20px;margin-top:0">Card fee estimate</h2>
+  <p class="small muted">Used only for "Estimated card fees". Use the rate on your Stripe statement; the exact fees are in Stripe's reports.</p>
+  <div class="two"><div><label for="fee_percent">Percentage</label><input id="fee_percent" name="fee_percent" inputmode="decimal" value="{{ r.fee_pct }}"></div>
+  <div><label for="fee_fixed">Fixed per payment (pence)</label><input id="fee_fixed" name="fee_fixed_pence" inputmode="numeric" value="{{ r.fee_fixed }}"></div></div>
+  <button class="btn ghost small" style="margin-top:var(--s3)">Save</button></form>
+</div></div>
+{% endblock %}

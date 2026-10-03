@@ -217,4 +217,9 @@ python -m unittest discover tests
 - **Feature flags:** Admin → Settings → Features — Everyone / Staff only / Off, no deploy.
 - **Support desk:** cases sorted by priority then waiting time; opening a case marks it as yours for 20 minutes so two people don't reply; *Take over* is logged; customer history alongside.
 - **Prize liability:** Admin → Liability — prizes won but not delivered, instant prizes still to win, live draw prizes, and money held in wallets.
+- **Security:** attack tests on every build (`docs/SECURITY-REVIEW.md`); CSP, HSTS and secure cookies on HTTPS.
+- **Disaster recovery:** `docker compose exec web flask --app wsgi dr-drill` restores the newest backup into a clean copy and checks it (quarterly; shown on System health). Plan, RTO/RPO and roles: `docs/DISASTER-RECOVERY.md`.
+- **Quality gates in CI:** tests, crawl, performance budgets, keyboard + axe-core walkthrough (`docs/TESTING.md`).
+- **Reports & targets:** Admin → Reports (definitions for your accountant: `docs/REPORTING-DEFINITIONS.md`), Admin → Targets (checkout completion, payment problems, support load, errors, server time, plus uptime/PageSpeed readings you record) and the server-error log.
+- **How we work:** `docs/DEPLOY.md` (dev → staging → prod, rollback), `docs/DEFINITION-OF-DONE.md`, `docs/USABILITY-TEST.md` — run the usability test before adding more features.
 

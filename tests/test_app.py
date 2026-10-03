@@ -1316,8 +1316,8 @@ class IntegrityTests(Base):
         self.assertEqual(sum("Reset your password" in line for line in logs.output), 3)
 
 
-class PlatformTests(Base):
-    """Phase 2 (platform): roles, MFA, sessions, lifecycle, redraws, claims, notifications, operations tools."""
+class PlatformBase(Base):
+    """Shared set-up: an admin, a live competition and a player."""
 
     def setUp(self):
         super().setUp()
@@ -1339,6 +1339,10 @@ class PlatformTests(Base):
 
     def role(self, r, client=None):
         self.post(f"/admin/users/{self.uid}", {"action": "admin", "role": r})
+
+
+class PlatformTests(PlatformBase):
+    """Phase 2 (platform): roles, MFA, sessions, lifecycle, redraws, claims, notifications, operations tools."""
 
     def test_mfa_required_for_admins(self):
         from app.security import totp
@@ -1541,7 +1545,7 @@ class PlatformTests(Base):
         self.assertIn("temporarily unavailable", r.get_data(as_text=True))
 
 
-class CustomerFeatureTests(PlatformTests):
+class CustomerFeatureTests(PlatformBase):
     """Results archive, search, watchlist, own-ticket search, points history and referrals."""
 
     def test_results_archive_is_permanent(self):
@@ -1622,7 +1626,7 @@ class CustomerFeatureTests(PlatformTests):
         self.assertEqual(self.q("SELECT reason FROM referrals ORDER BY id DESC"), "Same phone number as the referrer")
 
 
-class OpsTests(PlatformTests):
+class OpsTests(PlatformBase):
     """Concurrency, backups, configurable mechanics, journey counts and staging."""
 
     def racers(self, n, numbers="", qty=1, cid=None):
@@ -1719,7 +1723,7 @@ class OpsTests(PlatformTests):
         self.assertIn("STAGING", self.client.get("/").get_data(as_text=True))
 
 
-class CustomerExperienceTests(PlatformTests):
+class CustomerExperienceTests(PlatformBase):
     """Phase 3: dashboard, My tickets, preferences, transparency, reminders, sold-out, support centre."""
 
     def test_dashboard_shows_what_needs_action(self):
@@ -1813,7 +1817,7 @@ class CustomerExperienceTests(PlatformTests):
         self.assertEqual(r.status_code, 400)
 
 
-class OperationsTests(PlatformTests):
+class OperationsTests(PlatformBase):
     """Phase 3 operations: validators, draw readiness, tamper-evident audit, ledgers, integrity, reconciliation,
     feature flags, support desk, liability."""
 
@@ -2059,6 +2063,278 @@ class OperationsTests(PlatformTests):
             odd = anomalies(get_db())
         self.assertTrue(any("refunded" in o for o in odd), odd)
         self.assertIn("Unusual activity", self.client.get("/admin/health").get_data(as_text=True))
+
+
+class RecoveryTests(PlatformBase):
+    def test_disaster_recovery_drill(self):
+        r = self.cli("dr-drill")
+        self.assertNotEqual(r.exit_code, 0)
+        self.assertIn("No backup found", r.output)
+        self.add(self.cid, 2, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        self.post(f"/admin/competitions/{self.cid}/draw")
+        self.assertEqual(self.cli("backup").exit_code, 0)
+        mails = self.q("SELECT COUNT(*) FROM notifications")
+        r = self.cli("dr-drill")
+        self.assertEqual(r.exit_code, 0, r.output)
+        self.assertIn("Page for a drawn competition", r.output)
+        self.assertIn("PASSED", r.output)
+        self.assertIn("RTO", r.output)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM notifications"), mails)        # live site untouched
+        self.assertIn("Last drill passed", self.client.get("/admin/health").get_data(as_text=True))
+        self.assertEqual(self.q("SELECT COUNT(*) FROM audit_log WHERE action='dr.drill'"), 2)
+
+
+class ReportingTests(PlatformBase):
+    def test_business_report_figures_and_csv(self):
+        self.post("/admin/promos", {"code": "TENOFF", "percent": "10", "fixed": "0", "min_spend": "0", "per_user": "5"})
+        self.add(self.cid, 4, client=self.p)                          # 4 × £2.50 = £10.00
+        self.checkout(client=self.p, promo="TENOFF")                  # £1 promo discount, £9 by card
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "5", "kind": "credit", "reason": "Goodwill"})
+        with self.app.app_context():
+            from app.control import business_report
+            from app.db import get_db
+            from datetime import timedelta
+            from app.services import uk_midnight
+            r = business_report(get_db(), uk_midnight() - timedelta(days=1), uk_midnight() + timedelta(days=1))
+        self.assertEqual(r["gross_entries"], 1000)
+        self.assertEqual(r["promo_codes"], 100)
+        self.assertEqual(r["customer_money"], 900)
+        self.assertEqual(r["customers"], 1)
+        self.assertEqual(r["new"], 1)
+        self.assertEqual(r["paid_entries"], 4)
+        self.assertEqual(r["promo_credit"], 500)
+        html = self.client.get("/admin/reports").get_data(as_text=True)
+        self.assertIn("Gross paid entries", html)
+        self.assertIn("agree them with your accountant", html)
+        csv_ = self.client.get("/admin/reports?format=csv").get_data(as_text=True)
+        self.assertIn("Gross paid entries,1000", csv_)
+        self.post("/admin/reports", {"fee_percent": "1.4", "fee_fixed_pence": "20"})
+        self.assertEqual(self.q("SELECT value FROM settings WHERE key='fee_percent'"), "1.4")
+        self.role("support")
+        self.assertNotIn("Gross paid entries", self.p.get("/admin/reports", follow_redirects=True).get_data(as_text=True))
+
+    def test_errors_are_recorded_and_targets_shown(self):
+        from app import metrics
+        self.client.get("/")
+        self.client.get("/competitions")
+        with self.app.app_context():
+            from app.db import get_db
+            metrics.maybe_flush(get_db(), force=True)
+        self.assertGreaterEqual(self.q("SELECT n FROM request_stats WHERE metric='requests'"), 2)
+        self.app.config["PROPAGATE_EXCEPTIONS"] = False
+        self.app.testing = False
+
+        def broken():
+            raise RuntimeError("kaboom")
+        orig = self.app.view_functions["public.transparency"]
+        self.app.view_functions["public.transparency"] = broken
+        try:
+            for _ in range(2):
+                r = self.p.get("/transparency")
+                self.assertEqual(r.status_code, 500)
+                self.assertIn("Something broke on our side", r.get_data(as_text=True))
+        finally:
+            self.app.view_functions["public.transparency"] = orig
+            self.app.testing = True
+        self.assertEqual(self.q("SELECT count FROM error_log"), 2)       # grouped
+        html = self.client.get("/admin/targets").get_data(as_text=True)
+        self.assertIn("RuntimeError: kaboom", html)
+        self.assertIn("Checkout completion", html)
+        self.assertIn("Server errors", self.client.get("/admin/health").get_data(as_text=True))
+        eid = self.q("SELECT id FROM error_log")
+        self.post(f"/admin/errors/{eid}/resolve")
+        self.assertIsNotNone(self.q("SELECT resolved_at FROM error_log"))
+        self.post("/admin/targets", {"uptime": "99.95", "lcp_mobile": "2.1"})
+        html = self.client.get("/admin/targets").get_data(as_text=True)
+        self.assertIn("99.95%", html)
+        self.assertIn("On target", html)
+
+
+class SecurityTests(PlatformBase):
+    """Attacks tried against our own test instance: IDOR, privilege escalation, tampering, CSRF, injection,
+    races, redirects, rate limits. See docs/SECURITY-REVIEW.md."""
+
+    def setUp(self):
+        super().setUp()
+        self.mallory = self.app.test_client()
+        self.signup("mallory@example.com", client=self.mallory, name="Mallory Evil")
+        db = self.db()
+        db.execute("UPDATE users SET email_verified=1")
+        db.commit()
+
+    def test_idor_other_customers_records(self):
+        self.add(self.cid, 2, client=self.p)
+        chk = self.checkout(client=self.p)
+        tid = self.q("SELECT id FROM tickets WHERE user_id=? LIMIT 1", self.uid)
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "20", "kind": "cash", "reason": "Prize"})
+        bank = {"amount": "10", "method": "bank", "account_name": "Pat Player", "sort_code": "12-34-56", "account_number": "12345678",
+                "step": "confirm"}
+        self.post("/account/withdraw", bank, client=self.p)
+        wid = self.q("SELECT id FROM withdrawals")
+        from app.control import open_case
+        with self.app.test_request_context():
+            case = open_case("Pat", "player@example.com", "Account", "private", user_id=self.uid)
+        nid = self.q("SELECT id FROM notifications WHERE user_id=? LIMIT 1", self.uid)
+        for url in (f"/checkout/{chk}/done", f"/checkout/{chk}/pay", f"/checkout/{chk}/cancel", f"/account/orders/{chk}",
+                    f"/account/tickets/{tid}", f"/account/withdrawals/{wid}", f"/support/requests/{case}",
+                    f"/account/notifications/{nid}/open"):
+            self.assertEqual(self.mallory.get(url).status_code, 404, url)
+        self.assertEqual(self.post(f"/checkout/{chk}/demo-pay", client=self.mallory).status_code, 404)
+        r = self.post(f"/play/reveal/{tid}", client=self.mallory)
+        self.assertEqual(r.status_code, 404)
+        self.post("/account/notifications/read", {"nid": str(nid)}, client=self.mallory)
+        self.assertIsNone(self.q("SELECT read_at FROM notifications WHERE id=?", nid))
+        self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "paid")
+
+    def test_privilege_escalation(self):
+        for url in ("/admin/", "/admin/payouts", "/admin/users", "/admin/audit", "/admin/finance", "/admin/features",
+                    "/admin/liability", "/admin/cases", f"/admin/competitions/{self.cid}"):
+            self.assertEqual(self.mallory.get(url).status_code, 404, url)
+        mid = self.q("SELECT id FROM users WHERE email='mallory@example.com'")
+        self.assertEqual(self.post(f"/admin/users/{mid}", {"action": "admin", "role": "admin"}, client=self.mallory).status_code, 404)
+        self.assertEqual(self.post(f"/admin/users/{mid}", {"action": "credit", "amount": "500", "kind": "cash", "reason": "x"},
+                                   client=self.mallory).status_code, 404)
+        # mass assignment: extra fields on the profile form are ignored
+        self.post("/account/profile", {"phone": "07700900000", "is_admin": "1", "admin_role": "admin", "email_verified": "1",
+                                       "points": "99999"}, client=self.mallory)
+        row = self.db().execute("SELECT is_admin, admin_role, points FROM users WHERE id=?", (mid,)).fetchone()
+        self.assertEqual((row[0], row[2]), (0, 0))
+        # a Support-role admin can't reach money or settings
+        self.role("support")
+        for url in ("/admin/payouts", "/admin/features", "/admin/promos"):
+            self.assertNotEqual(self.p.get(url).status_code, 200, url)
+        self.post(f"/admin/users/{mid}", {"action": "credit", "amount": "500", "kind": "cash", "reason": "x"}, client=self.p)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger WHERE user_id=?", mid), 0)
+
+    def test_price_and_quantity_tampering(self):
+        slug = self.slug(self.cid)
+        for qty in ("-5", "0", "1e9", "nan", "abc", "999999"):
+            self.post("/basket/add", {"slug": slug, "quantity": qty, "answer": "b", "ticket_price": "0.01", "price": "1"},
+                      client=self.mallory)
+        self.post("/basket/add", {"slug": slug, "quantity": "1", "numbers": "0,-1,21,99999", "answer": "b"}, client=self.mallory)
+        self.post("/basket/add", {"slug": slug, "quantity": "2", "answer": "b", "price": "0.01"}, client=self.mallory)
+        chk = self.checkout(client=self.mallory)
+        n = self.q("SELECT COUNT(*) FROM tickets WHERE user_id=(SELECT id FROM users WHERE email='mallory@example.com')")
+        self.assertLessEqual(n, 10)                                     # per-person limit held
+        self.assertEqual(self.q("SELECT cash_due FROM checkouts WHERE id=?", chk), 250 * n)   # server-side price
+        self.assertEqual(self.q("SELECT COUNT(*) FROM tickets WHERE number<1 OR number>20"), 0)
+        for amount in ("inf", "-10", "nan", "1e308", "0.001"):
+            r = self.post("/account/withdraw", {"amount": amount, "method": "bank", "account_name": "M", "sort_code": "12-34-56",
+                                                "account_number": "12345678", "step": "confirm"}, client=self.mallory)
+            self.assertLess(r.status_code, 500, amount)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM withdrawals"), 0)
+        for blocks in ("-3", "0", "inf"):
+            self.assertLess(self.post("/account/redeem", {"blocks": blocks}, client=self.mallory).status_code, 500)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger"), 0)
+
+    def test_promo_cannot_be_reused_or_raced(self):
+        self.post("/admin/promos", {"code": "ONCE", "percent": "50", "fixed": "0", "min_spend": "0", "per_user": "1"})
+        slug = self.slug(self.cid)
+        token = self.csrf(self.mallory)
+        self.mallory.post("/basket/add", data={"csrf": token, "slug": slug, "quantity": "1", "answer": "b"})
+        barrier, results = threading.Barrier(5), []
+
+        def go():
+            barrier.wait()
+            r = self.mallory.post("/basket/checkout", data={"csrf": token, "promo": "ONCE"})
+            results.append(r.status_code)
+        ts = [threading.Thread(target=go) for _ in range(5)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertLessEqual(self.q("SELECT COUNT(*) FROM checkouts WHERE promo_id IS NOT NULL"), 1)
+        self.assertLessEqual(self.q("SELECT uses FROM promo_codes"), 1)
+        self.post("/basket/add", {"slug": slug, "quantity": "1", "answer": "b"}, client=self.mallory)
+        self.assertIsNone(self.checkout(client=self.mallory, promo="ONCE"))     # second use refused
+        self.assertIsNone(self.checkout(client=self.mallory, promo="once' OR '1'='1"))
+
+    def test_concurrent_withdrawals_cannot_overdraw(self):
+        mid = self.q("SELECT id FROM users WHERE email='mallory@example.com'")
+        self.post(f"/admin/users/{mid}", {"action": "credit", "amount": "20", "kind": "cash", "reason": "Prize"})
+        token = self.csrf(self.mallory)
+        barrier = threading.Barrier(6)
+
+        def go():
+            barrier.wait()
+            self.mallory.post("/account/withdraw", data={"csrf": token, "amount": "15", "method": "bank", "account_name": "Mallory Evil",
+                                                         "sort_code": "12-34-56", "account_number": "12345678", "step": "confirm"})
+        ts = [threading.Thread(target=go) for _ in range(6)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertEqual(self.q("SELECT COUNT(*) FROM withdrawals"), 1)
+        self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger WHERE user_id=? AND kind='cash'", mid), 500)
+
+    def test_csrf_required(self):
+        mid = self.q("SELECT id FROM users WHERE email='mallory@example.com'")
+        r = self.client.post(f"/admin/users/{mid}", data={"action": "credit", "amount": "500", "kind": "cash", "reason": "x"})
+        self.assertEqual(r.status_code, 400)
+        foreign = self.csrf(self.mallory)                                   # a token from another session
+        r = self.client.post(f"/admin/users/{mid}", data={"csrf": foreign, "action": "credit", "amount": "500", "kind": "cash", "reason": "x"})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self.p.post("/account/profile", data={"phone": "1"}).status_code, 400)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger"), 0)
+
+    def test_injection_and_escaping(self):
+        evil = "<script>alert(1)</script>"
+        self.post("/account/profile", {"phone": "07700900000"}, client=self.mallory)
+        db = self.db()
+        db.execute("UPDATE users SET name=? WHERE email='mallory@example.com'", (evil + " Evil",))
+        db.commit()
+        from app.control import open_case
+        mid = self.q("SELECT id FROM users WHERE email='mallory@example.com'")
+        with self.app.test_request_context():
+            case = open_case(evil, "mallory@example.com", "Other", evil + "' OR 1=1 --", user_id=mid)
+        for url in (f"/admin/cases/{case}", "/admin/users", f"/admin/customers/{mid}/timeline", "/admin/cases"):
+            body = self.client.get(url).get_data(as_text=True)
+            self.assertNotIn(evil, body, url)
+        for q in ("' OR 1=1 --", "%", "\"\"; DROP TABLE users; --", evil):
+            r = self.client.get("/search", query_string={"q": q})
+            self.assertEqual(r.status_code, 200)
+            self.assertNotIn(evil, r.get_data(as_text=True))
+            self.assertEqual(self.post("/login", {"email": q, "password": q}, client=self.app.test_client()).status_code, 400)
+        self.assertGreater(self.q("SELECT COUNT(*) FROM users"), 0)
+        r = self.client.get("/admin/audit", query_string={"q": "' OR 1=1 --", "actor": "%", "from": "2020-13-99"})
+        self.assertEqual(r.status_code, 200)
+
+    def test_open_redirects_blocked(self):
+        for nxt in ("https://evil.com", "//evil.com", "/\\evil.com", "/\\/evil.com", "javascript:alert(1)", "/%0d%0aSet-Cookie:x=1"):
+            c = self.app.test_client()
+            r = self.post("/login", {"email": "player@example.com", "password": "supersecret123"}, client=c,
+                          query_string={"next": nxt})
+            loc = r.headers.get("Location", "")
+            self.assertTrue(loc.startswith("/") and not loc.startswith("//") and "\\" not in loc and "evil" not in loc.split("?")[0][:20]
+                            or loc.endswith("/"), (nxt, loc))
+        self.assertEqual(self.post("/login", {"email": "player@example.com", "password": "supersecret123"},
+                                   client=self.app.test_client(), query_string={"next": "/account"}).headers["Location"], "/account")
+
+    def test_login_lockout_survives_spoofed_ip(self):
+        c = self.app.test_client()
+        for i in range(9):
+            self.post("/login", {"email": "player@example.com", "password": "wrong"}, client=c,
+                      headers={"X-Forwarded-For": f"10.0.0.{i}"})
+        r = self.post("/login", {"email": "player@example.com", "password": "supersecret123"}, client=c,
+                      headers={"X-Forwarded-For": "10.9.9.9"})
+        self.assertEqual(r.status_code, 429)                  # the account itself is locked, whatever the IP
+
+    def test_webhook_needs_valid_signature(self):
+        body = json.dumps({"type": "checkout.session.completed", "data": {"object": {"id": "cs_x", "client_reference_id": "checkout-1",
+                                                                                      "payment_status": "paid", "amount_total": 0}}})
+        r = self.client.post("/stripe/webhook", data=body, headers={"Stripe-Signature": "t=1,v1=deadbeef"})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/stripe/webhook", data=body)
+        self.assertEqual(r.status_code, 400)
+
+    def test_security_headers(self):
+        r = self.client.get("/")
+        csp = r.headers.get("Content-Security-Policy", "")
+        for part in ("default-src 'self'", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'"):
+            self.assertIn(part, csp)
+        self.assertEqual(r.headers["X-Frame-Options"], "DENY")
+        self.assertIn("camera=()", r.headers.get("Permissions-Policy", ""))
+        r = self.client.get("/", base_url="https://localhost")
+        self.assertIn("max-age=", r.headers.get("Strict-Transport-Security", ""))
+        self.assertNotIn("Strict-Transport-Security", self.client.get("/").headers)
 
 
 class MigrationTest(unittest.TestCase):

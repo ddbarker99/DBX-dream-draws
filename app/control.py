@@ -179,6 +179,99 @@ def finance():
                            start=start.strftime("%Y-%m-%d"), end=(end - timedelta(days=1)).strftime("%Y-%m-%d"))
 
 
+# ---------------- business reporting (definitions: docs/REPORTING-DEFINITIONS.md) ----------------
+
+def business_report(db, start, end):
+    """Headline numbers for a period. Every figure has one written definition; see docs/REPORTING-DEFINITIONS.md."""
+    from .services import get_setting
+    a, b = iso(start), iso(end)
+    f = finance_report(db, start, end)
+    fee_pct = float(get_setting("fee_percent", "1.5") or 0)
+    fee_fixed = int(get_setting("fee_fixed_pence", "20") or 0)
+    card_count = f["card_count"]
+    card_total = f["card_entries"] + f["card_deposits"]
+    buyers = [r[0] for r in db.execute("SELECT DISTINCT user_id FROM checkouts WHERE status='paid' AND paid_at>=? AND paid_at<?", (a, b))]
+    returning = _sum(db, "SELECT COUNT(DISTINCT user_id) FROM checkouts WHERE status='paid' AND paid_at<? AND user_id IN "
+                         "(SELECT user_id FROM checkouts WHERE status='paid' AND paid_at>=? AND paid_at<?)", a, a, b)
+    refunds_entries = _sum(db, "SELECT SUM(amount) FROM credit_ledger WHERE ref LIKE 'refund-o%' AND created_at>=? AND created_at<?", a, b)
+    refunds_card = f["refused"] + _sum(db, "SELECT SUM(-amount) FROM credit_ledger WHERE ref LIKE 'dr%' AND created_at>=? AND created_at<?", a, b)
+    promo_credit = _sum(db, "SELECT SUM(amount) FROM credit_ledger WHERE kind='credit' AND amount>0 AND created_at>=? AND created_at<? "
+                            "AND (ref LIKE 'u%' OR reason LIKE 'Redeemed%' OR ref LIKE 'admin%')", a, b)
+    prize_costs = f["draw_prizes"] + f["prizes_cash"] + f["prizes_credit"] + f["prizes_physical"]
+    customer_money = f["card_entries"] + f["deposit_used"] + f["cash_used"]
+    fees = round(card_total * fee_pct / 100) + card_count * fee_fixed
+    r = {
+        "gross_entries": f["gross"], "multibuy": f["multibuy"], "net_entries": f["net_entries"],
+        "promo_codes": f["promo"], "credit_used": f["credit_used"], "customer_money": customer_money,
+        "card_entries": f["card_entries"], "deposit_used": f["deposit_used"], "cash_used": f["cash_used"],
+        "refunds_entries": refunds_entries, "refunds_card": refunds_card, "promo_credit": promo_credit,
+        "draw_prizes": f["draw_prizes"], "instant_cash": f["prizes_cash"], "instant_credit": f["prizes_credit"],
+        "instant_physical": f["prizes_physical"], "prize_costs": prize_costs,
+        "card_total": card_total, "card_count": card_count, "fees": fees, "fee_pct": fee_pct, "fee_fixed": fee_fixed,
+        "customers": len(buyers), "returning": returning, "new": len(buyers) - returning,
+        "orders": _sum(db, "SELECT COUNT(*) FROM checkouts WHERE status='paid' AND paid_at>=? AND paid_at<?", a, b),
+        "free_entries": _sum(db, "SELECT COUNT(*) FROM tickets WHERE postal_entry_id IS NOT NULL AND status='issued' "
+                                 "AND created_at>=? AND created_at<?", a, b),
+        "paid_entries": _sum(db, "SELECT SUM(o.quantity) FROM orders o WHERE o.status='paid' AND o.paid_at>=? AND o.paid_at<?", a, b),
+        "signups": _sum(db, "SELECT COUNT(*) FROM users WHERE created_at>=? AND created_at<?", a, b),
+        "withdrawn": f["withdrawn"],
+    }
+    r["avg_order"] = r["net_entries"] // r["orders"] if r["orders"] else 0
+    r["avg_customer"] = r["net_entries"] // r["customers"] if r["customers"] else 0
+    r["contribution"] = customer_money - r["refunds_entries"] - prize_costs - fees
+    return r
+
+
+REPORT_ROWS = [
+    ("gross_entries", "Gross paid entries"), ("multibuy", "Multi-buy discounts"), ("net_entries", "Net entry value"),
+    ("promo_codes", "Promo-code discounts"), ("credit_used", "Paid with site credit (promotional)"),
+    ("customer_money", "Paid with customers' own money"), ("card_entries", "— by card at checkout"),
+    ("deposit_used", "— from deposited funds"), ("cash_used", "— from cash winnings"),
+    ("refunds_entries", "Refunds of entries (cancelled competitions)"), ("refunds_card", "Refunds to cards"),
+    ("promo_credit", "Promotional credit issued"), ("draw_prizes", "Draw prizes (value, by draw date)"),
+    ("instant_cash", "Instant cash prizes"), ("instant_credit", "Instant site-credit prizes"),
+    ("instant_physical", "Instant physical prizes (value)"), ("prize_costs", "Total prize costs"),
+    ("card_total", "Card payments received"), ("fees", "Estimated card fees"), ("contribution", "Estimated contribution"),
+    ("withdrawn", "Withdrawals paid out"),
+]
+COUNT_ROWS = [("orders", "Paid orders"), ("paid_entries", "Paid entries"), ("free_entries", "Free postal entries"),
+              ("customers", "Unique paying customers"), ("new", "— new (first ever purchase)"), ("returning", "— returning"),
+              ("signups", "Sign-ups"), ("card_count", "Card payments")]
+
+
+@bp.route("/reports", methods=["GET", "POST"])
+@require("reports")
+def reports():
+    from .services import set_setting
+    db = get_db()
+    if request.method == "POST":
+        try:
+            pct, fixed = float(request.form.get("fee_percent", "1.5")), int(request.form.get("fee_fixed_pence", "20"))
+            if not (0 <= pct <= 10 and 0 <= fixed <= 200):
+                raise ValueError
+        except ValueError:
+            flash("Fees must be a percentage (0–10) and pence (0–200).", "error")
+            return redirect(url_for("control.reports"))
+        set_setting("fee_percent", str(pct))
+        set_setting("fee_fixed_pence", str(fixed))
+        audit(db, "reports.fees", None, f"Card fee estimate set to {pct}% + {fixed}p")
+        flash("Saved.")
+        return redirect(url_for("control.reports"))
+    start, end = _period()
+    span = end - start
+    cur, prev = business_report(db, start, end), business_report(db, start - span, start)
+    if request.args.get("format") == "csv":
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["metric", "this period (pence or count)", "previous period", "period_start_uk", "period_end_uk"])
+        for k, label in REPORT_ROWS + COUNT_ROWS:
+            w.writerow([label, cur[k], prev[k], start.strftime("%Y-%m-%d"), (end - timedelta(days=1)).strftime("%Y-%m-%d")])
+        return Response(buf.getvalue(), mimetype="text/csv",
+                        headers={"Content-Disposition": f"attachment; filename=business-report-{start:%Y%m%d}.csv"})
+    return render_template("admin/reports.html", r=cur, p=prev, rows=REPORT_ROWS, counts=COUNT_ROWS,
+                           start=start.strftime("%Y-%m-%d"), end=(end - timedelta(days=1)).strftime("%Y-%m-%d"))
+
+
 @bp.route("/finance/payments.csv")
 @require("reports")
 def finance_csv():
@@ -480,6 +573,97 @@ def case_detail(case_id):
         }
     return render_template("admin/case.html", k=k, notes=notes, customer=customer, orders=orders, comp=comp,
                            holder=holder, history=history, lock_minutes=LOCK_MINUTES)
+
+
+# ---------------- measurable targets (docs/TARGETS.md) ----------------
+
+EXTERNAL_TARGETS = [   # measured outside the app; staff record the latest reading
+    ("uptime", "Uptime (last 30 days, from your uptime monitor)", "%", ">=", 99.9),
+    ("lcp_mobile", "Largest Contentful Paint on a phone (PageSpeed Insights, homepage)", "s", "<=", 2.5),
+    ("mobile_usability", "Lighthouse accessibility score on a phone (competition page)", "", ">=", 95),
+    ("usability_tasks", "Usability test: tasks completed without help (latest round)", "%", ">=", 90),
+]
+
+
+def target_rows(db):
+    import json
+    from .metrics import stats
+    from .services import get_setting
+    month = iso(utcnow() - timedelta(days=30))
+    day30 = month[:10]
+
+    def funnel(step, device=None):
+        return _sum(db, "SELECT SUM(n) FROM funnel_counts WHERE step=? AND day>=?" + (" AND device=?" if device else ""),
+                    *((step, day30, device) if device else (step, day30)))
+
+    def pct(a, b):
+        return round(100 * a / b, 1) if b else None
+
+    rows = []
+
+    def add(label, value, unit, op, target, how):
+        ok = None if value is None else (value >= target if op == ">=" else value <= target)
+        rows.append({"label": label, "value": value, "unit": unit, "op": op, "target": target, "ok": ok, "how": how})
+
+    add("Checkout completion (started checkout → paid)", pct(funnel("paid"), funnel("checkout")), "%", ">=", 70,
+        "Journey counts, last 30 days")
+    mob = pct(funnel("paid", "mobile"), funnel("checkout", "mobile"))
+    desk = pct(funnel("paid", "desktop"), funnel("checkout", "desktop"))
+    add("Mobile checkout completion gap vs desktop", None if mob is None or desk is None else round(desk - mob, 1), " pts", "<=", 10,
+        f"Mobile {mob if mob is not None else '—'}% vs desktop {desk if desk is not None else '—'}%, last 30 days")
+    card = _sum(db, "SELECT COUNT(*) FROM checkouts WHERE stripe_session_id IS NOT NULL AND created_at>=? "
+                    "AND status IN ('paid','credit_refused','needs_refund')", month)
+    bad = _sum(db, "SELECT COUNT(*) FROM checkouts WHERE stripe_session_id IS NOT NULL AND created_at>=? "
+                   "AND status IN ('credit_refused','needs_refund')", month)
+    add("Payment problems (refused or needing a refund)", pct(bad, card), "%", "<=", 2, f"{bad} of {card} card payments, last 30 days")
+    orders = _sum(db, "SELECT COUNT(*) FROM checkouts WHERE status='paid' AND paid_at>=?", month)
+    cases = _sum(db, "SELECT COUNT(*) FROM cases WHERE created_at>=? AND topic IN ('Entry','Account','Other','Payment')", month)
+    add("“How do I / what happened?” support requests per 100 orders", round(100 * cases / orders, 1) if orders else None, "", "<=", 3,
+        f"{cases} cases about entries, accounts, payments or other, {orders} paid orders, last 30 days")
+    st = stats(db, 7)
+    add("Server errors (5xx) per 100 requests", round(st["error_rate"], 3) if st["error_rate"] is not None else None, "%", "<=", 0.1,
+        f"{st['errors']} of {st['requests']:,} requests, last 7 days")
+    add("Server time, 95th percentile", st["p95_under_ms"], " ms", "<=", 500, "Time to build each page on the server, last 7 days "
+        "(phone download time comes on top — see Largest Contentful Paint)")
+    ext = json.loads(get_setting("external_measurements") or "{}")
+    for key, label, unit, op, target in EXTERNAL_TARGETS:
+        m = ext.get(key) or {}
+        add(label, m.get("value"), unit, op, target, f"Recorded {m['at'][:10]} by {m.get('by', 'staff')}" if m else "Not recorded yet")
+    return rows
+
+
+@bp.route("/targets", methods=["GET", "POST"])
+@require("reports")
+def targets():
+    import json
+    from .services import get_setting, set_setting
+    db = get_db()
+    if request.method == "POST":
+        ext = json.loads(get_setting("external_measurements") or "{}")
+        for key, label, *_ in EXTERNAL_TARGETS:
+            raw = request.form.get(key, "").strip()
+            if raw:
+                try:
+                    ext[key] = {"value": float(raw), "at": iso(utcnow()), "by": g.user["email"]}
+                except ValueError:
+                    flash(f"{label}: enter a number.", "error")
+                    return redirect(url_for("control.targets"))
+        set_setting("external_measurements", json.dumps(ext))
+        audit(db, "targets.record", None, json.dumps({k: v["value"] for k, v in ext.items()}))
+        flash("Saved.")
+        return redirect(url_for("control.targets"))
+    errors = db.execute("SELECT * FROM error_log WHERE resolved_at IS NULL ORDER BY last_at DESC LIMIT 50").fetchall()
+    return render_template("admin/targets.html", rows=target_rows(db), external=EXTERNAL_TARGETS, errors=errors)
+
+
+@bp.route("/errors/<int:eid>/resolve", methods=["POST"])
+@require("audit")
+def resolve_error(eid):
+    db = get_db()
+    db.execute("UPDATE error_log SET resolved_at=? WHERE id=?", (iso(utcnow()), eid))
+    audit(db, "error.resolved", f"error:{eid}", "Marked fixed")
+    flash("Marked as fixed — it reappears if it happens again.")
+    return redirect(url_for("control.targets") + "#errors")
 
 
 # ---------------- prize liability ----------------

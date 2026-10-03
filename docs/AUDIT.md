@@ -216,3 +216,65 @@ These weren't something code could settle on its own:
 4. **Admin MFA enrolment:** every admin will be asked to enrol on next sign-in; keep recovery codes safe.
 5. **Load test on staging** with production-like hardware before the first big launch.
 6. **Retention clean-ups** marked "manual" in the privacy audit should be scheduled (quarterly).
+
+# Phase 3 (customer experience, operations, quality)
+
+## New URLs
+| URL | Who | Purpose |
+|---|---|---|
+| `/account` (overview) | Customer | Personal dashboard: things needing action, active tickets, upcoming draws, recent results, balances, latest notifications |
+| `/account?tab=entries&show=active\|upcoming\|winner\|completed` | Customer | My tickets with filters |
+| `/account/tickets/<id>` | Owner only | Everything about one ticket: order, draw time, status, result, proof |
+| `/account/notifications`, `…/<id>/open`, `…/read` | Customer | Notification centre, mark read, deep links |
+| `/account/preferences` (POST), `/unsubscribe/<token>` | Customer | Essential vs optional email/SMS, reminder emails; one-click unsubscribe; consent logged |
+| `/watch/<slug>` (POST) | Customer | Opt-in closing / result reminders |
+| `/transparency` | Everyone | Transparency centre: fair draws, free entry, odds, results, complaints |
+| `/support`, `/support/requests`, `/support/requests/<id>` | Customer | Help centre with issue types and order/ticket/withdrawal references; follow replies |
+| `/admin/features` | Administrator | Feature flags |
+| `/admin/liability` | Finance | Prize liability |
+| `/admin/reports` | Finance | Business reports + CSV |
+| `/admin/targets`, `/admin/errors/<id>/resolve` | Finance / Admin | Measurable targets, error log |
+| `/admin/audit?…&verify=1&format=csv` | Admin | Audit filters, chain verification, export |
+
+## Brief item → where it's built
+| Brief item | Built in |
+|---|---|
+| Personalised dashboard | `routes.account`, `_attention()`, `templates/account.html` |
+| My Tickets (Active / Upcoming draw / Winner / Completed) + ticket page | `_entry_groups()`, `routes.ticket_detail`, `ticket.html` |
+| Live draw / result page states | `competition.html` (Open / Sold out / Draw pending with auto-refresh / Completed) |
+| Notification centre | `notifications.html`, `routes.notification_open/read` |
+| Communication preferences (privacy-compliant, no auto-subscribe) | `routes.preferences`, `set_consent()`, `consent_log`, signup opt-ins unticked |
+| Transparency centre | `routes.transparency`, `transparency.html` |
+| Opt-in reminders | `routes.watch`, `jobs._watch`, `admin.announce_draw` |
+| Sold-out handling (never auto-add alternatives) | `competition.html` "Still open" panel — suggestions only |
+| Empty states | account, tickets, notifications, support, results |
+| Customer support centre | `routes.support_centre`, `SUPPORT_TOPICS` |
+| Internal support dashboard (priority, history, notes, no double handling) | `control.cases/case_detail`, soft locks, take-over audited |
+| Anomaly alerts | `jobs.anomalies()` → System health → alert email |
+| Pre-launch validator | `checks.launch_checks()` gates publish and scheduled launch |
+| Draw-readiness check | `checks.draw_checks()` in `services.run_draw` |
+| Prize-liability dashboard | `control.liability` |
+| Daily reconciliation with payment provider | `reconcile.py`, `payments.list_sessions/list_refunds`, job `reconcile` |
+| Database integrity checks | `checks.integrity_problems()`, job `integrity`, asserted after every test and crawl |
+| Immutable financial ledgers | triggers `ledger_no_*`, `points_no_*` (corrections are adjustments) |
+| Feature flags | `flags.py`, `/admin/features` |
+| Deployment dev → staging → prod, migration rollback | `docs/DEPLOY.md`, `docs/STAGING.md` |
+| Automated regression suite | `tests/` + CI (`.github/workflows/tests.yml`) |
+| Penetration / security testing (own systems) | `SecurityTests`, `docs/SECURITY-REVIEW.md` |
+| Disaster recovery docs + exercises | `flask dr-drill`, `docs/DISASTER-RECOVERY.md` |
+| Audit-log viewer with tamper protection | hash chain (`audit_hash`, `verify_audit_chain`), `/admin/audit` |
+| Accessibility beyond automated scans | `tests/a11y_keyboard.py`, `docs/ACCESSIBILITY.md` (AT testing plan) |
+| Performance budgets | `tests/perf_budget.py` (CI) |
+| Analytics funnel (lawful/anonymous) | `analytics.py` (cookie-free counts), `/admin/analytics` |
+| Business reporting | `/admin/reports`, `docs/REPORTING-DEFINITIONS.md` |
+| Definition of Done | `docs/DEFINITION-OF-DONE.md` |
+| Usability testing | `docs/USABILITY-TEST.md` |
+| Measurable targets | `/admin/targets`, `metrics.py`, `docs/TARGETS.md` |
+
+## Still needs a decision or outside check (Phase 3)
+1. **Accountant:** agree `docs/REPORTING-DEFINITIONS.md` (especially revenue recognition and VAT/duty).
+2. **Usability round 1** with 5–10 new users on their phones before adding more features.
+3. **Assistive-technology testing** (VoiceOver, TalkBack, NVDA) — automated checks pass, but people must confirm.
+4. **Independent penetration test** of staging before launch.
+5. **First DR drill on the server** (`flask dr-drill`) and a yearly full rebuild exercise.
+6. **Record outside measurements** (uptime, PageSpeed) on Admin → Targets monthly.

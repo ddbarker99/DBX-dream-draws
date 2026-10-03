@@ -32,6 +32,8 @@ What DBX Dream Draws stores, where, who receives it, how long it's kept, and how
 | Saved competitions | `watchlist` | Customer feature | Life of the account |
 | DBX Points history, referrals | `points_ledger`, `referrals` | Loyalty scheme | Life of the account |
 | Feature switches, maintenance lock | `feature_flags`, `maintenance_unlock` | Operating the site | Kept; contain **no personal data** (feature name, state, staff id who changed it) |
+| Request counts and server-time buckets | `request_stats` | Reliability targets | Kept; **no personal data** (day, counter name, number) |
+| Server errors (error type, page path, stack trace) | `error_log` | Fixing faults | Resolved errors deleted after 90 days (automatic). Paths contain record numbers, not names; traces could occasionally include submitted values, so treat as internal |
 | Journey counts | `funnel_counts` | Understanding drop-off | Kept; contains **no personal data** (day, step, device type, competition only) |
 | Winner photo and quote | `competitions.winner_photo/quote` + `winner_consent_at/by` | Publicity | Only with recorded consent; removed on request |
 
@@ -63,5 +65,5 @@ Verified in the code (no `localStorage`, `sessionStorage`, IndexedDB, analytics 
 
 ## Retention jobs
 
-Automatic (`prune` job, daily): device sessions 90 days after last use, read notifications after 1 year, job history after 90 days.
+Automatic (`prune` job, daily): device sessions 90 days after last use, read notifications after 1 year, job history and resolved server errors after 90 days.
 Manual (quarterly, until automated): postal entry personal details 2 years after the competition, resolved support cases after 3 years, reviewed flags after 2 years.

@@ -180,7 +180,8 @@ def _prune():
     s = db.execute("DELETE FROM user_sessions WHERE last_seen<?", (iso(utcnow() - timedelta(days=90)),)).rowcount
     m = db.execute("DELETE FROM notifications WHERE read_at IS NOT NULL AND created_at<? AND email_status IS NOT 'failed'",
                    (iso(utcnow() - timedelta(days=365)),)).rowcount
-    parts = [f"{n} job record(s)" if n else "", f"{s} old device record(s)" if s else "", f"{m} old notification(s)" if m else ""]
+    e = db.execute("DELETE FROM error_log WHERE resolved_at IS NOT NULL AND resolved_at<?", (iso(utcnow() - timedelta(days=90)),)).rowcount
+    parts = [f"{n} job record(s)" if n else "", f"{e} resolved error(s)" if e else "", f"{s} old device record(s)" if s else "", f"{m} old notification(s)" if m else ""]
     return ", ".join(p for p in parts if p) and "removed " + ", ".join(p for p in parts if p)
 
 
@@ -287,6 +288,18 @@ def health_checks(db):
         add("reconcile", "Stripe reconciliation", bool(fresh) and not open_rec,
             f"{open_rec} mismatch(es) waiting in Flags" if open_rec else
             (f"Matched {rec['sessions']} payments and {rec['refunds']} refunds ({rec['at']})" if fresh else "Hasn't run in 2 days"))
+    drill = json.loads(get_setting("last_dr_drill") or "null")
+    if drill is None:
+        add("dr", "Disaster-recovery drill", True, "Not run yet — run `flask dr-drill` once a quarter (docs/DISASTER-RECOVERY.md)")
+    else:
+        age = (now - parse_iso(drill["at"])).days
+        add("dr", "Disaster-recovery drill", drill["ok"] and age <= 100,
+            f"Last drill {'passed' if drill['ok'] else 'FAILED'} {age} day(s) ago ({drill['backup']}, restored in {drill['seconds']} s)"
+            + (" — due again" if age > 100 else ""))
+    errs = db.execute("SELECT COUNT(*), COALESCE(SUM(count),0) FROM error_log WHERE resolved_at IS NULL AND last_at>?",
+                      (iso(now - timedelta(hours=24)),)).fetchone()
+    add("errors", "Server errors", not errs[0], f"{errs[0]} different error(s), {errs[1]} time(s) in 24 hours — see Admin → Targets"
+        if errs[0] else "None in the last 24 hours")
     odd = anomalies(db, now)
     add("anomalies", "Unusual activity", not odd, "; ".join(odd) if odd else "Nothing unusual in the last 24 hours")
     return out

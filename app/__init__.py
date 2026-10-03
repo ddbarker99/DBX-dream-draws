@@ -1,6 +1,7 @@
 import json
 import os
 import secrets
+import time
 from datetime import timezone
 from zoneinfo import ZoneInfo
 
@@ -12,7 +13,7 @@ from . import db as dbmod
 from .db import parse_iso, utcnow
 
 UK = ZoneInfo("Europe/London")
-ASSET_V = "21"   # bump when style.css or images change, so browsers fetch the new copy
+ASSET_V = "22"   # bump when style.css or images change, so browsers fetch the new copy
 _PLACEHOLDERS = ("example street", "example.com", "yourdomain", "ab1 2cd")
 
 
@@ -70,7 +71,8 @@ def create_app(test_config=None):
         SEND_FILE_MAX_AGE_DEFAULT=60 * 60 * 24 * 30,   # static files carry ?v= so they can be cached hard
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
-        SESSION_COOKIE_SECURE=_env("SECURE_COOKIES", "0") == "1",
+        # HTTPS sites get secure-only cookies by default (SECURE_COOKIES=0 to override).
+        SESSION_COOKIE_SECURE=_env("SECURE_COOKIES", "1" if _env("SITE_URL", "").startswith("https://") else "0") == "1",
         PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,
     )
     if test_config:
@@ -84,6 +86,10 @@ def create_app(test_config=None):
     dbmod.init_db(app.config["DATABASE"])
     app.teardown_appcontext(dbmod.close_db)
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+    @app.before_request
+    def start_timer():
+        g._t0 = time.perf_counter()
 
     @app.before_request
     def load_user():
@@ -122,6 +128,8 @@ def create_app(test_config=None):
                 session["ref"] = ref
         if request.endpoint in ("public.stripe_webhook", "public.health"):
             return
+        if not app.config.get("JOBS_ON_REQUESTS", True):
+            return
         from .jobs import run_all_jobs
         try:
             run_all_jobs()            # throttled per job; the worker container normally does this
@@ -150,12 +158,30 @@ def create_app(test_config=None):
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         resp.headers.setdefault("X-Frame-Options", "DENY")
+        # Everything (scripts, styles, fonts, images) is served from this site; payments happen on Stripe's own page.
+        # 'unsafe-inline' is still needed for the small inline scripts/handlers in the templates.
+        resp.headers.setdefault("Content-Security-Policy",
+                                "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+                                "img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'none'; "
+                                "form-action 'self' https://checkout.stripe.com; frame-ancestors 'none'; object-src 'none'; "
+                                "base-uri 'self'; manifest-src 'self'; worker-src 'self'")
+        resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+        resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        if request.is_secure:
+            resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
         # Logged-in pages show balances, free plays and tickets that change after every action:
         # never let the browser (or the Back button) show a stale copy.
         if app.config["STAGING"]:
             resp.headers["X-Robots-Tag"] = "noindex, nofollow"
         if g.get("user") and resp.mimetype == "text/html":
             resp.headers["Cache-Control"] = "no-store, max-age=0"
+        if g.get("_t0") is not None and request.endpoint not in (None, "static", "public.uploads"):
+            from . import metrics
+            metrics.record((time.perf_counter() - g._t0) * 1000, resp.status_code)
+            try:
+                metrics.maybe_flush(dbmod.get_db())
+            except Exception:                      # measuring must never break a page
+                app.logger.exception("metrics flush failed")
         return resp
 
     @app.context_processor
@@ -231,8 +257,16 @@ def create_app(test_config=None):
                                msg=getattr(e, "description", "") or "That request didn't work — go back and try again."), 400
 
     @app.errorhandler(500)
-    def server_error(_e):
+    def server_error(e):
         from flask import render_template
+        try:
+            from . import metrics
+            db = dbmod.get_db()
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            metrics.record_error(db, getattr(e, "original_exception", None) or e, request.endpoint, request.path)
+        except Exception:
+            app.logger.exception("couldn't record the error")
         return render_template("error.html", code=500, heading="Sorry, that didn't work",
                                msg="Something broke on our side. Nothing has been charged twice — please try again in a minute."), 500
 
@@ -298,6 +332,27 @@ def create_app(test_config=None):
         rep = restore_test(path, app.config["DATABASE"], path.replace("prizes-", "files-").replace(".db", ".tar.gz"))
         for c in rep["checks"]:
             click.echo(f"{'OK ' if c['ok'] else 'FAIL'} {c['name']} {c['detail']}")
+        raise SystemExit(0 if rep["ok"] else 1)
+
+    @app.cli.command("dr-drill")
+    @click.option("--backup", "backup_path", default=None, help="Backup file to restore (default: the newest one).")
+    def dr_drill_cmd(backup_path):
+        """Disaster-recovery exercise: restore a backup into a clean, separate copy of the site and check it works."""
+        from .backups import dr_drill
+        rep = dr_drill(app.config["DATABASE"], backup_path)
+        for c in rep["checks"]:
+            click.echo(f"{'OK ' if c['ok'] else 'FAIL'} {c['name']} {c['detail']}")
+        click.echo(f"Backup age (data that would be lost, RPO): {rep.get('rpo_hours', '?')} h")
+        click.echo(f"Time to restore and check (RTO, excluding server rebuild): {rep['seconds']:.1f} s")
+        with app.test_request_context("/__dr__"):
+            from .services import audit, set_setting
+            db = dbmod.get_db()
+            set_setting("last_dr_drill", json.dumps({"at": dbmod.iso(utcnow()), "ok": rep["ok"], "backup": rep.get("backup"),
+                                                     "rpo_hours": rep.get("rpo_hours"), "seconds": round(rep["seconds"], 1)}))
+            audit(db, "dr.drill", None, ("PASSED" if rep["ok"] else "FAILED") + f" using {rep.get('backup')}: " +
+                  "; ".join(f"{c['name']}: {'ok' if c['ok'] else 'FAILED ' + c['detail']}" for c in rep["checks"]), actor=False)
+            dbmod.close_db()
+        click.echo(f"Disaster-recovery drill {'PASSED' if rep['ok'] else 'FAILED'}")
         raise SystemExit(0 if rep["ok"] else 1)
 
     @app.cli.command("list-admins")

@@ -15,3 +15,11 @@ jobs:
         run: python -m pytest -q tests/test_app.py
       - name: Crawl every page as guest, player and admin
         run: python tests/qa_crawl.py
+      - name: Performance budgets (page weight, requests, server time)
+        run: python tests/perf_budget.py
+      - name: Keyboard-only walkthrough and axe-core scan (real browser)
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+          npm pack axe-core && tar -xzf axe-core-*.tgz package/axe.min.js
+          AXE_JS=package/axe.min.js python tests/a11y_keyboard.py
