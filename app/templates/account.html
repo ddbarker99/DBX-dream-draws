@@ -62,13 +62,14 @@
 
   <section class="section" aria-labelledby="up-h">
     <div class="section-head"><h2 id="up-h">Your upcoming draws</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='entries') }}">All my tickets</a></div>
-    <div class="panel">{% for e in upcoming %}{{ entry_row(e) }}{% else %}
-      <div class="empty compact"><p>When you enter a competition, its draw date and your ticket numbers show up here.</p><a class="btn" href="{{ url_for('public.competitions') }}">Browse competitions</a></div>{% endfor %}</div>
+    {% if timeline %}{% for label, items in timeline %}<div class="drawgroup"><h3>{{ label }}</h3>
+      <div class="panel">{% for e in items %}{{ entry_row(e) }}{% endfor %}</div></div>{% endfor %}
+    {% else %}<div class="panel"><div class="empty compact"><p>When you enter a competition, its draw date and your ticket numbers show up here.</p><a class="btn" href="{{ url_for('public.competitions') }}">Browse competitions</a></div></div>{% endif %}
   </section>
 
   {% if recent_results %}
   <section class="section" aria-labelledby="rr-h">
-    <div class="section-head"><h2 id="rr-h">Your recent results</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='entries', show='completed') }}">All results</a></div>
+    <div class="section-head"><h2 id="rr-h">Your recent results</h2><a class="btn ghost small" href="{{ url_for('public.results', mine=1) }}">All my results</a></div>
     <div class="panel">{% for e in recent_results %}{{ entry_row(e) }}{% endfor %}</div>
   </section>
   {% endif %}
@@ -114,7 +115,13 @@
     {% if hits %}<div class="panel" style="margin-bottom:var(--s4)">{% for e in hits %}{{ entry_row(e) }}{% endfor %}</div>{% endif %}
   {% endif %}
   {% set shown = groups|selectattr('f.' ~ show)|list %}
-  {% if shown %}
+  {% if shown and show == 'active' %}
+    {% for label, items in timeline if label != 'Waiting for the draw' %}<div class="drawgroup"><h3>Drawing {{ label|lower if label != 'Later' else 'later' }}</h3>
+      <div class="panel">{% for e in items %}{{ entry_row(e) }}{% endfor %}</div></div>{% endfor %}
+    {% set games = shown|selectattr('game')|list %}
+    {% if games %}<div class="drawgroup"><h3>Instant win games</h3><div class="panel">{% for e in games %}{{ entry_row(e) }}{% endfor %}</div></div>{% endif %}
+  <p class="small muted">Tap a ticket number to see its order reference, entry date, draw date and result.</p>
+  {% elif shown %}
   <div class="panel">{% for e in shown %}{{ entry_row(e) }}{% endfor %}</div>
   <p class="small muted">Tap a ticket number to see its order reference, entry date, draw date and result.</p>
   {% elif show == 'active' %}<div class="empty"><p>Tickets for competitions that are still open appear here.</p><a class="btn" href="{{ url_for('public.competitions') }}">Browse competitions</a></div>
@@ -132,7 +139,8 @@
   </div>
   {% if draws_won %}<section class="section" aria-labelledby="dw-h"><h2 id="dw-h">Main draws</h2>
   <div class="panel table-scroll" tabindex="0"><table><thead><tr><th scope="col">Prize</th><th scope="col">Winning ticket</th><th scope="col">Drawn</th><th scope="col">Next step</th></tr></thead><tbody>
-    {% for d in draws_won %}<tr><td><a href="{{ url_for('public.competition', slug=d.slug) }}">{{ d.title }}</a>{% if d.cash_alternative %}<div class="tiny muted">Cash alternative: {{ d.cash_alternative }}</div>{% endif %}</td><td>#{{ d.number }}</td><td>{{ d.drawn_at|uktime('%d %b %Y') }}</td><td class="small">We'll contact you by email and phone to arrange it. We'll never ask you to pay to claim a prize.</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
+    {% for d in draws_won %}<tr><td><a href="{{ url_for('public.competition', slug=d.slug) }}">{{ d.title }}</a>{% if d.cash_alternative %}<div class="tiny muted">Cash alternative: {{ d.cash_alternative }}{% if d.prize_choice %} · you chose {{ 'cash' if d.prize_choice == 'cash' else 'the prize' }}{% endif %}</div>{% endif %}</td><td>#{{ d.number }}</td><td>{{ d.drawn_at|uktime('%d %b %Y') }}</td>
+      <td class="small">{% if d.claim_id %}<a class="btn small {{ 'green' if d.claim_status in ('selected','contacted','verification','verified') else 'ghost' }}" href="{{ url_for('public.prize_claim', claim_id=d.claim_id) }}">{{ {'delivered':'Received ✓','forfeited':'Not claimed','fulfilment':'Track delivery'}.get(d.claim_status, 'Claim & track my prize') }}</a>{% else %}We'll contact you to arrange it.{% endif %}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
   <section class="section" aria-labelledby="iwn-h"><h2 id="iwn-h">Instant wins</h2>
   {% if wins %}
   <div class="panel table-scroll" tabindex="0"><table><thead><tr><th scope="col">Prize</th><th scope="col">Competition or game</th><th scope="col">Ticket</th><th scope="col">Status</th><th scope="col">When</th></tr></thead><tbody>

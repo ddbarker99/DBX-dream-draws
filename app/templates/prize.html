@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Your prize: {{ c.title }} · {{ config.SITE_NAME }}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('public.account') }}">My account</a> › <a href="{{ url_for('public.account', tab='wins') }}">Wins &amp; prizes</a> › <span aria-current="page">{{ c.title }}</span></nav>
+<section class="winhero{{ ' done' if c.status == 'delivered' }}">
+  {% if c.image %}<img src="{{ c.image|thumb }}" alt="" width="160" height="160">{% else %}<span class="trophy" aria-hidden="true">🏆</span>{% endif %}
+  <div><p class="kicker">{{ info[0] }}</p>
+    <h1>{{ c.title }}</h1>
+    <p>Winning ticket <b>#{{ c.number }}</b> · drawn {{ c.drawn_at|uktime('%A %d %B %Y, %H:%M') }}{% if c.prize_value %} · worth {{ c.prize_value|gbp }}{% endif %}</p></div>
+</section>
+
+{% if c.status != 'forfeited' %}
+<ol class="claimsteps" aria-label="Your prize's progress">{% for st in steps %}<li class="{{ 'done' if loop.index0 < at else ('now' if loop.index0 == at) }}"{% if loop.index0 == at %} aria-current="step"{% endif %}>{{ names[st] }}</li>{% endfor %}</ol>
+{% endif %}
+<div class="notice {{ 'good' if c.status in ('delivered','chosen','fulfilment','verified') else '' }}" style="margin:var(--s4) 0"><span><b>What happens next:</b> {{ info[1] }}</span></div>
+
+<div class="two">
+{% if can_change %}
+  {% if c.cash_alternative %}
+  <form class="panel" method="post" aria-labelledby="ch-h"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <h2 id="ch-h" style="font-size:20px;margin-top:0">Prize or cash?</h2>
+    <p class="small muted">This competition offers a cash alternative. Choose whichever you prefer — you can change your mind until we start arranging it.</p>
+    <fieldset><legend class="sr-only">Your choice</legend>
+      <label class="check"><input type="radio" name="choice" value="prize" {{ 'checked' if c.prize_choice == 'prize' }} required> The prize: {{ c.title }}</label>
+      <label class="check"><input type="radio" name="choice" value="cash" {{ 'checked' if c.prize_choice == 'cash' }}> The cash alternative: {{ c.cash_alternative }}</label></fieldset>
+    <button class="btn" style="margin-top:var(--s3)">{{ 'Update my choice' if c.prize_choice else 'Confirm my choice' }}</button>
+    {% if c.prize_choice %}<p class="small muted" style="margin:var(--s2) 0 0">You chose {{ 'the cash alternative' if c.prize_choice == 'cash' else 'the prize' }}{% if c.choice_at %} on {{ c.choice_at|uktime('%d %b') }}{% endif %}.</p>{% endif %}
+  </form>
+  {% endif %}
+  {% if c.prize_choice != 'cash' %}
+  <form class="panel" method="post" aria-labelledby="dl-h"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <h2 id="dl-h" style="font-size:20px;margin-top:0">Delivery details</h2>
+    <p class="small muted">Where should we send your prize? Only our prize team sees this.</p>
+    <div class="field"><label for="d-name">Full name</label><input id="d-name" name="name" autocomplete="name" value="{{ c.delivery_name or '' }}" required></div>
+    <div class="field"><label for="d-addr">Address including postcode</label><textarea id="d-addr" name="address" rows="3" autocomplete="street-address" required>{{ c.delivery_address or '' }}</textarea></div>
+    <div class="field"><label for="d-phone">Phone (for the courier)</label><input id="d-phone" name="phone" type="tel" autocomplete="tel" value="{{ c.delivery_phone or '' }}"></div>
+    <button class="btn ghost">{{ 'Update details' if c.delivery_address else 'Save delivery details' }}</button>
+  </form>
+  {% endif %}
+{% endif %}
+  <section class="panel" aria-labelledby="hi-h"><h2 id="hi-h" style="font-size:20px;margin-top:0">History</h2>
+    <ul class="timeline">{% for e in events %}<li><time class="tiny muted">{{ e.created_at|uktime('%d %b, %H:%M') }}</time> {{ e.note or e.status }}</li>{% endfor %}</ul>
+    <p class="small muted">Questions? <a href="{{ url_for('public.support_centre', topic='Prize') }}">Contact our prize team</a>. We will never ask you to pay to claim a prize.</p>
+  </section>
+</div>
+{% endblock %}

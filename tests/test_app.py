@@ -2866,6 +2866,127 @@ class EvidenceTests(PlatformBase):
         self.assertIn("Started choosing entries", html)
 
 
+class Phase6CustomerTests(AutoDrawBase):
+    def won_claim(self):
+        db = self.db()
+        db.execute("UPDATE competitions SET cash_alternative='£400' WHERE id=?", (self.cid,))
+        db.commit()
+        self.add(self.cid, 1, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        self.run_jobs()
+        return self.q("SELECT id FROM prize_claims")
+
+    def test_winner_page_choice_delivery_and_progress(self):
+        claim = self.won_claim()
+        note = self.db().execute("SELECT link FROM notifications WHERE kind='win'").fetchone()[0]
+        self.assertEqual(note, f"/account/prizes/{claim}")                         # the win links to the prize page
+        html = self.p.get(f"/account/prizes/{claim}").get_data(as_text=True)
+        self.assertIn("ve won!", html)
+        self.assertIn("Prize or cash?", html)
+        self.assertIn("£400", html)
+        self.assertIn("Claim my prize", self.p.get("/account").get_data(as_text=True))
+        self.post(f"/account/prizes/{claim}", {"choice": "cash"}, client=self.p)
+        self.assertEqual(self.q("SELECT prize_choice FROM prize_claims"), "cash")
+        self.post(f"/account/prizes/{claim}", {"choice": "prize"}, client=self.p)          # can change their mind
+        self.post(f"/account/prizes/{claim}", {"name": "Pat Player", "address": "1 High Street, Town, AB1 2CD", "phone": "0770"},
+                  client=self.p)
+        self.assertEqual(self.q("SELECT delivery_name FROM prize_claims"), "Pat Player")
+        self.assertGreaterEqual(self.q("SELECT COUNT(*) FROM claim_events WHERE actor_id=?", self.uid), 3)
+        self.assertIn("1 High Street", self.client.get(f"/admin/prizes/{claim}").get_data(as_text=True))
+        # staff move it along → the winner is told and sees progress; once shipping, choices lock
+        self.post(f"/admin/prizes/{claim}", {"status": "fulfilment", "note": "Courier booked"})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM notifications WHERE user_id=? AND dedupe_key=?", self.uid, f"claim:{claim}:fulfilment"), 1)
+        html = self.p.get(f"/account/prizes/{claim}").get_data(as_text=True)
+        self.assertIn("On its way", html)
+        self.assertNotIn("Prize or cash?", html)
+        self.post(f"/account/prizes/{claim}", {"choice": "cash"}, client=self.p)
+        self.assertEqual(self.q("SELECT prize_choice FROM prize_claims"), "prize")
+        other = self.app.test_client()
+        self.signup("other@example.com", client=other)
+        self.assertEqual(other.get(f"/account/prizes/{claim}").status_code, 404)
+
+    def test_draw_timeline_buckets(self):
+        from datetime import timedelta
+        from app import UK
+        from app.db import iso, utcnow
+        now = utcnow().astimezone(UK)
+        later = self.make_comp("Later Prize")
+        week = self.make_comp("Week Prize")
+        db = self.db()
+        db.execute("UPDATE competitions SET ends_at=? WHERE id=?", (iso(now + timedelta(days=30)), later))
+        db.execute("UPDATE competitions SET ends_at=? WHERE id=?", (iso(now + timedelta(days=4)), week))
+        db.commit()
+        for c in (self.cid, later, week):
+            self.add(c, 1, client=self.p)
+            self.checkout(client=self.p)
+        html = self.p.get("/account").get_data(as_text=True)
+        self.assertIn("<h3>This week</h3>", html)
+        self.assertIn("<h3>Later</h3>", html)
+        self.assertLess(html.index("Week Prize"), html.index("Later Prize"))
+        self.assertIn("Drawing this week", self.p.get("/account?tab=entries").get_data(as_text=True))
+
+    def test_results_show_your_entries_and_mine_filter(self):
+        self.add(self.cid, 2, client=self.p)
+        self.checkout(client=self.p)
+        other = self.make_comp("Not Mine")
+        self.add(other, 1)                                                        # someone else enters
+        self.checkout()
+        self.close()
+        self.close(other)
+        self.run_jobs()
+        html = self.p.get("/results").get_data(as_text=True)
+        self.assertIn("You won this draw", html)
+        self.assertIn("Not Mine", html)
+        mine = self.p.get("/results?mine=1").get_data(as_text=True)
+        self.assertNotIn("Not Mine", mine)
+        self.assertNotIn("You entered", self.app.test_client().get("/results").get_data(as_text=True))
+
+    def test_personal_home_and_calendar(self):
+        self.add(self.cid, 2, client=self.p)
+        self.checkout(client=self.p)
+        home = self.p.get("/").get_data(as_text=True)
+        self.assertIn("Welcome back, Pat", home)
+        self.assertIn("Your next draws", home)
+        self.assertNotIn("hero-banner", home)                                   # no generic banner for returning customers
+        self.assertIn("hero-banner", self.app.test_client().get("/").get_data(as_text=True))
+        cal = self.p.get("/draws").get_data(as_text=True)
+        self.assertIn("Test Prize", cal)
+        self.assertIn("You have 2 tickets", cal)
+        self.assertNotIn("You have", self.app.test_client().get("/draws").get_data(as_text=True))
+
+
+class Phase6AdminTests(AutoDrawBase):
+    def test_control_centre_queues(self):
+        self.add(self.cid, 1, client=self.p)
+        self.checkout(client=self.p)
+        from app.control import open_case
+        with self.app.test_request_context():
+            open_case("Pat", "player@example.com", "Payment", "Help", user_id=self.uid)
+        self.close()
+        self.run_jobs()
+        html = self.client.get("/admin/").get_data(as_text=True)
+        for title in ("Draws", "Prizes &amp; winners", "Money", "Free postal entries", "Customers &amp; support", "Technical"):
+            self.assertIn(title, html)
+        self.assertIn("waiting for the winner", html)
+        self.assertIn("#1 Payment", html)
+
+    def test_universal_search(self):
+        self.add(self.cid, 2, numbers="7,8", client=self.p)
+        chk = self.checkout(client=self.p)
+        r = self.client.get("/admin/search?q=player@example.com")
+        self.assertEqual(r.status_code, 302)                                     # single match → straight to the record
+        self.assertIn(f"/admin/customers/{self.uid}/timeline", r.headers["Location"])
+        html = self.client.get(f"/admin/search?q=ticket 7&go=0").get_data(as_text=True)
+        self.assertIn("Ticket #7 in Test Prize", html)
+        html = self.client.get(f"/admin/search?q=%23{chk}").get_data(as_text=True)
+        self.assertIn(f"Order #{chk}", html)
+        self.assertIn("Nothing matches", self.client.get("/admin/search?q=zzzzqqq").get_data(as_text=True))
+        self.role("support")
+        html = self.p.get(f"/admin/search?q=Test&go=0").get_data(as_text=True)
+        self.assertNotIn("Wallet transactions", html)
+
+
 class MigrationTest(unittest.TestCase):
     def test_v1_database_upgrades_in_place(self):
         tmp = tempfile.mkdtemp()

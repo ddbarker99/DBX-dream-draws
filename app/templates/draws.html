@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Draw calendar · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}Every upcoming {{ config.SITE_NAME }} draw by date and time, with tickets left and how to enter.{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Draw calendar</h1>
+  <p>Every upcoming draw, by date. Draws happen at the advertised time — selling out never brings a draw forward. {% if user %}{% if entered %}<span class="entered">You're in {{ entered }} of these</span>{% endif %}{% endif %} <a href="{{ url_for('public.results') }}">Past results →</a></p>
+</div>
+{% if days %}
+<div class="cal">{% for label, d, items in days %}
+  <section class="day" aria-labelledby="d-{{ d }}"><h2 id="d-{{ d }}">{{ label }}</h2>
+    {% for it in items %}<div class="row-item{{ ' mine' if it.mine }}">
+      <div><a href="{{ url_for('public.competition', slug=it.c.slug) }}"><b>{{ it.c.title }}</b></a>
+        <div class="tiny muted">{{ it.c.ticket_price|pp }} per ticket · {{ '{:,}'.format(it.c.max_tickets - it.sold) }} of {{ '{:,}'.format(it.c.max_tickets) }} left{% if it.mine %} · <span class="entered">You have {{ it.mine }} ticket{{ 's' if it.mine != 1 }}</span>{% endif %}</div></div>
+      <div class="small" style="text-align:right;white-space:nowrap">{% if it.closed %}<span class="pill pending">Draw pending</span>{% else %}{{ it.c.ends_at|uktime('%H:%M') }}{% endif %}</div>
+    </div>{% endfor %}
+  </section>{% endfor %}</div>
+{% else %}<div class="empty"><p>No draws are scheduled right now. New competitions are added regularly.</p><a class="btn" href="{{ url_for('public.results') }}">See past results</a></div>{% endif %}
+{% endblock %}

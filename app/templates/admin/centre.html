@@ -6,11 +6,23 @@
 {% include "admin/_bar.html" %}
 <div class="row" style="flex-wrap:wrap"><h1 style="margin:0">Control Centre</h1><span class="small muted">{{ admin_role_name }} · refreshes every 2 minutes</span></div>
 
-<section class="section" aria-labelledby="att-h" style="margin-top:var(--s4)">
-  <h2 id="att-h">Needs attention</h2>
-  {% if attention %}
-  <ul class="attention">{% for label, n, link, level in attention %}<li class="{{ level }}"><a href="{{ link }}"><b>{{ n }}</b> {{ label }}</a></li>{% endfor %}</ul>
-  {% else %}<div class="notice good"><span>Nothing needs attention right now.</span></div>{% endif %}
+<form class="inline-form" method="get" action="{{ url_for('control.search') }}" role="search" style="max-width:640px;margin:var(--s4) 0">
+  <label class="sr-only" for="as-q">Search customers, orders, tickets, competitions, references</label>
+  <input id="as-q" name="q" placeholder="Email, name, order #, ticket #, competition, w123, cs_…, pi_…" autocomplete="off">
+  <button class="btn ghost">Search</button>
+</form>
+
+<section aria-labelledby="board-h">
+  <h2 id="board-h" class="sr-only">Work queues</h2>
+  {% set waiting = queues|sum(attribute='total') %}
+  {% if not waiting %}<div class="notice good"><span>Nothing needs attention right now.</span></div>{% endif %}
+  <div class="board">{% for qu in queues %}
+    <section class="queue {{ 'empty' if not qu.total }}" aria-labelledby="q-{{ qu.key }}">
+      <div class="row"><h3 id="q-{{ qu.key }}"><a href="{{ qu.link }}">{{ qu.title }}</a></h3><span class="qcount {{ 'zero' if not qu.total }}">{{ qu.total }}</span></div>
+      {% if qu.rows %}<ul>{% for text, link, meta, level in qu.rows %}<li class="{{ level }}"><a href="{{ link }}">{{ text }}</a>{% if meta %}<span>{{ meta }}</span>{% endif %}</li>{% endfor %}</ul>
+      {% if qu.total > qu.rows|length %}<a class="small" href="{{ qu.link }}">+{{ qu.total - qu.rows|length }} more</a>{% endif %}
+      {% else %}<p class="small muted" style="margin:0">All clear</p>{% endif %}
+    </section>{% endfor %}</div>
 </section>
 
 <div class="quicklinks" style="margin-top:var(--s5)">
@@ -21,10 +33,10 @@
 </div>
 <p class="small muted">Today: {{ money.failed_today }} card checkout{{ 's' if money.failed_today != 1 }} not completed{% if money.refunded_today %} · {{ money.refunded_today|gbp }} refunded{% endif %}.</p>
 
-<section class="section" aria-labelledby="sys-h">
-  <div class="section-head"><h2 id="sys-h">System health</h2>{% if can('audit') %}<a class="btn ghost small" href="{{ url_for('control.health') }}">Details</a>{% endif %}</div>
-  <ul class="healthgrid">{% for c in health %}<li class="{{ 'ok' if c.ok else 'bad' }}"><b>{{ '✓' if c.ok else '✕' }} {{ c.name }}</b><span>{{ c.detail }}</span></li>{% endfor %}</ul>
-</section>
+<details class="section"><summary><b>System health</b> — {{ health|selectattr('ok')|list|length }} of {{ health|length }} checks OK</summary>
+  <ul class="healthgrid" style="margin-top:var(--s3)">{% for c in health %}<li class="{{ 'ok' if c.ok else 'bad' }}"><b>{{ '✓' if c.ok else '✕' }} {{ c.name }}</b><span>{{ c.detail }}</span></li>{% endfor %}</ul>
+  {% if can('audit') %}<a class="btn ghost small" href="{{ url_for('control.health') }}">Details</a>{% endif %}
+</details>
 
 {% if ending %}
 <section class="section" aria-labelledby="end-h"><h2 id="end-h">Drawing in the next 48 hours</h2>

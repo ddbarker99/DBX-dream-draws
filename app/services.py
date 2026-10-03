@@ -943,6 +943,57 @@ def _new_claim(db, comp_id, draw_id, winner, actor):
                (cur.lastrowid, now, actor["id"] if actor else None, "selected", "Selected by the draw"))
 
 
+# What the winner sees on their prize page for each claim status: (heading, what happens next).
+CLAIM_CUSTOMER = {
+    "selected": ("You've won!", "Tell us how you'd like your prize below. We'll contact you within 1 working day to confirm "
+                 "a few details. We will never ask you to pay to claim a prize."),
+    "contacted": ("We've been in touch", "Check your email (and spam folder) and reply so we can confirm your details."),
+    "verification": ("Checking a few details", "We're confirming you're eligible (18+, UK, one entry per the rules). "
+                     "This usually takes 1–2 working days."),
+    "verified": ("All checked", "You're verified. If you haven't yet, choose the prize or the cash alternative below."),
+    "chosen": ("Choice confirmed", "We're arranging your prize now."),
+    "fulfilment": ("On its way", "Your prize is being delivered or your cash is being paid. We'll tell you when it's done."),
+    "delivered": ("Prize received", "Enjoy! If you're happy for us to share a photo or a few words, reply to our email."),
+    "forfeited": ("Prize not claimed", "This prize couldn't be awarded under the terms. Contact us if you think this is a mistake."),
+}
+CLAIM_STEPS = ["selected", "verification", "chosen", "fulfilment", "delivered"]     # the progress bar the winner sees
+
+
+def claim_for_customer(db, claim_id, user_id):
+    return db.execute(
+        "SELECT pc.*, c.title, c.slug, c.image, c.cash_alternative, c.prize_value, c.drawn_at, c.description, t.number "
+        "FROM prize_claims pc JOIN competitions c ON c.id=pc.competition_id JOIN tickets t ON t.id=pc.ticket_id "
+        "WHERE pc.id=? AND pc.user_id=?", (claim_id, user_id)).fetchone()
+
+
+def customer_claim_update(claim_id, user, choice=None, delivery=None):
+    """The winner chooses prize/cash alternative and/or gives delivery details. Recorded in the claim history."""
+    with write_txn() as db:
+        c = claim_for_customer(db, claim_id, user["id"])
+        if c is None:
+            raise PurchaseError("That prize isn't on your account.")
+        if c["status"] in ("fulfilment", "delivered", "forfeited"):
+            raise PurchaseError("Your prize is already being sent — contact us if something needs to change.")
+        now, notes = iso(utcnow()), []
+        if choice:
+            if choice not in ("prize", "cash") or (choice == "cash" and not c["cash_alternative"]):
+                raise PurchaseError("Choose the prize or the advertised cash alternative.")
+            db.execute("UPDATE prize_claims SET prize_choice=?, choice_at=?, updated_at=? WHERE id=?", (choice, now, now, claim_id))
+            notes.append(f"Winner chose {'the cash alternative (' + c['cash_alternative'] + ')' if choice == 'cash' else 'the prize'}")
+        if delivery is not None:
+            name, address, phone = (" ".join((delivery.get(k) or "").split())[:200] for k in ("name", "address", "phone"))
+            if not name or len(address) < 10:
+                raise PurchaseError("Enter the name and full address for delivery (including postcode).")
+            db.execute("UPDATE prize_claims SET delivery_name=?, delivery_address=?, delivery_phone=?, updated_at=? WHERE id=?",
+                       (name, address, phone or None, now, claim_id))
+            notes.append("Winner provided delivery details")
+        if not notes:
+            raise PurchaseError("Nothing to save.")
+        db.execute("INSERT INTO claim_events (claim_id, created_at, actor_id, status, note) VALUES (?,?,?,?,?)",
+                   (claim_id, now, user["id"], None, "; ".join(notes)))
+        audit(db, "claim.customer", f"comp:{c['competition_id']}", f"Claim #{claim_id}: " + "; ".join(notes), actor=user)
+
+
 def update_claim(claim_id, status, note, actor, evidence=None, choice=None):
     if status and status not in CLAIM_NAMES:
         raise PurchaseError("Unknown status.")

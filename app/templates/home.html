@@ -1,6 +1,22 @@
 {% extends "base.html" %}
 {% block canonical %}{{ config.SITE_URL }}/{% endblock %}
 {% block content %}
+{% if me %}
+<section class="myhome" aria-labelledby="me-h">
+  <div class="row"><h1 id="me-h" style="margin:0">Welcome back, {{ user.name.split()[0] }}</h1><a class="btn ghost small" href="{{ url_for('public.account') }}">My account</a></div>
+  {% if me.attention %}<ul class="youratt" style="margin-top:var(--s3)">{% for text, link, label, level in me.attention[:3] %}<li class="{{ level }}"><span>{{ text }}</span><a class="btn small {{ 'green' if level == 'good' else 'ghost' }}" href="{{ link }}">{{ label }}</a></li>{% endfor %}</ul>{% endif %}
+  <div class="quicklinks" style="margin-top:var(--s3)">
+    <a href="{{ url_for('public.account', tab='entries') }}"><b>{{ me.n_upcoming }}</b><span>Upcoming draws you're in</span></a>
+    <a href="{{ url_for('public.account', tab='wallet') }}"><b>{{ me.bal.cash|gbp }}</b><span>Cash balance</span></a>
+    <a href="{{ url_for('public.account', tab='wallet') }}"><b>{{ (me.bal.credit + me.bal.deposit)|gbp }}</b><span>Site credit &amp; funds</span></a>
+    <a href="{{ url_for('public.account', tab='points') }}"><b>{{ '{:,}'.format(me.points) }}</b><span>DBX Points</span></a>
+  </div>
+  {% if me.next %}<h2 style="font-size:18px;margin:var(--s4) 0 var(--s2)">Your next draws</h2>
+  <div class="nextdraws">{% for e in me.next %}<a href="{{ url_for('public.competition', slug=e.slug) }}"><b>{{ e.title }}</b><span>{{ 'Waiting for the draw' if not e.open else e.ends_at|uktime('%a %d %b, %H:%M') }} · {{ e.tickets|length }} ticket{{ 's' if e.tickets|length != 1 }}</span></a>{% endfor %}</div>
+  {% else %}<p class="muted" style="margin:var(--s3) 0 0">You're not in any upcoming draws. Have a look at what's live below.</p>{% endif %}
+  {% if me.recent %}<p class="small" style="margin:var(--s3) 0 0">Recent results: {% for e in me.recent %}<a href="{{ url_for('public.competition', slug=e.slug) }}">{{ e.title }}</a> — {{ 'you won! 🏆' if e.won else 'winning ticket #' ~ e.winning_number }}{{ ' · ' if not loop.last }}{% endfor %} · <a href="{{ url_for('public.results', mine=1) }}">all my results</a></p>{% endif %}
+</section>
+{% else %}
 <div class="hero-banner">
   <picture>
     <source media="(max-width:700px)" srcset="{{ url_for('static', filename='brand/banner-900.webp') }}?v={{ asset_v }}" type="image/webp">
@@ -19,6 +35,7 @@
     <a class="textlink" href="{{ url_for('public.instant_wins') }}">or play Instant Wins →</a>
   </div>
 </section>
+{% endif %}
 
 {% if featured %}{% set f = featured %}
 <section class="section" aria-labelledby="feat-h">

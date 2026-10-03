@@ -138,6 +138,11 @@ MIGRATIONS = [
     # v12: production hardening
     ("checkouts", "payment_intent", "TEXT"),                  # Stripe payment, to match refunds and chargebacks
     ("cases", "reason", "TEXT"),                              # what the customer was actually confused about
+    # v13: customer experience & growth
+    ("prize_claims", "delivery_name", "TEXT"),                # winner's delivery details, given on their prize page
+    ("prize_claims", "delivery_address", "TEXT"),
+    ("prize_claims", "delivery_phone", "TEXT"),
+    ("prize_claims", "choice_at", "TEXT"),
 ]
 
 # Triggers that use columns added by MIGRATIONS, so they're created after them.

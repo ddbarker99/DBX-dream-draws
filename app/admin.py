@@ -694,12 +694,16 @@ def announce_draw(cid):
     link = url_for("public.competition", slug=c["slug"])
     full = f"{current_app.config['SITE_URL']}{link}"
     wuid = d["winner_user_id"] if d else None
-    tell(w["email"], f"🎉 You've won {c['title']}!", kind="win", key=f"win:{d['id'] if d else cid}", user_id=wuid, link=link,
+    claim = db.execute("SELECT id FROM prize_claims WHERE draw_id=?", (d["id"],)).fetchone() if d else None
+    prize_link = url_for("public.prize_claim", claim_id=claim["id"]) if claim and wuid else link
+    tell(w["email"], f"🎉 You've won {c['title']}!", kind="win", key=f"win:{d['id'] if d else cid}", user_id=wuid, link=prize_link,
          title=f"You won {c['title']}!",
          body=f"Hi {w['name'].split()[0]},\n\nCongratulations — your ticket #{w['number']} has just won:"
               + (f"\n\nPrefer cash? You can choose the cash alternative of {c['cash_alternative']} instead." if c["cash_alternative"] else "")
-              + "\n\nWe'll be in touch very shortly to arrange your prize. We will never ask you to pay to claim it.",
-         highlight=c["title"], heading="You're a winner!", button=("See the draw", full),
+              + "\n\nOpen your prize page to tell us how you'd like it and where to send it, and to follow its progress. "
+              "We'll also be in touch very shortly. We will never ask you to pay to claim it.",
+         highlight=c["title"], heading="You're a winner!",
+         button=("Claim my prize", current_app.config["SITE_URL"] + prize_link) if prize_link != link else ("See the draw", full),
          preheader=f"Ticket #{w['number']} has won {c['title']}!")
     for (uid,) in db.execute("SELECT DISTINCT user_id FROM tickets WHERE competition_id=? AND status='issued' AND user_id IS NOT NULL "
                              "AND user_id IS NOT ?", (cid, wuid)).fetchall():
@@ -1373,8 +1377,17 @@ def claim_detail(claim_id):
             evidence = f"claim{claim_id}-{secrets.token_hex(6)}{ext}"
             f.save(os.path.join(_evidence_dir(), evidence))
         try:
-            update_claim(claim_id, request.form.get("status") or None, request.form.get("note", ""), g.user, evidence,
-                         request.form.get("choice"))
+            before = update_claim(claim_id, request.form.get("status") or None, request.form.get("note", ""), g.user, evidence,
+                                  request.form.get("choice"))
+            new = request.form.get("status")
+            if new and new != before["status"] and before["user_id"]:
+                from .services import CLAIM_CUSTOMER
+                u = db.execute("SELECT email, name FROM users WHERE id=?", (before["user_id"],)).fetchone()
+                comp = db.execute("SELECT title FROM competitions WHERE id=?", (before["competition_id"],)).fetchone()
+                head, nxt = CLAIM_CUSTOMER.get(new, ("Update", ""))
+                tell(u["email"], f"Your prize: {head} — {comp['title']}", f"Hi {u['name'].split()[0]},\n\n{head}.\n\n{nxt}",
+                     kind="win", key=f"claim:{claim_id}:{new}", user_id=before["user_id"],
+                     link=url_for("public.prize_claim", claim_id=claim_id), title=f"{comp['title']}: {head}")
             flash("Saved.")
         except PurchaseError as e:
             flash(str(e), "error")

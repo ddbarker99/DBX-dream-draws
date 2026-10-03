@@ -15,7 +15,8 @@
       {% if c.address %}<div><dt>Postal address</dt><dd>{{ c.address }}</dd></div>{% endif %}
       <div><dt>Winning ticket</dt><dd>#{{ c.number }}</dd></div>
       <div><dt>Prize value</dt><dd>{{ c.prize_value|gbp }}{% if c.cash_alternative %} · cash alternative {{ c.cash_alternative }}{% endif %}</dd></div>
-      <div><dt>Winner's choice</dt><dd>{{ {'prize':'The prize','cash':'Cash alternative'}.get(c.prize_choice, 'Not chosen yet') }}</dd></div>
+      <div><dt>Winner's choice</dt><dd>{{ {'prize':'The prize','cash':'Cash alternative'}.get(c.prize_choice, 'Not chosen yet') }}{% if c.choice_at %} · {{ c.choice_at|uktime('%d %b %H:%M') }} (by the winner){% endif %}</dd></div>
+      <div><dt>Delivery details</dt><dd>{% if c.delivery_address %}{{ c.delivery_name }}<br>{{ c.delivery_address }}{% if c.delivery_phone %}<br>{{ c.delivery_phone }}{% endif %}{% else %}<span class="muted">Not given yet — the winner adds them on their prize page</span>{% endif %}</dd></div>
     </dl>
     <p class="small muted">Never ask a winner to pay anything to claim. If they can't be verified or don't respond within the time in the terms, mark the claim <b>Forfeited</b> and redraw from the <a href="{{ url_for('admin.entries', cid=c.comp_id) }}#draw">competition page</a>.</p>
   </section>

@@ -133,6 +133,7 @@
         <li><a href="{{ url_for('public.transparency') }}">Transparency centre</a></li>
         <li><a href="{{ url_for('public.how_it_works') }}">How it works</a></li>
         <li><a href="{{ url_for('public.page', page='fair-draws') }}">Fair draws</a></li>
+        <li><a href="{{ url_for('public.draw_calendar') }}">Draw calendar</a></li>
         <li><a href="{{ url_for('public.page', page='faq') }}">FAQs</a></li>
         <li><a href="{{ url_for('public.page', page='about') }}">About us</a></li>
         <li><a href="{{ url_for('public.support_centre') if user and feature('support_centre') else url_for('public.contact') }}">{{ 'Help & support' if user and feature('support_centre') else 'Contact us' }}</a></li>

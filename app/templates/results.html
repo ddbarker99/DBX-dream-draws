@@ -11,14 +11,16 @@
 <form class="inline-form" method="get" role="search" style="max-width:640px;flex-wrap:wrap;margin-bottom:var(--s4)">
   <label class="sr-only" for="rq">Search results</label><input id="rq" name="q" type="search" value="{{ q }}" placeholder="Search by prize">
   <label class="sr-only" for="ry">Year</label><select id="ry" name="year"><option value="">All years</option>{% for y in years %}<option {{ 'selected' if year and y|int == year }}>{{ y }}</option>{% endfor %}</select>
+  {% if user %}<label class="check" style="margin:0"><input type="checkbox" name="mine" value="1" {{ 'checked' if mine }} onchange="this.form.submit()"> Only draws I entered</label>{% endif %}
   <button class="btn ghost">Search</button>
 </form>
 {% if items %}
 <div class="panel table-scroll" tabindex="0"><table>
   <thead><tr><th scope="col">Prize</th><th scope="col">Drawn</th><th scope="col">Entries</th><th scope="col">Winning ticket</th><th scope="col">Winner</th></tr></thead><tbody>
-  {% for it in items %}<tr><td><a href="{{ url_for('public.competition', slug=it.c.slug) }}">{{ it.c.title }}</a>{% if it.c.n_draws > 1 %} <span class="pill">redrawn</span>{% endif %}</td>
+  {% for it in items %}<tr><td><a href="{{ url_for('public.competition', slug=it.c.slug) }}">{{ it.c.title }}</a>{% if it.c.n_draws > 1 %} <span class="pill">redrawn</span>{% endif %}
+      {% if it.mine %}<div><span class="entered">{{ '🏆 You won this draw' if it.won else 'You entered this draw' }}</span> <span class="tiny muted">your ticket{{ 's' if it.mine|length != 1 }}: {% for n in it.mine[:12] %}#{{ n }}{{ ', ' if not loop.last }}{% endfor %}{% if it.mine|length > 12 %} +{{ it.mine|length - 12 }} more{% endif %}</span></div>{% endif %}</td>
     <td>{{ it.c.drawn_at|uktime('%d %b %Y') }}</td><td>{{ '{:,}'.format(it.c.entry_count or 0) }}</td><td><b>#{{ it.number }}</b></td><td>{{ it.name or '—' }}</td></tr>{% endfor %}
   </tbody></table></div>
-{% if pages > 1 %}<nav class="pager" aria-label="Pages">{% if page > 1 %}<a class="btn ghost small" href="{{ url_for('public.results', q=q or None, year=year, page=page-1) }}">← Newer</a>{% endif %}<span class="small muted">Page {{ page }} of {{ pages }}</span>{% if page < pages %}<a class="btn ghost small" href="{{ url_for('public.results', q=q or None, year=year, page=page+1) }}">Older →</a>{% endif %}</nav>{% endif %}
-{% else %}<div class="empty"><p>{% if q or year %}No results match that search.{% else %}No draws have finished yet — results will appear here.{% endif %}</p><a class="btn" href="{{ url_for('public.competitions') }}">See live competitions</a></div>{% endif %}
+{% if pages > 1 %}<nav class="pager" aria-label="Pages">{% if page > 1 %}<a class="btn ghost small" href="{{ url_for('public.results', q=q or None, year=year, mine=1 if mine else None, page=page-1) }}">← Newer</a>{% endif %}<span class="small muted">Page {{ page }} of {{ pages }}</span>{% if page < pages %}<a class="btn ghost small" href="{{ url_for('public.results', q=q or None, year=year, mine=1 if mine else None, page=page+1) }}">Older →</a>{% endif %}</nav>{% endif %}
+{% else %}<div class="empty"><p>{% if mine %}None of the draws you entered have finished yet — they'll appear here with your result.{% elif q or year %}No results match that search.{% else %}No draws have finished yet — results will appear here.{% endif %}</p><a class="btn" href="{{ url_for('public.competitions') }}">See live competitions</a></div>{% endif %}
 {% endblock %}

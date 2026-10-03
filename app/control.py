@@ -58,6 +58,87 @@ def attention_items(db):
     return sorted(items, key=lambda x: order[x[3]])
 
 
+def work_queues(db):
+    """The Control Centre board: each area of the business with the specific items waiting, most urgent first.
+    Each queue: {key, title, link, rows: [(text, link, meta, level)], total}."""
+    now = utcnow()
+    q = []
+
+    def queue(key, title, link, items, total=None):
+        q.append({"key": key, "title": title, "link": link, "rows": items[:5], "total": len(items) if total is None else total})
+
+    items = []
+    for c in db.execute("SELECT id, title, ends_at FROM competitions WHERE status='live' AND game_type='' AND locked_at IS NOT NULL"):
+        items.append((c["title"], url_for("admin.entries", cid=c["id"]) + "#draw", "closed — ready to draw", "bad"))
+    for c in db.execute("SELECT c.id, c.title, c.ends_at, (SELECT COUNT(*) FROM postal_entries p WHERE p.competition_id=c.id "
+                        "AND p.status='received') AS postal FROM competitions c WHERE c.status='live' AND c.locked_at IS NULL AND c.ends_at<?",
+                        (iso(now - timedelta(minutes=50)),)):
+        items.append((c["title"], url_for("admin.entries", cid=c["id"]), f"past closing — {c['postal']} postal waiting" if c["postal"]
+                      else "past closing — payments still finishing", "bad"))
+    for c in db.execute("SELECT id, title, ends_at FROM competitions WHERE status='live' AND game_type='' AND ends_at>? AND ends_at<? "
+                        "ORDER BY ends_at", (iso(now), iso(now + timedelta(hours=24)))):
+        items.append((c["title"], url_for("admin.entries", cid=c["id"]),
+                      "draws at " + parse_iso(c["ends_at"]).astimezone(UK).strftime("%H:%M") + " (next 24 h)", "info"))
+    queue("draws", "Draws", url_for("admin.dashboard"), items, total=sum(1 for i in items if i[3] != "info"))
+
+    items = []
+    for r in db.execute("SELECT pc.id, pc.status, pc.prize_choice, pc.delivery_address, pc.updated_at, c.title, c.cash_alternative "
+                        "FROM prize_claims pc JOIN competitions c ON c.id=pc.competition_id "
+                        "WHERE pc.status NOT IN ('delivered','forfeited') ORDER BY pc.created_at"):
+        waiting_on_winner = (r["cash_alternative"] and not r["prize_choice"]) or (r["prize_choice"] != "cash" and not r["delivery_address"])
+        stale = parse_iso(r["updated_at"]) < now - timedelta(days=3)
+        meta = ("waiting for the winner" + (" for 3+ days — chase them" if stale else "")) if waiting_on_winner else \
+            ("winner ready — " + ("pay the cash alternative" if r["prize_choice"] == "cash" else "arrange delivery"))
+        items.append((r["title"], url_for("admin.claim_detail", claim_id=r["id"]), meta,
+                      "bad" if (stale or not waiting_on_winner) else "warn"))
+    n_instant = _sum(db, "SELECT COUNT(*) FROM instant_prizes WHERE ticket_id IS NOT NULL AND fulfilled=0 AND credit_amount=0")
+    if n_instant:
+        items.append((f"{n_instant} physical instant prize{'s' if n_instant != 1 else ''} to send", url_for("admin.prizes"), "", "warn"))
+    items.sort(key=lambda x: {"bad": 0, "warn": 1}.get(x[3], 2))
+    queue("prizes", "Prizes & winners", url_for("admin.prizes"), items)
+
+    items = []
+    for w in db.execute("SELECT w.id, w.amount, w.created_at, w.status, u.name FROM withdrawals w JOIN users u ON u.id=w.user_id "
+                        "WHERE w.status IN ('requested','processing') ORDER BY w.created_at"):
+        old = parse_iso(w["created_at"]) < now - timedelta(hours=24)
+        items.append((f"Withdrawal £{w['amount'] / 100:.2f} — {w['name']}", url_for("admin.payouts"),
+                      f"{w['status']}, waiting {int((now - parse_iso(w['created_at'])).total_seconds() // 3600)} h", "bad" if old else "warn"))
+    for k in db.execute("SELECT id, cash_due FROM checkouts WHERE status='needs_refund' ORDER BY id"):
+        items.append((f"Refund due: order #{k['id']} (£{k['cash_due'] / 100:.2f})", url_for("admin.payouts"), "refund in Stripe, then mark done", "bad"))
+    for d in db.execute("SELECT id, amount FROM deposits WHERE status='needs_refund'"):
+        items.append((f"Deposit refund due #{d['id']} (£{d['amount'] / 100:.2f})", url_for("admin.payouts"), "", "bad"))
+    n_flags = _sum(db, "SELECT COUNT(*) FROM flags WHERE status='open' AND kind IN ('Reconciliation','Payment reversal')")
+    if n_flags:
+        items.append((f"{n_flags} Stripe mismatch / chargeback flag{'s' if n_flags != 1 else ''}", url_for("control.flags"), "", "bad"))
+    items.sort(key=lambda x: {"bad": 0, "warn": 1}.get(x[3], 2))
+    queue("money", "Money", url_for("admin.payouts"), items)
+
+    items = [(f"{r['title']}: {r['n']} envelope{'s' if r['n'] != 1 else ''}", url_for("admin.postal_queue"),
+              "closes " + r["ends_at"][:10], "bad" if r["ends_at"] < iso(now) else "warn")
+             for r in db.execute("SELECT c.title, c.ends_at, COUNT(*) n FROM postal_entries p JOIN competitions c ON c.id=p.competition_id "
+                                 "WHERE p.status='received' GROUP BY c.id ORDER BY c.ends_at")]
+    queue("postal", "Free postal entries", url_for("admin.postal_queue"), items)
+
+    items = []
+    for k in db.execute(f"SELECT k.id, k.topic, k.priority, k.updated_at, k.name FROM cases k WHERE k.status='open' "
+                        f"ORDER BY {PRIORITY_ORDER}, k.updated_at"):
+        hrs = int((now - parse_iso(k["updated_at"])).total_seconds() // 3600)
+        items.append((f"#{k['id']} {k['topic']} — {k['name']}", url_for("control.case_detail", case_id=k["id"]),
+                      f"{k['priority']} · waiting {hrs} h", "bad" if (k["priority"] == "high" or hrs >= 24) else "warn"))
+    n_other = _sum(db, "SELECT COUNT(*) FROM flags WHERE status='open' AND kind NOT IN ('Reconciliation','Payment reversal')")
+    if n_other:
+        items.append((f"{n_other} fraud / abuse flag{'s' if n_other != 1 else ''} to review", url_for("control.flags"), "", "warn"))
+    queue("customers", "Customers & support", url_for("control.cases"), items)
+
+    from .jobs import health_checks
+    items = [(c["name"], url_for("control.health"), c["detail"], "bad") for c in health_checks(db) if not c["ok"]]
+    n_err = _sum(db, "SELECT COUNT(*) FROM error_log WHERE resolved_at IS NULL")
+    if n_err:
+        items.append((f"{n_err} unresolved server error{'s' if n_err != 1 else ''}", url_for("control.targets") + "#errors", "", "warn"))
+    queue("tech", "Technical", url_for("control.health"), items)
+    return q
+
+
 @bp.route("/")
 @require("comps.view")
 def centre():
@@ -86,12 +167,85 @@ def centre():
                      "postal": _sum(db, "SELECT COUNT(*) FROM postal_entries WHERE competition_id=? AND status='received'", c["id"]),
                      "hours": (parse_iso(c["ends_at"]) - utcnow()).total_seconds() / 3600})
     from .jobs import health_checks
-    return render_template("admin/centre.html", money=money, attention=attention_items(db), live=live,
+    return render_template("admin/centre.html", money=money, attention=attention_items(db), live=live, queues=work_queues(db),
                            ending=[x for x in live if 0 < x["hours"] <= 48], stage_names=LIFECYCLE_NAMES,
                            instant_left=sum(x["instant_left"] for x in live),
                            instant_value=_sum(db, "SELECT SUM(ip.value) FROM instant_prizes ip JOIN competitions c ON c.id=ip.competition_id "
                                                   "WHERE c.status='live' AND ip.ticket_id IS NULL"),
                            health=health_checks(db))
+
+
+# ---------------- universal admin search ----------------
+
+@bp.route("/search")
+@require("comps.view")
+def search():
+    """One box for everything staff look up: customers, orders, tickets, competitions, withdrawals, deposits, cases and
+    Stripe references. Results are grouped; a single exact match goes straight to the record."""
+    import re as _re
+    db = get_db()
+    q = " ".join(request.args.get("q", "").split())[:80]
+    groups = {}
+
+    def hit(group, label, link, meta=""):
+        groups.setdefault(group, []).append((label, link, meta))
+
+    if q:
+        low = q.lower()
+        ref = _re.fullmatch(r"(?i)(order|checkout|c|w|withdrawal|d|deposit|case|t|ticket|#)\s*#?(\d+)", q)
+        num = int(ref.group(2)) if ref else (int(q.lstrip("#")) if q.lstrip("#").isdigit() else None)
+        kind = (ref.group(1).lower() if ref else "")
+        if can(g.user, "users.view"):
+            for u in db.execute("SELECT id, name, email, phone FROM users WHERE email LIKE ? OR name LIKE ? OR (phone IS NOT NULL AND "
+                                "replace(phone,' ','') LIKE ?) ORDER BY id DESC LIMIT 20", (f"%{q}%", f"%{q}%",
+                                                                                              f"%{q.replace(' ', '')}%" if len(q) >= 6 else "\x00")):
+                hit("Customers", f"{u['name']} · {u['email']}", url_for("control.timeline", uid=u["id"]), f"#{u['id']}")
+        if num is not None:
+            if kind in ("", "#", "order", "checkout", "c"):
+                for k in db.execute("SELECT k.id, k.status, k.cash_due, u.email, u.id AS uid FROM checkouts k JOIN users u ON u.id=k.user_id "
+                                    "WHERE k.id=?", (num,)):
+                    hit("Orders", f"Order #{k['id']} · {k['status']} · £{k['cash_due'] / 100:.2f}", url_for("control.timeline", uid=k["uid"]),
+                        k["email"])
+            if kind in ("", "#", "t", "ticket"):
+                for t in db.execute("SELECT t.number, t.status, c.title, c.id AS cid, COALESCE(u.email, p.email) AS who, u.id AS uid "
+                                    "FROM tickets t JOIN competitions c ON c.id=t.competition_id LEFT JOIN users u ON u.id=t.user_id "
+                                    "LEFT JOIN postal_entries p ON p.id=t.postal_entry_id WHERE t.number=? ORDER BY c.id DESC LIMIT 30", (num,)):
+                    hit("Tickets", f"Ticket #{t['number']} in {t['title']}", url_for("admin.entries", cid=t["cid"]),
+                        f"{t['who'] or 'unknown'} · {t['status']}")
+            if kind in ("", "#", "w", "withdrawal") and can(g.user, "money"):
+                for w in db.execute("SELECT w.id, w.amount, w.status, u.email FROM withdrawals w JOIN users u ON u.id=w.user_id WHERE w.id=?", (num,)):
+                    hit("Withdrawals", f"Withdrawal #{w['id']} · £{w['amount'] / 100:.2f} · {w['status']}", url_for("admin.payouts"), w["email"])
+            if kind in ("", "#", "d", "deposit") and can(g.user, "money"):
+                for d in db.execute("SELECT d.id, d.amount, d.status, u.email, u.id AS uid FROM deposits d JOIN users u ON u.id=d.user_id "
+                                    "WHERE d.id=?", (num,)):
+                    hit("Deposits", f"Deposit #{d['id']} · £{d['amount'] / 100:.2f} · {d['status']}", url_for("control.timeline", uid=d["uid"]),
+                        d["email"])
+            if kind in ("", "#", "case") and can(g.user, "cases"):
+                for k in db.execute("SELECT id, topic, status, email FROM cases WHERE id=?", (num,)):
+                    hit("Support cases", f"Case #{k['id']} · {k['topic']} · {k['status']}", url_for("control.case_detail", case_id=k["id"]), k["email"])
+            for c in db.execute("SELECT id, title, status FROM competitions WHERE id=?", (num,)):
+                hit("Competitions", f"{c['title']} (#{c['id']})", url_for("admin.entries", cid=c["id"]), c["status"])
+        if low.startswith(("cs_", "pi_")):
+            for k in db.execute("SELECT id, user_id, status FROM checkouts WHERE stripe_session_id=? OR payment_intent=?", (q, q)):
+                hit("Orders", f"Order #{k['id']} · {k['status']}", url_for("control.timeline", uid=k["user_id"]), q)
+            for d in db.execute("SELECT id, user_id, status FROM deposits WHERE stripe_session_id=? OR payment_intent=?", (q, q)):
+                hit("Deposits", f"Deposit #{d['id']} · {d['status']}", url_for("control.timeline", uid=d["user_id"]), q)
+        if len(q) >= 3 and not low.startswith(("cs_", "pi_")):
+            for c in db.execute("SELECT id, title, status, ends_at FROM competitions WHERE title LIKE ? OR slug LIKE ? ORDER BY id DESC LIMIT 20",
+                                (f"%{q}%", f"%{q}%")):
+                hit("Competitions", c["title"], url_for("admin.entries", cid=c["id"]), f"{c['status']} · closes {c['ends_at'][:10]}")
+            if can(g.user, "money") or can(g.user, "audit"):
+                for l in db.execute("SELECT l.id, l.amount, l.kind, l.reason, l.ref, l.created_at, u.id AS uid, u.email FROM credit_ledger l "
+                                    "JOIN users u ON u.id=l.user_id WHERE l.ref=? OR l.reason LIKE ? ORDER BY l.id DESC LIMIT 20", (q, f"%{q}%")):
+                    hit("Wallet transactions", f"{'+' if l['amount'] > 0 else ''}£{l['amount'] / 100:.2f} {l['kind']} · {l['reason'][:60]}",
+                        url_for("control.timeline", uid=l["uid"]), f"{l['email']} · {l['created_at'][:10]}")
+        total = sum(len(v) for v in groups.values())
+        if total == 1 and request.args.get("go", "1") == "1":
+            audit(db, "admin.search", None, f"Search {q!r} → 1 result")
+            return redirect(next(iter(groups.values()))[0][1])
+        audit(db, "admin.search", None, f"Search {q!r} → {total} results")
+    order = ["Customers", "Orders", "Tickets", "Competitions", "Withdrawals", "Deposits", "Support cases", "Wallet transactions"]
+    return render_template("admin/search.html", q=q, groups=[(k, groups[k]) for k in order if k in groups])
 
 
 # ---------------- financial reconciliation ----------------

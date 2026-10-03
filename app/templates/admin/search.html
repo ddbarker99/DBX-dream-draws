@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Search · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Search</h1>
+<form class="inline-form" method="get" role="search" style="max-width:640px;margin-bottom:var(--s4)">
+  <label class="sr-only" for="sq">Search</label>
+  <input id="sq" name="q" value="{{ q }}" placeholder="Email, name, phone, order #, ticket #, competition, w123, d45, case 7, cs_…, pi_…" autofocus>
+  <button class="btn">Search</button>
+</form>
+<p class="small muted">Tips: <code>#123</code> finds order, ticket, withdrawal, deposit, case or competition 123 · <code>w123</code> a withdrawal · <code>ticket 42</code> ticket number 42 in every competition · paste a Stripe <code>cs_…</code> or <code>pi_…</code> reference. One exact match opens straight away.</p>
+{% if q %}
+  {% for group, rows in groups %}<section class="section" aria-labelledby="g-{{ loop.index }}"><h2 id="g-{{ loop.index }}" style="font-size:18px">{{ group }}</h2>
+    <div class="panel table-scroll" tabindex="0" role="region" aria-labelledby="g-{{ loop.index }}"><table><tbody>
+    {% for label, link, meta in rows %}<tr><td><a href="{{ link }}">{{ label }}</a></td><td class="small muted">{{ meta }}</td></tr>{% endfor %}
+    </tbody></table></div></section>
+  {% else %}<div class="empty"><p>Nothing matches “{{ q }}”. Try part of an email or name, an order or ticket number, or a Stripe reference.</p></div>{% endfor %}
+{% endif %}
+{% endblock %}

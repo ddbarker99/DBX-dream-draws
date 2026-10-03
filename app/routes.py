@@ -152,10 +152,22 @@ def home():
     track("home")
     featured = next((x for x in draws if x["c"]["featured"]), None)
     ending = sorted([x for x in draws if x is not featured], key=lambda x: x["hours_left"])[:8]
+    me = None
+    if g.user:                                   # returning customers see their own things first
+        groups = _entry_groups(db, g.user["id"])
+        for e in groups:
+            e.setdefault("open", e["status"] == "live" and parse_iso(e["ends_at"]) > utcnow())
+        tl = draw_timeline(groups)
+        upcoming_all = [e for _, items in tl for e in items]
+        me = {"timeline": tl, "next": upcoming_all[:3], "n_upcoming": len(upcoming_all), "bal": balances(db, g.user["id"]),
+              "points": g.user["points"], "attention": _attention(db, g.user, balances(db, g.user["id"])),
+              "plays": sum(e["unplayed"] for e in groups),
+              "recent": [e for e in groups if e["status"] == "drawn" and e["drawn_at"]
+                         and parse_iso(e["drawn_at"]) > utcnow() - timedelta(days=14)][:3]}
     return render_template("home.html", featured=featured, ending=ending, n_draws=len(draws), games=games[:4],
                            n_games=len(games), free_game=free_game, free_claimed=free_claimed,
                            stats=site_stats(db), recent=_recent_instant(db, 6), draw_winners=_draw_winners(db, 3),
-                           public_name=public_name)
+                           public_name=public_name, me=me)
 
 
 FILTERS = [("all", "All live"), ("ending", "Ending soon"), ("new", "New"), ("instant", "With instant prizes")]
@@ -300,6 +312,29 @@ def winners():
     return render_template("winners.html", **ctx)
 
 
+@bp.route("/draws")
+def draw_calendar():
+    """Public calendar of upcoming draws. Logged-in customers see the ones they've entered highlighted."""
+    from . import UK
+    db = get_db()
+    rows = db.execute("SELECT * FROM competitions WHERE status='live' AND game_type='' AND (starts_at IS NULL OR starts_at<=?) "
+                      "ORDER BY ends_at LIMIT 200", (iso(utcnow()),)).fetchall()
+    mine = {}
+    if g.user and rows:
+        for cid, n in db.execute("SELECT competition_id, COUNT(*) FROM tickets WHERE user_id=? AND status='issued' GROUP BY 1",
+                                 (g.user["id"],)):
+            mine[cid] = n
+    days = {}
+    for c in rows:
+        d = parse_iso(c["ends_at"]).astimezone(UK).date()
+        days.setdefault(d, []).append({"c": c, "sold": sold_count(db, c["id"]), "mine": mine.get(c["id"], 0),
+                                       "closed": parse_iso(c["ends_at"]) <= utcnow()})
+    today = utcnow().astimezone(UK).date()
+    label = lambda d: "Today" if d == today else ("Tomorrow" if d == today + timedelta(days=1) else d.strftime("%A %d %B"))  # noqa: E731
+    return render_template("draws.html", days=[(label(d), d, items) for d, items in sorted(days.items())],
+                           entered=sum(1 for v in mine.values() if v))
+
+
 @bp.route("/results")
 def results():
     """Permanent archive of every completed draw: nothing finished ever disappears."""
@@ -310,21 +345,34 @@ def results():
     sql, args = ("SELECT c.*, d.winning_number, d.entry_count, (SELECT COUNT(*) FROM draws x WHERE x.competition_id=c.id) AS n_draws "
                  "FROM competitions c LEFT JOIN draws d ON d.id=(SELECT MAX(id) FROM draws WHERE competition_id=c.id) "
                  "WHERE c.status='drawn' AND c.game_type=''"), []
+    mine = bool(g.user and request.args.get("mine"))
     if q:
         sql += " AND c.title LIKE ?"
         args.append(f"%{q}%")
     if year:
         sql += " AND substr(c.drawn_at,1,4)=?"
         args.append(str(year))
+    if mine:
+        sql += " AND c.id IN (SELECT competition_id FROM tickets WHERE user_id=? AND status='issued')"
+        args.append(g.user["id"])
     total = db.execute(f"SELECT COUNT(*) FROM ({sql})", args).fetchone()[0]
     rows = db.execute(sql + " ORDER BY c.drawn_at DESC LIMIT 30 OFFSET ?", args + [(page - 1) * 30]).fetchall()
+    my_tickets = {}
+    if g.user and rows:
+        ids = [c["id"] for c in rows]
+        for t in db.execute(f"SELECT competition_id, number FROM tickets WHERE user_id=? AND status='issued' AND competition_id IN "
+                            f"({','.join('?' * len(ids))}) ORDER BY number", (g.user["id"], *ids)):
+            my_tickets.setdefault(t[0], []).append(t[1])
     items = []
     for c in rows:
         w = winner_details(db, c)
-        items.append({"c": c, "name": public_name(w["name"]) if w else None, "number": w["number"] if w else c["winning_number"]})
+        number = w["number"] if w else c["winning_number"]
+        nums = my_tickets.get(c["id"], [])
+        items.append({"c": c, "name": public_name(w["name"]) if w else None, "number": number, "mine": nums,
+                      "won": bool(nums) and number in nums})
     years = [r[0] for r in db.execute("SELECT DISTINCT substr(drawn_at,1,4) FROM competitions WHERE status='drawn' AND game_type='' "
                                       "ORDER BY 1 DESC")]
-    return render_template("results.html", items=items, q=q, year=year, years=years, page=page,
+    return render_template("results.html", items=items, q=q, year=year, years=years, page=page, mine=mine,
                            pages=max(1, -(-total // 30)), total=total)
 
 
@@ -1378,11 +1426,13 @@ OLD_TABS = {"tickets": "entries", "orders": "transactions", "rewards": "points",
 def _attention(db, user, bal):
     """Things this customer should do or know now, most important first. (text, link, link label, level)"""
     uid, out = user["id"], []
-    for c in db.execute("SELECT pc.status, c.title FROM prize_claims pc JOIN competitions c ON c.id=pc.competition_id "
-                        "WHERE pc.user_id=? AND pc.status IN ('selected','contacted','verification','chosen')", (uid,)):
-        out.append((f"You won {c['title']}! " + ("We need to verify a few details — please check your email and reply."
-                    if c["status"] in ("contacted", "verification") else "We'll be in touch shortly to arrange your prize."),
-                    url_for("public.support_centre", topic="Prize"), "Contact us about my prize", "good"))
+    for c in db.execute("SELECT pc.id, pc.status, pc.prize_choice, pc.delivery_address, c.title, c.cash_alternative "
+                        "FROM prize_claims pc JOIN competitions c ON c.id=pc.competition_id "
+                        "WHERE pc.user_id=? AND pc.status IN ('selected','contacted','verification','verified','chosen','fulfilment')", (uid,)):
+        todo = (c["cash_alternative"] and not c["prize_choice"]) or not c["delivery_address"]
+        out.append((f"You won {c['title']}! " + ("Tell us how you'd like your prize." if todo and c["status"] not in ("fulfilment",)
+                    else "See what happens next."), url_for("public.prize_claim", claim_id=c["id"]),
+                    "Claim my prize" if todo else "Track my prize", "good"))
     n = db.execute("SELECT COUNT(*) FROM tickets t JOIN competitions c ON c.id=t.competition_id WHERE t.user_id=? "
                    "AND t.status='issued' AND t.revealed_at IS NULL AND c.game_type!=''", (uid,)).fetchone()[0]
     if n:
@@ -1405,6 +1455,32 @@ def _attention(db, user, bal):
     if cases:
         out.append(("Our support team has replied to you.", url_for("public.my_cases"), "Read the reply", "info"))
     return out
+
+
+def draw_timeline(groups):
+    """Upcoming main draws the customer has entered, grouped the way people think about them."""
+    from . import UK
+    now = utcnow().astimezone(UK)
+    today = now.date()
+    buckets = {}
+    for e in groups:
+        if e["game"] or e["status"] != "live":
+            continue
+        when = parse_iso(e["ends_at"]).astimezone(UK)
+        if not e["open"]:
+            label = "Waiting for the draw"
+        elif when.date() == today:
+            label = "Tonight" if when.hour >= 17 else "Today"
+        elif when.date() == today + timedelta(days=1):
+            label = "Tomorrow"
+        elif when.date() <= today + timedelta(days=7):
+            label = "This week"
+        else:
+            label = "Later"
+        e["when"] = when
+        buckets.setdefault(label, []).append(e)
+    order = ["Waiting for the draw", "Today", "Tonight", "Tomorrow", "This week", "Later"]
+    return [(k, sorted(buckets[k], key=lambda x: x["ends_at"])) for k in order if k in buckets]
 
 
 def _entry_groups(db, uid):
@@ -1466,6 +1542,7 @@ def account():
                    live_groups=[e for e in groups if e["f"]["active"] or e["f"]["upcoming"]], waiting=unplayed(db, uid))
         ctx["upcoming"] = sorted([e for e in groups if (e["f"]["active"] or e["f"]["upcoming"]) and not e["game"]],
                                  key=lambda e: e["ends_at"])[:5]
+        ctx["timeline"] = draw_timeline(groups)
     if tab == "overview":
         ctx["recent_results"] = [e for e in groups if e["status"] == "drawn" and e["drawn_at"]
                                  and parse_iso(e["drawn_at"]) > utcnow() - timedelta(days=30)][:5]
@@ -1477,9 +1554,11 @@ def account():
             "FROM instant_prizes ip JOIN tickets t ON t.id=ip.ticket_id JOIN competitions c ON c.id=ip.competition_id "
             "WHERE t.user_id=? AND (c.game_type='' OR t.revealed_at IS NOT NULL) ORDER BY ip.won_at DESC LIMIT 100",
             (uid,)).fetchall()
-        draws_won = db.execute("SELECT c.title, c.slug, c.drawn_at, c.prize_value, c.cash_alternative, t.number FROM competitions c "
-                               "JOIN tickets t ON t.id=c.winner_ticket_id WHERE t.user_id=? ORDER BY c.drawn_at DESC",
-                               (uid,)).fetchall()
+        draws_won = db.execute("SELECT c.title, c.slug, c.drawn_at, c.prize_value, c.cash_alternative, t.number, pc.id AS claim_id, "
+                               "pc.status AS claim_status, pc.prize_choice FROM competitions c "
+                               "JOIN tickets t ON t.id=c.winner_ticket_id LEFT JOIN prize_claims pc ON pc.id=(SELECT MAX(id) FROM "
+                               "prize_claims WHERE competition_id=c.id AND user_id=?) WHERE t.user_id=? ORDER BY c.drawn_at DESC",
+                               (uid, uid)).fetchall()
         ctx.update(wins=wins, draws_won=draws_won, total_won=sum(w["value"] for w in wins) + sum(d["prize_value"] or 0 for d in draws_won))
     if tab in ("overview", "transactions"):
         ctx["ledger"] = db.execute("SELECT * FROM credit_ledger WHERE user_id=? ORDER BY id DESC LIMIT ?",
@@ -1661,6 +1740,35 @@ def profile():
     db.execute("UPDATE users SET phone=? WHERE id=?", (phone, g.user["id"]))
     flash("Saved.")
     return redirect(url_for("public.account", tab="profile"))
+
+
+@bp.route("/account/prizes/<int:claim_id>", methods=["GET", "POST"])
+@login_required
+def prize_claim(claim_id):
+    """The winner's own page: what they won, what happens next, prize or cash, delivery details, progress."""
+    from .services import CLAIM_CUSTOMER, CLAIM_STEPS, claim_for_customer, customer_claim_update
+    db = get_db()
+    c = claim_for_customer(db, claim_id, g.user["id"])
+    if c is None:
+        abort(404)
+    if request.method == "POST":
+        f = request.form
+        try:
+            customer_claim_update(claim_id, g.user, choice=f.get("choice") or None,
+                                  delivery={k: f.get(k, "") for k in ("name", "address", "phone")} if f.get("address") is not None else None)
+            flash("Thanks — saved. We'll be in touch.")
+        except PurchaseError as e:
+            flash(str(e), "error")
+        return redirect(url_for("public.prize_claim", claim_id=claim_id))
+    events = db.execute("SELECT created_at, status, note, actor_id FROM claim_events WHERE claim_id=? AND (status IS NOT NULL OR actor_id=?) "
+                        "ORDER BY id", (claim_id, g.user["id"])).fetchall()
+    step_of = {"contacted": "selected", "verified": "verification"}
+    current = step_of.get(c["status"], c["status"])
+    at = CLAIM_STEPS.index(current) if current in CLAIM_STEPS else -1
+    return render_template("prize.html", c=c, info=CLAIM_CUSTOMER.get(c["status"], ("", "")), steps=CLAIM_STEPS, at=at,
+                           names={"selected": "You won", "verification": "Details checked", "chosen": "Prize chosen",
+                                  "fulfilment": "On its way", "delivered": "Received"}, events=events,
+                           can_change=c["status"] not in ("fulfilment", "delivered", "forfeited"))
 
 
 @bp.route("/account/tickets/<int:tid>")
