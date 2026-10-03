@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ u.name }} · Timeline · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('admin.users') if can('users.view') else url_for('control.centre') }}">Customers</a> › <a href="{{ url_for('admin.user_detail', uid=u.id) }}">{{ u.name }}</a> › <span aria-current="page">Timeline</span></nav>
+<h1>{{ u.name }}</h1>
+<p class="muted">{{ u.email }} · customer #{{ u.id }} · cash {{ bal.cash|gbp }} · credit {{ bal.credit|gbp }} · deposited {{ bal.deposit|gbp }}{% if u.excluded_until %} · break until {{ u.excluded_until|uktime('%d %b %Y') }}{% endif %}</p>
+<p class="small muted">Opening this page is recorded in the audit log.</p>
+<nav class="chips" aria-label="Filter">{% for k in all_kinds %}<a class="chip" href="{{ url_for('control.timeline', uid=u.id, kind=k) }}"{% if k in kinds %} aria-current="page"{% endif %}>{{ k }}</a>{% endfor %}{% if kinds %}<a class="chip" href="{{ url_for('control.timeline', uid=u.id) }}">all</a>{% endif %}</nav>
+<ol class="tl">{% for at, kind, title, detail in events %}<li class="k-{{ kind }}"><time>{{ at|uktime('%d %b %Y %H:%M') }}</time><b>{{ title }}</b><span>{{ detail }}</span></li>{% else %}<li>Nothing yet.</li>{% endfor %}</ol>
+{% endblock %}

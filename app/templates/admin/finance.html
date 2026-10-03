@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Finance · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Finance &amp; reconciliation</h1>
+<form class="inline-form" method="get" style="flex-wrap:wrap;margin-bottom:var(--s4)">
+  <label for="from">From</label><input id="from" type="date" name="from" value="{{ start }}">
+  <label for="to">To</label><input id="to" type="date" name="to" value="{{ end }}">
+  <button class="btn ghost small">Show</button>
+  <a class="btn ghost small" href="{{ url_for('control.finance_csv', **{'from': start, 'to': end}) }}">Export card payments (CSV)</a>
+</form>
+<div class="two">
+  <section class="panel"><h2 style="font-size:20px">Money in by card</h2><dl class="facts">
+    <div><dt>Entries paid by card</dt><dd>{{ r.card_entries|gbp }}</dd></div>
+    <div><dt>Wallet deposits by card</dt><dd>{{ r.card_deposits|gbp }}</dd></div>
+    <div><dt><b>Total to match against Stripe</b></dt><dd><b>{{ (r.card_entries + r.card_deposits)|gbp }}</b> · {{ r.card_count }} payments</dd></div>
+    <div><dt>Credit cards refused &amp; refunded</dt><dd>{{ r.refused|gbp }}</dd></div>
+    <div><dt>Refunds still to do (all time)</dt><dd>{{ r.refund_due|gbp }}</dd></div></dl>
+    <p class="small muted">Export the CSV and match each line's Stripe session to Stripe's payments report. Stripe fees are taken by Stripe and aren't included here.</p></section>
+  <section class="panel"><h2 style="font-size:20px">Where entry value came from</h2><dl class="facts">
+    <div><dt>Entries at list price</dt><dd>{{ r.gross|gbp }}</dd></div>
+    <div><dt>− Multi-buy discounts</dt><dd>{{ r.multibuy|gbp }}</dd></div>
+    <div><dt>= Entry value</dt><dd>{{ r.net_entries|gbp }}</dd></div>
+    <div><dt>Promo codes</dt><dd>{{ r.promo|gbp }}</dd></div>
+    <div><dt>Site credit (promotional)</dt><dd>{{ r.credit_used|gbp }}</dd></div>
+    <div><dt>Deposited funds</dt><dd>{{ r.deposit_used|gbp }}</dd></div>
+    <div><dt>Cash balances</dt><dd>{{ r.cash_used|gbp }}</dd></div>
+    <div><dt>Card</dt><dd>{{ r.card_entries|gbp }}</dd></div>
+    <div><dt>Check</dt><dd>{% if r.balanced %}<span class="pill paid">✓ balances</span>{% else %}<span class="pill hot">✕ off by {{ (r.net_entries - r.sources)|gbp }}</span>{% endif %}</dd></div></dl></section>
+</div>
+<div class="two" style="margin-top:var(--s4)">
+  <section class="panel"><h2 style="font-size:20px">Prizes &amp; payouts</h2><dl class="facts">
+    <div><dt>Instant cash prizes credited</dt><dd>{{ r.prizes_cash|gbp }}</dd></div>
+    <div><dt>Instant site-credit prizes</dt><dd>{{ r.prizes_credit|gbp }}</dd></div>
+    <div><dt>Physical instant prizes (value)</dt><dd>{{ r.prizes_physical|gbp }}</dd></div>
+    <div><dt>Main draw prizes (value)</dt><dd>{{ r.draw_prizes|gbp }}</dd></div>
+    <div><dt>Withdrawals paid out</dt><dd>{{ r.withdrawn|gbp }}</dd></div></dl></section>
+  <section class="panel"><h2 style="font-size:20px">Owed to customers now</h2><dl class="facts">
+    <div><dt>Cash balances (withdrawable)</dt><dd>{{ r.owed.cash|gbp }}</dd></div>
+    <div><dt>Deposited funds (refundable to card)</dt><dd>{{ r.owed.deposit|gbp }}</dd></div>
+    <div><dt>Site credit (not withdrawable)</dt><dd>{{ r.owed.credit|gbp }}</dd></div></dl></section>
+</div>
+<h2>Wallet movements in this period</h2>
+<div class="panel table-scroll" tabindex="0"><table>
+  <tr><th>Type</th><th class="num">Cash</th><th class="num">Site credit</th><th class="num">Deposited funds</th></tr>
+  {% for label, row in r.buckets %}<tr><td>{{ label }}</td>{% for k in ('cash','credit','deposit') %}<td class="num {{ 'pos' if row[k] > 0 else ('neg' if row[k] < 0) }}">{{ row[k]|gbp if row[k] else '—' }}</td>{% endfor %}</tr>
+  {% else %}<tr><td colspan="4" class="muted">No wallet movements.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

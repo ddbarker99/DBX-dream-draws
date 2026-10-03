@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Prize claim #{{ c.id }} · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('admin.prizes') }}">Winners &amp; prizes</a> › <span aria-current="page">#{{ c.id }}</span></nav>
+<h1>{{ c.title }}</h1>
+<div class="two">
+  <section class="panel">
+    <dl class="facts">
+      <div><dt>Status</dt><dd>{{ names[c.status] }}</dd></div>
+      <div><dt>Winner</dt><dd>{{ c.winner }}{% if c.uid %} · <a href="{{ url_for('control.timeline', uid=c.uid) }}">timeline</a>{% endif %}</dd></div>
+      <div><dt>Email</dt><dd><a href="mailto:{{ c.email }}">{{ c.email }}</a></dd></div>
+      {% if c.phone %}<div><dt>Phone</dt><dd>{{ c.phone }}</dd></div>{% endif %}
+      {% if c.address %}<div><dt>Postal address</dt><dd>{{ c.address }}</dd></div>{% endif %}
+      <div><dt>Winning ticket</dt><dd>#{{ c.number }}</dd></div>
+      <div><dt>Prize value</dt><dd>{{ c.prize_value|gbp }}{% if c.cash_alternative %} · cash alternative {{ c.cash_alternative }}{% endif %}</dd></div>
+      <div><dt>Winner's choice</dt><dd>{{ {'prize':'The prize','cash':'Cash alternative'}.get(c.prize_choice, 'Not chosen yet') }}</dd></div>
+    </dl>
+    <p class="small muted">Never ask a winner to pay anything to claim. If they can't be verified or don't respond within the time in the terms, mark the claim <b>Forfeited</b> and redraw from the <a href="{{ url_for('admin.entries', cid=c.comp_id) }}#draw">competition page</a>.</p>
+  </section>
+  <form class="panel" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <h2 style="font-size:20px">Update</h2>
+    {% if c.status not in ('delivered', 'forfeited') %}
+    <label for="status">New status</label>
+    <select id="status" name="status"><option value="">— keep “{{ names[c.status] }}” —</option>{% for k, label in statuses if k != c.status %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select>
+    {% if c.cash_alternative %}<label for="choice">Winner's choice</label><select id="choice" name="choice"><option value="">—</option><option value="prize">The prize</option><option value="cash">Cash alternative</option></select>{% endif %}
+    {% endif %}
+    <label for="note">Note (internal)</label><textarea id="note" name="note" rows="3" placeholder="e.g. Called 14:05, ID received, courier booked"></textarea>
+    <label for="evidence">Evidence (image or PDF, kept private)</label><input id="evidence" name="evidence" type="file" accept="image/*,application/pdf">
+    <button class="btn block" style="margin-top:var(--s4)">Save</button>
+  </form>
+</div>
+<h2>History</h2>
+<div class="panel table-scroll" tabindex="0"><table>
+  {% for e in events %}<tr><td class="small muted">{{ e.created_at|uktime('%d %b %Y %H:%M') }}</td><td class="small">{{ e.actor or 'System' }}</td>
+    <td>{% if e.status %}<b>{{ names[e.status] }}</b> {% endif %}{{ e.note or '' }}{% if e.evidence %} · <a href="{{ url_for('admin.evidence', name=e.evidence) }}" target="_blank" rel="noopener">evidence</a>{% endif %}</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

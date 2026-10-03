@@ -4,7 +4,14 @@
 {% include "admin/_bar.html" %}
 <div class="row" style="flex-wrap:wrap"><h1 style="margin:0">{{ c.title }}</h1>
   <div class="actions">{% if c.free_daily %}<span class="pill new">Daily free game</span>{% elif c.game_type %}<span class="pill instant">Instant win game</span>{% else %}<span class="pill">Prize draw</span>{% endif %}
-  {% if c.scheduled %}<span class="pill pending">Scheduled · live {{ c.starts_at|uktime('%a %d %b, %H:%M') }}</span>{% else %}<span class="pill {{ state }}">{{ state }}</span>{% endif %}</div></div>
+  {% if c.scheduled %}<span class="pill pending">Scheduled · live {{ c.starts_at|uktime('%a %d %b, %H:%M') }}</span>{% endif %}</div></div>
+{% set steps = ['draft','scheduled','live','closed','winner_selected','fulfilment','completed'] if not c.game_type else ['draft','scheduled','live','closed','completed'] %}
+{% if stage == 'cancelled' %}<p class="notice bad" style="margin:12px 0">Cancelled — every entrant was refunded.</p>
+{% else %}<ol class="lifecycle" aria-label="Competition lifecycle">{% set at = steps.index('closed' if stage == 'closing' else stage) %}
+  {% for st in steps %}<li class="{{ 'done' if loop.index0 < at else ('now' if loop.index0 == at) }}"{% if loop.index0 == at %} aria-current="step"{% endif %}>{{ stage_names[st] if not (st == 'closed' and stage == 'closing') else 'Closing — finishing payments' }}</li>{% endfor %}</ol>{% endif %}
+{% if postal_waiting %}<p class="notice warn" style="margin:12px 0"><span><b>{{ postal_waiting }} postal entr{{ 'y' if postal_waiting == 1 else 'ies' }} waiting.</b> This competition can't close or be drawn until {{ 'it is' if postal_waiting == 1 else 'they are' }} approved or rejected. <a href="{{ url_for('admin.postal_queue') }}">Open the postal queue</a>.</span></p>{% endif %}
+{% if snapshot %}<p class="small muted">Entry list frozen {{ snapshot.taken_at|uktime }}: <b>{{ '{:,}'.format(snapshot.entry_count) }}</b> entries ({{ snapshot.paid_count }} paid, {{ snapshot.postal_count }} postal). Hash <code>{{ snapshot.entries_hash[:16] }}…</code></p>{% endif %}
+{% if claim %}<p class="small">Winner's prize: <a href="{{ url_for('admin.claim_detail', claim_id=claim.id) }}">{{ claim_names[claim.status] }}</a></p>{% endif %}
 {% if c.status == 'draft' %}
 <div class="notice {{ 'warn' if not board and c.game_type else '' }}" style="margin:12px 0">
   <span>{% if c.scheduled %}This will go live automatically at the time shown. Press <b>Unschedule</b> to stop that.
@@ -113,7 +120,8 @@
   <div class="two"><div><label for="pe-received">Date it arrived</label><input id="pe-received" name="received" type="date" value="{{ today }}" max="{{ today }}" required></div>
   <div><label for="pe-answer">Their answer to “{{ c.question }}” <span class="muted">(correct: {{ c['answer_' + c.correct] }})</span></label>
   <select id="pe-answer" name="answer_correct"><option value="1">Correct</option><option value="0">Wrong</option></select></div></div>
-  <button class="btn block" style="margin-top:14px">Record envelope</button>
+  <div class="actions" style="margin-top:14px"><button class="btn" name="mode" value="check">Record and check now</button>
+  <button class="btn ghost" name="mode" value="receive">Log as received — check later</button></div>
 </form>
 {% endif %}
 <div class="panel table-scroll" tabindex="0">
@@ -137,17 +145,30 @@
 
 <h2>Draw seed</h2>
 <p class="small muted">Public hash (shown on the site since launch):</p><div class="hash">{{ c.seed_hash }}</div>
-{% if draw_rec %}
-<h2>Draw record</h2>
+{% if draw_recs %}
+<h2 id="draw">Draw record</h2>
 <div class="panel">
-  <p class="small muted" style="margin-top:0">A permanent snapshot taken at the moment of the draw. It can't be edited or deleted.</p>
-  <dl class="facts">
-    <dt>Drawn</dt><dd>{{ draw_rec.drawn_at|uktime }} · {{ draw_rec.method }}{% if draw_rec.run_by_email %} by {{ draw_rec.run_by_email }}{% endif %}</dd>
-    <dt>Eligible entries</dt><dd>{{ '{:,}'.format(draw_rec.entry_count) }}</dd>
-    <dt>Winning ticket</dt><dd>#{{ draw_rec.winning_number }} (position {{ draw_rec.winning_index + 1 }} in the sorted list)</dd>
-    <dt>Entries hash</dt><dd class="hash">{{ draw_rec.entries_hash }}</dd>
-    <dt>Seed</dt><dd class="hash">{{ draw_rec.seed }}</dd>
+  <p class="small muted" style="margin-top:0">Permanent records taken at the moment of each draw. They can't be edited or deleted; a redraw adds a new record with its reason.</p>
+  {% for d in draw_recs %}
+  <dl class="facts" style="{{ 'margin-top:var(--s4);padding-top:var(--s3);border-top:2px solid var(--line-2)' if not loop.first }}">
+    <div><dt>{{ 'Redraw ' ~ (loop.index0) if d.method == 'redraw' else 'Draw' }}</dt><dd>{{ d.drawn_at|uktime }} · {{ d.method }}{% if d.run_by_email %} by {{ d.run_by_email }}{% endif %}</dd></div>
+    {% if d.reason %}<div><dt>Reason</dt><dd>{{ d.reason }}</dd></div>{% endif %}
+    <div><dt>Eligible entries</dt><dd>{{ '{:,}'.format(d.entry_count) }}</dd></div>
+    <div><dt>Winning ticket</dt><dd>#{{ d.winning_number }} (position {{ d.winning_index + 1 }})</dd></div>
+    <div><dt>Entries hash</dt><dd class="hash">{{ d.entries_hash }}</dd></div>
+    <div><dt>Seed</dt><dd class="hash">{{ d.seed }}</dd></div>
   </dl>
+  {% endfor %}
+  {% if c.status == 'drawn' and can('draws') %}
+  <details class="faq" style="margin-top:var(--s4)"><summary>Redraw (winner forfeited or ineligible)</summary><div>
+    <form method="post" action="{{ url_for('admin.redraw_comp', cid=c.id) }}">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <p class="small muted">Use only when the current winner can't receive the prize under the terms (failed verification, no response in time, ineligible). Every previous winning ticket is excluded. The reason is published in the draw record permanently.</p>
+      <label for="rd-reason">Reason</label><textarea id="rd-reason" name="reason" rows="2" required></textarea>
+      <label for="rd-confirm">Type REDRAW to confirm</label><input id="rd-confirm" name="confirm" autocomplete="off">
+      <button class="btn danger" style="margin-top:var(--s3)">Redraw</button>
+    </form></div></details>
+  {% endif %}
 </div>
 {% endif %}
 {% if audit_rows %}

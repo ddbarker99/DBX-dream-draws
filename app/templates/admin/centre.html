@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Control Centre · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="120">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<div class="row" style="flex-wrap:wrap"><h1 style="margin:0">Control Centre</h1><span class="small muted">{{ admin_role_name }} · refreshes every 2 minutes</span></div>
+
+<section class="section" aria-labelledby="att-h" style="margin-top:var(--s4)">
+  <h2 id="att-h">Needs attention</h2>
+  {% if attention %}
+  <ul class="attention">{% for label, n, link, level in attention %}<li class="{{ level }}"><a href="{{ link }}"><b>{{ n }}</b> {{ label }}</a></li>{% endfor %}</ul>
+  {% else %}<div class="notice good"><span>Nothing needs attention right now.</span></div>{% endif %}
+</section>
+
+<div class="quicklinks" style="margin-top:var(--s5)">
+  {% if can('reports') %}<a href="{{ url_for('control.finance') }}"><b>{{ money.card_today|gbp }}</b><span>Taken by card today · {{ money.card_week|gbp }} in 7 days</span></a>{% endif %}
+  <a href="{{ url_for('admin.dashboard') }}"><b>{{ '{:,}'.format(money.entries_today) }}</b><span>Entries today · {{ money.postal_today }} postal · {{ money.orders_today }} orders</span></a>
+  <a href="{{ url_for('admin.users') if can('users.view') else '#' }}"><b>{{ money.signups_today }}</b><span>New customers today</span></a>
+  <a href="{{ url_for('admin.dashboard') }}"><b>{{ live|length }}</b><span>Live · {{ instant_left }} instant prizes left ({{ instant_value|gbp }})</span></a>
+</div>
+<p class="small muted">Today: {{ money.failed_today }} card checkout{{ 's' if money.failed_today != 1 }} not completed{% if money.refunded_today %} · {{ money.refunded_today|gbp }} refunded{% endif %}.</p>
+
+<section class="section" aria-labelledby="sys-h">
+  <div class="section-head"><h2 id="sys-h">System health</h2>{% if can('audit') %}<a class="btn ghost small" href="{{ url_for('control.health') }}">Details</a>{% endif %}</div>
+  <ul class="healthgrid">{% for c in health %}<li class="{{ 'ok' if c.ok else 'bad' }}"><b>{{ '✓' if c.ok else '✕' }} {{ c.name }}</b><span>{{ c.detail }}</span></li>{% endfor %}</ul>
+</section>
+
+{% if ending %}
+<section class="section" aria-labelledby="end-h"><h2 id="end-h">Drawing in the next 48 hours</h2>
+<div class="panel table-scroll" tabindex="0"><table>
+  <tr><th>Competition</th><th>Closes</th><th class="num">Sold</th><th>Postal waiting</th></tr>
+  {% for x in ending %}<tr><td><a href="{{ url_for('admin.entries', cid=x.c.id) }}">{{ x.c.title }}</a></td><td>{{ x.c.ends_at|uktime('%a %d %b %H:%M') }}</td><td class="num">{{ '{:,}'.format(x.sold) }} / {{ '{:,}'.format(x.c.max_tickets) }}</td><td>{{ '' }}</td></tr>{% endfor %}
+</table></div></section>
+{% endif %}
+
+<section class="section" aria-labelledby="live-h">
+  <div class="section-head"><h2 id="live-h">Live competitions</h2><a class="btn ghost small" href="{{ url_for('admin.dashboard') }}">Manage</a></div>
+  <div class="panel table-scroll" tabindex="0"><table>
+    <tr><th>Competition</th><th>Stage</th><th class="num">Sold</th>{% if can('reports') %}<th class="num">Revenue</th>{% endif %}<th class="num">Instant left</th><th>Closes</th></tr>
+    {% for x in live %}<tr><td><a href="{{ url_for('admin.entries', cid=x.c.id) }}">{{ x.c.title }}</a></td><td><span class="pill {{ 'live' if x.stage == 'live' else 'pending' }}">{{ stage_names[x.stage] }}</span></td>
+      <td class="num">{{ '{:,}'.format(x.sold) }} / {{ '{:,}'.format(x.c.max_tickets) }}</td>{% if can('reports') %}<td class="num">{{ x.revenue|gbp }}</td>{% endif %}
+      <td class="num">{{ x.instant_left }}</td><td class="small">{{ x.c.ends_at|uktime('%d %b %H:%M') }}</td></tr>
+    {% else %}<tr><td colspan="6" class="muted">Nothing live.</td></tr>{% endfor %}
+  </table></div>
+</section>
+{% endblock %}

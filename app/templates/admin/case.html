@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Case #{{ k.id }} · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('control.cases') }}">Support cases</a> › <span aria-current="page">#{{ k.id }}</span></nav>
+<h1>{{ k.topic }}</h1>
+<p class="muted">{{ k.name }} · <a href="mailto:{{ k.email }}">{{ k.email }}</a> · opened {{ k.created_at|uktime }} · <span class="pill {{ 'paid' if k.status == 'resolved' else 'pending' }}">{{ k.status }}</span></p>
+<div class="two">
+  <div class="stack">
+    {% for n in notes %}<section class="panel note-{{ n.kind }}"><div class="row"><b>{{ {'customer': k.name, 'reply': 'Reply from ' ~ (n.actor or 'staff'), 'internal': 'Internal note · ' ~ (n.actor or '')}[n.kind] }}</b><span class="small muted">{{ n.created_at|uktime('%d %b %H:%M') }}</span></div>
+      <p style="white-space:pre-wrap;margin:6px 0 0">{{ n.body }}</p></section>{% endfor %}
+    <form class="panel" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label for="body">Write</label><textarea id="body" name="body" rows="4"></textarea>
+      <div class="actions" style="margin-top:var(--s3)"><button class="btn" name="action" value="reply">Email reply to customer</button><button class="btn ghost" name="action" value="internal">Save internal note</button></div></form>
+  </div>
+  <form class="panel" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <h2 style="font-size:20px">Details</h2>
+    {% if customer %}<p class="small">Customer: <a href="{{ url_for('control.timeline', uid=customer.id) }}">{{ customer.name }} (#{{ customer.id }}) — timeline</a></p><input type="hidden" name="user_id" value="{{ customer.id }}">{% else %}<p class="small muted">No account with this email.</p>{% endif %}
+    <label for="checkout_id">Order</label><select id="checkout_id" name="checkout_id"><option value="">—</option>{% for o in orders %}<option value="{{ o.id }}" {{ 'selected' if k.checkout_id == o.id }}>#{{ o.id }} · {{ o.status }} · {{ o.cash_due|gbp }} · {{ o.created_at|uktime('%d %b') }}</option>{% endfor %}</select>
+    <label for="competition_id">Competition ID</label><input id="competition_id" name="competition_id" inputmode="numeric" value="{{ k.competition_id or '' }}">{% if comp %}<span class="hint">{{ comp.title }}</span>{% endif %}
+    <label for="status">Status</label><select id="status" name="status">{% for s_ in ('open','waiting','resolved') %}<option {{ 'selected' if k.status == s_ }}>{{ s_ }}</option>{% endfor %}</select>
+    <label for="resolution">Resolution</label><input id="resolution" name="resolution" value="{{ k.resolution or '' }}">
+    <label class="check"><input type="checkbox" name="assign" value="me"> Assign to me</label>
+    <button class="btn block" style="margin-top:var(--s4)">Save</button>
+  </form>
+</div>
+{% endblock %}

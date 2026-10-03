@@ -164,7 +164,7 @@ def crawl(client, who, start=("/",), limit=400):
 
 
 def main():
-    app = create_app({"TESTING": True, "DEMO_PAYMENTS": True, "SITE_URL": "http://localhost",
+    app = create_app({"TESTING": True, "DEMO_PAYMENTS": True, "SITE_URL": "http://localhost", "ADMIN_MFA": False,
                       "STRIPE_WEBHOOK_SECRET": "whsec_x"})
     admin, player = seed(app)
     if "--serve" in sys.argv:

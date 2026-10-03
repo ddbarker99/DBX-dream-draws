@@ -206,8 +206,167 @@ BEGIN SELECT RAISE(ABORT, 'The audit log is append-only.'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'The audit log is append-only.'); END;
 
-CREATE TRIGGER IF NOT EXISTS comp_result_locked BEFORE UPDATE ON competitions
-WHEN OLD.status = 'drawn' AND (NEW.status IS NOT OLD.status OR NEW.winner_ticket_id IS NOT OLD.winner_ticket_id
-     OR NEW.entries_hash IS NOT OLD.entries_hash OR NEW.drawn_at IS NOT OLD.drawn_at OR NEW.seed IS NOT OLD.seed
-     OR NEW.ends_at IS NOT OLD.ends_at)
-BEGIN SELECT RAISE(ABORT, 'Draw results are permanent.'); END;
+-- comp_result_locked is created in db.py (POST_TRIGGERS) because it refers to later columns.
+
+-- v9: sessions, entry snapshots, prize claims
+CREATE TABLE IF NOT EXISTS user_sessions (
+    sid        TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    last_seen  TEXT NOT NULL,
+    ip         TEXT,
+    agent      TEXT,
+    revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_sessions_user ON user_sessions(user_id);
+
+-- The final entry list, frozen when a competition closes. Draws are made from this.
+CREATE TABLE IF NOT EXISTS entry_snapshots (
+    id             INTEGER PRIMARY KEY,
+    competition_id INTEGER NOT NULL,
+    taken_at       TEXT NOT NULL,
+    entry_count    INTEGER NOT NULL,
+    paid_count     INTEGER NOT NULL,
+    postal_count   INTEGER NOT NULL,
+    entries_hash   TEXT NOT NULL,
+    entries        TEXT NOT NULL                 -- JSON list of ticket numbers, sorted
+);
+CREATE INDEX IF NOT EXISTS ix_snap_comp ON entry_snapshots(competition_id);
+CREATE TRIGGER IF NOT EXISTS snapshots_no_update BEFORE UPDATE ON entry_snapshots
+BEGIN SELECT RAISE(ABORT, 'Entry snapshots are permanent.'); END;
+
+-- A main-draw winner's journey from selection to receiving the prize.
+CREATE TABLE IF NOT EXISTS prize_claims (
+    id             INTEGER PRIMARY KEY,
+    competition_id INTEGER NOT NULL,
+    draw_id        INTEGER,
+    ticket_id      INTEGER NOT NULL,
+    user_id        INTEGER,
+    status         TEXT NOT NULL DEFAULT 'selected',
+    prize_choice   TEXT,                         -- 'prize' | 'cash' (cash alternative)
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_claims_comp ON prize_claims(competition_id);
+CREATE TABLE IF NOT EXISTS claim_events (
+    id         INTEGER PRIMARY KEY,
+    claim_id   INTEGER NOT NULL REFERENCES prize_claims(id),
+    created_at TEXT NOT NULL,
+    actor_id   INTEGER,
+    status     TEXT,
+    note       TEXT,
+    evidence   TEXT                              -- file name in DATA_DIR/evidence (never public)
+);
+CREATE TRIGGER IF NOT EXISTS claim_events_no_update BEFORE UPDATE ON claim_events
+BEGIN SELECT RAISE(ABORT, 'Claim history is append-only.'); END;
+
+-- v9: support cases, review flags, background job runs, notifications
+CREATE TABLE IF NOT EXISTS cases (
+    id             INTEGER PRIMARY KEY,
+    user_id        INTEGER REFERENCES users(id),
+    name           TEXT NOT NULL,
+    email          TEXT NOT NULL,
+    topic          TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'open',   -- open | waiting (on customer) | resolved
+    competition_id INTEGER,
+    checkout_id    INTEGER,
+    assigned_to    INTEGER,
+    resolution     TEXT,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_cases_status ON cases(status, updated_at);
+CREATE TABLE IF NOT EXISTS case_notes (
+    id         INTEGER PRIMARY KEY,
+    case_id    INTEGER NOT NULL REFERENCES cases(id),
+    created_at TEXT NOT NULL,
+    actor_id   INTEGER,
+    kind       TEXT NOT NULL,                     -- customer | reply | internal
+    body       TEXT NOT NULL
+);
+
+-- Things a rule noticed that a person should look at. Never an automatic accusation or ban.
+CREATE TABLE IF NOT EXISTS flags (
+    id          INTEGER PRIMARY KEY,
+    kind        TEXT NOT NULL,
+    subject     TEXT NOT NULL,                    -- e.g. user:12 or phone:0770…
+    detail      TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'open',     -- open | reviewed | dismissed
+    created_at  TEXT NOT NULL,
+    reviewed_at TEXT,
+    reviewed_by INTEGER,
+    note        TEXT,
+    UNIQUE (kind, subject)
+);
+
+-- Every automated process records each run: did it run, when, did it succeed, what did it change.
+CREATE TABLE IF NOT EXISTS job_runs (
+    id          INTEGER PRIMARY KEY,
+    job         TEXT NOT NULL,
+    started_at  TEXT NOT NULL,
+    finished_at TEXT,
+    ok          INTEGER,
+    changed     TEXT,
+    error       TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_jobs ON job_runs(job, id);
+
+-- Transactional emails and in-account notifications. dedupe_key makes a retried job harmless.
+CREATE TABLE IF NOT EXISTS notifications (
+    id          INTEGER PRIMARY KEY,
+    user_id     INTEGER REFERENCES users(id),
+    email       TEXT,
+    kind        TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    link        TEXT,
+    dedupe_key  TEXT UNIQUE,
+    created_at  TEXT NOT NULL,
+    read_at     TEXT,
+    email_status TEXT,                            -- NULL (in-app only) | queued | sent | failed
+    email_tries INTEGER NOT NULL DEFAULT 0,
+    email_error TEXT,
+    sent_at     TEXT,
+    email_payload TEXT                            -- JSON for the mailer
+);
+CREATE INDEX IF NOT EXISTS ix_notes_user ON notifications(user_id, id);
+CREATE INDEX IF NOT EXISTS ix_notes_email ON notifications(email_status);
+
+-- Customers' saved competitions.
+CREATE TABLE IF NOT EXISTS watchlist (
+    user_id        INTEGER NOT NULL REFERENCES users(id),
+    competition_id INTEGER NOT NULL,
+    created_at     TEXT NOT NULL,
+    PRIMARY KEY (user_id, competition_id)
+);
+
+-- Every DBX Points movement, so points never appear or disappear without a reason.
+CREATE TABLE IF NOT EXISTS points_ledger (
+    id         INTEGER PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    points     INTEGER NOT NULL,
+    reason     TEXT NOT NULL,
+    ref        TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_points_user ON points_ledger(user_id, id);
+
+-- Cookie-free funnel counts: one row per day, step and device type. No identifiers.
+CREATE TABLE IF NOT EXISTS funnel_counts (
+    day    TEXT NOT NULL,
+    step   TEXT NOT NULL,
+    device TEXT NOT NULL,
+    comp_id INTEGER NOT NULL DEFAULT 0,
+    n      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, step, device, comp_id)
+);
+
+-- Latest state of each background job (job_runs keeps the history of runs that changed something or failed).
+CREATE TABLE IF NOT EXISTS job_status (
+    job          TEXT PRIMARY KEY,
+    last_started TEXT,
+    last_ok      TEXT,
+    last_error_at TEXT,
+    last_error   TEXT,
+    last_changed TEXT
+);

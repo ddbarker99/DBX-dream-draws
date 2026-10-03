@@ -277,6 +277,13 @@
     <div class="field"><label for="npw">New password</label><input id="npw" type="password" name="new_password" minlength="10" autocomplete="new-password" aria-describedby="npw-h"><span class="hint" id="npw-h">At least 10 characters. Changing it signs you out on every other device. Leave blank to keep your current password.</span></div>
     <button class="btn block" style="margin-top:var(--s4)">Save changes</button>
   </form>
+  <section class="panel" id="devices" style="max-width:640px;margin-top:var(--s4)">
+    <h2 style="font-size:20px">Where you're signed in</h2>
+    <ul class="devlist">{% for d in sessions %}<li><span><b>{{ device_name(d.agent) }}</b>{% if d.sid == this_sid %} <span class="pill paid">This device</span>{% endif %}
+      <span class="tiny muted">Signed in {{ d.created_at|uktime('%d %b %Y') }} · last active {{ d.last_seen|ago }}</span></span>
+      {% if d.sid != this_sid %}<form method="post" action="{{ url_for('public.revoke_session') }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="sid" value="{{ d.sid }}"><button class="btn ghost small">Sign out</button></form>{% endif %}</li>{% endfor %}</ul>
+    {% if sessions|length > 1 %}<form method="post" action="{{ url_for('public.revoke_session') }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="sid" value="others"><button class="btn ghost small">Sign out of all other devices</button></form>{% endif %}
+  </section>
   <section class="panel" style="max-width:640px;margin-top:var(--s4)">
     <h2 style="font-size:20px">Your data</h2>
     <p class="small muted" style="margin:0">To get a copy of your data or close your account, <a href="{{ url_for('public.contact') }}">contact us</a>. We'll pay out any cash balance first. Some records (entries, draws and payments) are kept as long as the law requires — see our <a href="{{ url_for('public.page', page='privacy') }}">privacy policy</a>.</p>

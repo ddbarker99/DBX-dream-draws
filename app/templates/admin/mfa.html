@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Two-step verification · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+<div class="form-narrow">
+<div class="panel">
+{% if mode == 'verify' %}
+  <h1>Confirm it's you</h1>
+  <p class="muted">Admin accounts need a code from your authenticator app each time you sign in.</p>
+  <form method="post" data-once>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label for="code">6-digit code (or a recovery code)</label>
+    <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required>
+    <button class="btn block" style="margin-top:var(--s4)">Continue</button>
+  </form>
+{% elif mode == 'setup' %}
+  <h1>Turn on two-step verification</h1>
+  <p class="muted">Admin accounts can move money and run draws, so they need a second step at sign-in.</p>
+  <ol class="howlist">
+    <li>Open an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…).</li>
+    <li>Add an account by entering this key: <span class="hash" style="display:block;margin-top:6px;font-size:16px">{{ grouped }}</span>
+      <span class="small muted">On a phone you can also <a href="{{ uri }}">open it directly in your app</a>.</span></li>
+    <li>Type the 6-digit code it shows.</li>
+  </ol>
+  <form method="post" data-once>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label for="code">6-digit code</label>
+    <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required>
+    <button class="btn block" style="margin-top:var(--s4)">Turn on</button>
+  </form>
+{% else %}
+  <h1>Save your recovery codes</h1>
+  <p class="muted">If you lose your phone, each of these codes works once instead of an app code. Store them somewhere safe — they won't be shown again.</p>
+  <div class="hash" style="font-size:16px;line-height:2">{% for c in codes %}{{ c }}<br>{% endfor %}</div>
+  <a class="btn block" style="margin-top:var(--s4)" href="{{ next or url_for('control.centre') }}">I've saved them — continue</a>
+{% endif %}
+</div>
+</div>
+{% endblock %}

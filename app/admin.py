@@ -11,8 +11,11 @@ from flask import (Blueprint, Response, abort, current_app, flash, g, redirect, 
                    request, url_for)
 
 from . import UK, mailer
+from .notify import notify, tell
+from .perms import can, require, ROLES
 from .db import get_db, iso, utcnow, write_txn
-from .services import (audit, cancel_competition, mark_withdrawal_processing, CATEGORIES, CATEGORY_NAMES, balances, prize_kind, refund_competition, GAME_NAMES, GAME_TYPES, game_info, PurchaseError, add_credit, add_instant_prizes, add_postal_entry,
+from .services import (receive_postal, process_postal, postal_problem, POSTAL_REJECT_REASONS, redraw, update_claim,
+                       CLAIM_STATUSES, CLAIM_NAMES, lifecycle_stage, LIFECYCLE_NAMES, latest_snapshot, audit, cancel_competition, mark_withdrawal_processing, CATEGORIES, CATEGORY_NAMES, balances, prize_kind, refund_competition, GAME_NAMES, GAME_TYPES, game_info, PurchaseError, add_credit, add_instant_prizes, add_postal_entry,
                        balance, comp_state, get_setting, instant_board, new_seed, public_name,
                        remove_instant_prize_group, run_draw, set_setting, settle_withdrawal, site_stats, sold_count,
                        taken_count, winner_details, delete_competition, paid_unrefunded, start_fresh, publish_problem)
@@ -21,36 +24,15 @@ bp = Blueprint("admin", __name__, url_prefix="/admin")
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 
-def admin_required(view):
-    @wraps(view)
-    def wrapped(*a, **kw):
-        if g.user is None or not g.user["is_admin"]:
-            abort(404)
-        return view(*a, **kw)
-    return wrapped
-
-
 def is_owner(user):
-    return bool(user and user["is_admin"] and user["admin_role"] == "owner")
-
-
-def owner_required(view):
-    """Money, balances, refunds, accounts and site resets: owners only. Staff can run competitions,
-    log postal entries, run draws and mark prizes sent."""
-    @wraps(view)
-    def wrapped(*a, **kw):
-        if g.user is None or not g.user["is_admin"]:
-            abort(404)
-        if not is_owner(g.user):
-            flash("Only an owner account can do that.", "error")
-            return redirect(url_for("admin.dashboard"))
-        return view(*a, **kw)
-    return wrapped
+    return can(user, "money")
 
 
 @bp.app_context_processor
 def _admin_ctx():
-    return {"is_owner": is_owner(g.get("user"))}
+    from .perms import ROLES, role_of
+    u = g.get("user")
+    return {"is_owner": is_owner(u), "can": lambda perm: can(u, perm), "admin_role_name": ROLES[role_of(u)][0] if role_of(u) else ""}
 
 
 def _comp(cid):
@@ -82,8 +64,8 @@ def discord(text):
 
 # ---------------- dashboard ----------------
 
-@bp.route("/")
-@admin_required
+@bp.route("/competitions")
+@require("comps.view")
 def dashboard():
     db = get_db()
     rows = db.execute("SELECT * FROM competitions ORDER BY CASE status WHEN 'live' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END, "
@@ -280,7 +262,7 @@ def _local(s):
 
 
 @bp.route("/competitions/new", methods=["GET", "POST"])
-@admin_required
+@require("comps")
 def new_competition():
     copy = request.args.get("copy", type=int)
     if request.method == "POST":
@@ -322,7 +304,7 @@ def new_competition():
 
 
 @bp.route("/competitions/<int:cid>/edit", methods=["GET", "POST"])
-@admin_required
+@require("comps")
 def edit_competition(cid):
     c = _comp(cid)
     if c["status"] in ("drawn", "cancelled"):
@@ -353,7 +335,7 @@ def edit_competition(cid):
 
 
 @bp.route("/competitions/<int:cid>/status", methods=["POST"])
-@admin_required
+@require("comps")
 def set_status(cid):
     c = _comp(cid)
     action = request.form.get("action")
@@ -381,6 +363,16 @@ def set_status(cid):
         flash("Back to draft — it's hidden from the site.")
     elif action == "cancel" and c["status"] in ("draft", "live"):
         n, total = cancel_competition(cid)
+        refunded = db.execute(
+            "SELECT l.user_id, SUM(l.amount) AS amt, u.email FROM orders o JOIN credit_ledger l ON l.ref IN "
+            "('refund-o' || o.id, 'refund-o' || o.id || '-credit', 'refund-o' || o.id || '-deposit') "
+            "JOIN users u ON u.id=l.user_id WHERE o.competition_id=? GROUP BY l.user_id", (cid,)).fetchall()
+        for r in refunded:
+            tell(r["email"], f"{c['title']} was cancelled — you've been refunded", kind="refund", key=f"refund:{cid}:{r['user_id']}",
+                 user_id=r["user_id"], link=url_for("public.account", tab="wallet"),
+                 body=f"We're sorry — {c['title']} has been cancelled. Everything you paid has been refunded to your wallet: "
+                      "card and cash payments to your cash balance (withdrawable), site credit as site credit.",
+                 highlight=f"£{r['amt'] / 100:.2f} refunded", heading="Competition cancelled")
         flash(f"Cancelled. {n} entrant{'s' if n != 1 else ''} refunded £{total / 100:.2f} — card and cash payments to their "
               "cash balance (withdrawable), site credit back as site credit.", "error")
     else:
@@ -398,7 +390,7 @@ def _remove_images(names):
 
 
 @bp.route("/competitions/<int:cid>/delete", methods=["POST"])
-@admin_required
+@require("comps")
 def delete_comp(cid):
     c = _comp(cid)
     if request.form.get("confirm", "").strip().upper() != "DELETE":
@@ -415,7 +407,7 @@ def delete_comp(cid):
 
 
 @bp.route("/competitions/delete-selected", methods=["POST"])
-@admin_required
+@require("comps")
 def delete_selected():
     ids = [int(x) for x in request.form.getlist("cid") if x.isdigit()]
     if not ids:
@@ -454,7 +446,7 @@ def _backup_db():
 
 
 @bp.route("/start-fresh", methods=["GET", "POST"])
-@owner_required
+@require("reset")
 def reset():
     db = get_db()
     counts = {
@@ -491,7 +483,7 @@ def reset():
 
 
 @bp.route("/competitions/<int:cid>")
-@admin_required
+@require("comps.view")
 def entries(cid):
     c = _comp(cid)
     db = get_db()
@@ -507,8 +499,10 @@ def entries(cid):
     postal_log = db.execute(
         "SELECT p.*, t.number, a.name AS added_by_name FROM postal_entries p LEFT JOIN tickets t ON t.postal_entry_id=p.id "
         "LEFT JOIN users a ON a.id=p.added_by WHERE p.competition_id=? ORDER BY p.id DESC LIMIT 200", (cid,)).fetchall()
-    draw_rec = db.execute("SELECT d.*, u.email AS run_by_email FROM draws d LEFT JOIN users u ON u.id=d.run_by "
-                          "WHERE d.competition_id=? ORDER BY d.id DESC LIMIT 1", (cid,)).fetchone()
+    draw_recs = db.execute("SELECT d.*, u.email AS run_by_email FROM draws d LEFT JOIN users u ON u.id=d.run_by "
+                           "WHERE d.competition_id=? ORDER BY d.id", (cid,)).fetchall()
+    draw_rec = draw_recs[0] if draw_recs else None
+    claim = db.execute("SELECT * FROM prize_claims WHERE competition_id=? ORDER BY id DESC LIMIT 1", (cid,)).fetchone()
     revenue = db.execute("SELECT COALESCE(SUM(amount),0) FROM orders WHERE competition_id=? AND status='paid'",
                          (cid,)).fetchone()[0]
     prizes = db.execute(
@@ -521,14 +515,18 @@ def entries(cid):
                            prizes=prizes, board=instant_board(db, cid, reveal=True), gi=game_info(db, c),
                            game_name=GAME_NAMES.get(c["game_type"]),
                            can_edit_instant=taken_count(db, cid) == 0 and c["status"] in ("draft", "live"),
-                           now_iso=iso(utcnow()), postal_log=postal_log, draw_rec=draw_rec,
+                           now_iso=iso(utcnow()), postal_log=postal_log, draw_rec=draw_rec, draw_recs=draw_recs,
+                           claim=claim, claim_names=CLAIM_NAMES, stage=lifecycle_stage(db, c), stage_names=LIFECYCLE_NAMES,
+                           snapshot=latest_snapshot(db, cid),
+                           postal_waiting=db.execute("SELECT COUNT(*) FROM postal_entries WHERE competition_id=? AND status='received'",
+                                                     (cid,)).fetchone()[0],
                            today=datetime.now(UK).strftime("%Y-%m-%d"),
                            audit_rows=db.execute("SELECT * FROM audit_log WHERE target=? ORDER BY id DESC LIMIT 20",
                                                  (f"comp:{cid}",)).fetchall())
 
 
 @bp.route("/competitions/<int:cid>/instant", methods=["POST"])
-@admin_required
+@require("comps")
 def instant(cid):
     f = request.form
     try:
@@ -563,7 +561,7 @@ def instant(cid):
 
 
 @bp.route("/instant/<int:pid>/fulfilled", methods=["POST"])
-@admin_required
+@require("prizes")
 def instant_fulfilled(pid):
     db = get_db()
     p = db.execute("SELECT * FROM instant_prizes WHERE id=?", (pid,)).fetchone()
@@ -576,7 +574,7 @@ def instant_fulfilled(pid):
 
 
 @bp.route("/competitions/<int:cid>/postal", methods=["POST"])
-@admin_required
+@require("postal")
 def postal(cid):
     from datetime import date
     f = request.form
@@ -599,22 +597,72 @@ def postal(cid):
     if received.date() == datetime.strptime(comp_["ends_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(UK).date():
         rec_iso = min(rec_iso, comp_["ends_at"])
     rec_iso = min(rec_iso, iso(utcnow()))
+    phone = "".join(ch for ch in f.get("phone", "") if ch.isdigit() or ch == "+")[:20]
     try:
-        _pid, number, reason = add_postal_entry(cid, f["name"].strip(), f["email"].strip(), f["address"].strip(),
-                                                f.get("answer_correct") == "1", g.user["id"], rec_iso, dob,
-                                                "".join(ch for ch in f.get("phone", "") if ch.isdigit() or ch == "+")[:20])
+        if f.get("mode") == "receive":
+            receive_postal(cid, f["name"].strip(), f["email"].strip(), f["address"].strip(),
+                           f.get("answer_correct") == "1", g.user["id"], rec_iso, dob, phone)
+            flash("Envelope logged as received. Approve or reject it from the postal queue.")
+            return redirect(back)
+        pid, number, reason = add_postal_entry(cid, f["name"].strip(), f["email"].strip(), f["address"].strip(),
+                                                f.get("answer_correct") == "1", g.user["id"], rec_iso, dob, phone)
     except PurchaseError as e:
         flash(str(e), "error")
         return redirect(back)
     if number:
         flash(f"Postal entry accepted — ticket #{number}.")
-        mailer.send(f["email"].strip(), "Your free entry is in",
-                    f"Hi {f['name'].split()[0]},\n\nYour postal entry for {comp_['title']} has been added. Your ticket number:",
-                    highlight=f"Ticket #{number}", heading="Free entry confirmed",
-                    button=("View the competition", f"{current_app.config['SITE_URL']}{url_for('public.competition', slug=comp_['slug'])}"))
+        _postal_email(comp_, f["email"].strip(), f["name"], number, pid)
     else:
         flash(f"Logged as rejected: {reason}. No ticket was issued.", "error")
     return redirect(back)
+
+
+def _postal_email(comp_, email, name, number, pid=None):
+    u = get_db().execute("SELECT id FROM users WHERE email=?", (email.lower(),)).fetchone()
+    tell(email, "Your free entry is in", kind="entry", key=f"postal:{pid or comp_['id']}:{number}", user_id=u["id"] if u else None,
+         link=url_for("public.competition", slug=comp_["slug"]), title=f"Postal entry accepted — {comp_['title']}",
+         body=f"Hi {name.split()[0]},\n\nYour postal entry for {comp_['title']} has been added. Your ticket number:",
+         highlight=f"Ticket #{number}", heading="Free entry confirmed",
+         button=("View the competition", f"{current_app.config['SITE_URL']}{url_for('public.competition', slug=comp_['slug'])}"))
+
+
+@bp.route("/postal")
+@require("postal")
+def postal_queue():
+    db = get_db()
+    waiting = db.execute(
+        "SELECT p.*, c.title, c.ends_at, c.max_per_user, c.slug, a.name AS added_by_name FROM postal_entries p "
+        "JOIN competitions c ON c.id=p.competition_id LEFT JOIN users a ON a.id=p.added_by "
+        "WHERE p.status='received' ORDER BY c.ends_at, p.id").fetchall()
+    rows = []
+    for e in waiting:
+        comp = db.execute("SELECT * FROM competitions WHERE id=?", (e["competition_id"],)).fetchone()
+        rows.append({"e": e, "problem": postal_problem(db, comp, e)})
+    recent = db.execute("SELECT p.*, c.title FROM postal_entries p JOIN competitions c ON c.id=p.competition_id "
+                        "WHERE p.status!='received' ORDER BY p.id DESC LIMIT 50").fetchall()
+    return render_template("admin/postal.html", rows=rows, recent=recent, reasons=POSTAL_REJECT_REASONS)
+
+
+@bp.route("/postal/<int:pid>", methods=["POST"])
+@require("postal")
+def postal_process(pid):
+    approve = request.form.get("action") == "approve"
+    reason = request.form.get("reason", "")
+    if reason == "Other (see note)" or not reason:
+        reason = request.form.get("note", "").strip() or reason
+    try:
+        number, why = process_postal(pid, approve, g.user, reason)
+    except PurchaseError as e:
+        flash(str(e), "error")
+        return redirect(request.form.get("back") or url_for("admin.postal_queue"))
+    e = get_db().execute("SELECT p.*, c.title, c.slug FROM postal_entries p JOIN competitions c ON c.id=p.competition_id "
+                         "WHERE p.id=?", (pid,)).fetchone()
+    if number:
+        _postal_email(e, e["email"], e["name"], number, pid)
+        flash(f"Approved — ticket #{number} issued to {e['name']}.")
+    else:
+        flash(f"Rejected: {why}." + (" The rules didn't allow it to be approved." if approve else ""), "error")
+    return redirect(request.form.get("back") or url_for("admin.postal_queue"))
 
 
 def announce_live(c):
@@ -628,29 +676,37 @@ def announce_live(c):
 
 
 def announce_draw(cid):
-    """Email the winner, tell the admin and post to Discord. Used by manual and automatic draws."""
+    """Tell the winner, every other entrant (in their account) and staff; post to Discord. Safe to call again."""
     db = get_db()
     c = db.execute("SELECT * FROM competitions WHERE id=?", (cid,)).fetchone()
     w = winner_details(db, c)
     if not w:
         return None
-    link = f"{current_app.config['SITE_URL']}{url_for('public.competition', slug=c['slug'])}"
-    mailer.send(w["email"], f"🎉 You've won {c['title']}!",
-                f"Hi {w['name'].split()[0]},\n\nCongratulations — your ticket #{w['number']} has just won:"
-                + (f"\n\nPrefer cash? You can choose the cash alternative of {c['cash_alternative']} instead." if c["cash_alternative"] else "")
-                + "\n\nWe'll be in touch very shortly to arrange your prize. Reply to this email if you have any questions.",
-                highlight=c["title"], heading="You're a winner!", button=("See the draw", link),
-                preheader=f"Ticket #{w['number']} has won {c['title']}!")
+    d = db.execute("SELECT * FROM draws WHERE competition_id=? ORDER BY id DESC LIMIT 1", (cid,)).fetchone()
+    link = url_for("public.competition", slug=c["slug"])
+    full = f"{current_app.config['SITE_URL']}{link}"
+    wuid = d["winner_user_id"] if d else None
+    tell(w["email"], f"🎉 You've won {c['title']}!", kind="win", key=f"win:{d['id'] if d else cid}", user_id=wuid, link=link,
+         title=f"You won {c['title']}!",
+         body=f"Hi {w['name'].split()[0]},\n\nCongratulations — your ticket #{w['number']} has just won:"
+              + (f"\n\nPrefer cash? You can choose the cash alternative of {c['cash_alternative']} instead." if c["cash_alternative"] else "")
+              + "\n\nWe'll be in touch very shortly to arrange your prize. We will never ask you to pay to claim it.",
+         highlight=c["title"], heading="You're a winner!", button=("See the draw", full),
+         preheader=f"Ticket #{w['number']} has won {c['title']}!")
+    for (uid,) in db.execute("SELECT DISTINCT user_id FROM tickets WHERE competition_id=? AND status='issued' AND user_id IS NOT NULL "
+                             "AND user_id IS NOT ?", (cid, wuid)).fetchall():
+        notify(uid, "result", f"Draw result: {c['title']}", f"The winning ticket was #{w['number']}. Your tickets didn't win "
+               "this time — thanks for entering.", link=link, dedupe_key=f"result:{d['id'] if d else cid}:{uid}")
     if current_app.config["SUPPORT_EMAIL"]:
         mailer.send(current_app.config["SUPPORT_EMAIL"], f"Draw result: {c['title']}",
-                f"Winning ticket #{w['number']}: {w['name']} <{w['email']}>. Arrange the prize.\n{link}")
+                    f"Winning ticket #{w['number']}: {w['name']} <{w['email']}>. Arrange the prize from Admin → Winners.\n{full}")
     discord(f"🎉 **{c['title']}** has been drawn! Winning ticket **#{w['number']}** — congratulations "
-            f"{public_name(w['name'])}! {link}")
+            f"{public_name(w['name'])}! {full}")
     return w
 
 
 @bp.route("/competitions/<int:cid>/draw", methods=["POST"])
-@admin_required
+@require("draws")
 def draw(cid):
     try:
         number = run_draw(cid, actor=g.user)
@@ -663,7 +719,7 @@ def draw(cid):
 
 
 @bp.route("/competitions/<int:cid>/winner", methods=["POST"])
-@admin_required
+@require("prizes")
 def winner_story(cid):
     data = {"winner_quote": request.form.get("winner_quote", "").strip()[:500]}
     has_photo = bool(request.files.get("winner_photo") and request.files["winner_photo"].filename)
@@ -687,7 +743,7 @@ def winner_story(cid):
 
 
 @bp.route("/competitions/<int:cid>/export.csv")
-@admin_required
+@require("comps.view")
 def export(cid):
     c = _comp(cid)
     rows = get_db().execute(
@@ -809,7 +865,7 @@ def _announce_games(made):
 
 
 @bp.route("/games/starter", methods=["POST"])
-@admin_required
+@require("comps")
 def starter_games():
     db = get_db()
     publish = request.form.get("draft") != "1"          # live straight away unless "keep as drafts" ticked
@@ -826,7 +882,7 @@ def starter_games():
 
 
 @bp.route("/games/random", methods=["POST"])
-@admin_required
+@require("comps")
 def random_games():
     db = get_db()
     publish = request.form.get("draft") != "1"
@@ -851,7 +907,7 @@ def random_games():
 
 
 @bp.route("/games/publish-drafts", methods=["POST"])
-@admin_required
+@require("comps")
 def publish_draft_games():
     db = get_db()
     rows = db.execute("SELECT * FROM competitions WHERE status='draft' AND game_type!=''").fetchall()
@@ -873,7 +929,7 @@ def publish_draft_games():
 # ---------------- promo codes ----------------
 
 @bp.route("/promos", methods=["GET", "POST"])
-@owner_required
+@require("money")
 def promos():
     db = get_db()
     if request.method == "POST":
@@ -915,7 +971,7 @@ def promos():
 # ---------------- users & wallet ----------------
 
 @bp.route("/users")
-@owner_required
+@require("users.view")
 def users():
     db = get_db()
     q = request.args.get("q", "").strip()
@@ -930,7 +986,7 @@ def users():
 
 
 @bp.route("/users/<int:uid>", methods=["GET", "POST"])
-@owner_required
+@require("users.view")
 def user_detail(uid):
     db = get_db()
     u = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
@@ -938,6 +994,10 @@ def user_detail(uid):
         abort(404)
     if request.method == "POST":
         f = request.form
+        need = {"credit": "money", "verify": "users.verify", "admin": "users.manage"}.get(f.get("action"))
+        if not need or not can(g.user, need):
+            flash("Your role can't do that.", "error")
+            return redirect(url_for("admin.user_detail", uid=uid))
         if f.get("action") == "credit":
             try:
                 amt = money(f.get("amount"), "Amount")
@@ -958,7 +1018,7 @@ def user_detail(uid):
             audit(db, "user.verify", f"user:{uid}", "Email marked verified by admin")
             flash("Email marked as verified.")
         elif f.get("action") == "admin" and uid != g.user["id"]:
-            role = f.get("role") if f.get("role") in ("staff", "owner") else None
+            role = f.get("role") if f.get("role") in ROLES else None
             if role:
                 db.execute("UPDATE users SET is_admin=1, admin_role=? WHERE id=?", (role, uid))
             else:
@@ -970,12 +1030,13 @@ def user_detail(uid):
                          "WHERE t.user_id=? AND t.status='issued' GROUP BY c.id ORDER BY MAX(t.id) DESC", (uid,)).fetchall()
     ledger = db.execute("SELECT * FROM credit_ledger WHERE user_id=? ORDER BY id DESC LIMIT 50", (uid,)).fetchall()
     pays = db.execute("SELECT * FROM checkouts WHERE user_id=? ORDER BY id DESC LIMIT 50", (uid,)).fetchall()
-    return render_template("admin/user.html", u=u, tickets=tickets, ledger=ledger, pays=pays, credit=balance(db, uid),
+    from .perms import role_of
+    return render_template("admin/user.html", roles=ROLES, role_key=role_of(u), u=u, tickets=tickets, ledger=ledger, pays=pays, credit=balance(db, uid),
                            bal=balances(db, uid))
 
 
 @bp.route("/payouts", methods=["GET", "POST"])
-@owner_required
+@require("money")
 def payouts():
     db = get_db()
     if request.method == "POST":
@@ -988,7 +1049,10 @@ def payouts():
             flash("Updated.")
             u = db.execute("SELECT * FROM users WHERE id=?", (w["user_id"],)).fetchone()
             paid_ = request.form.get("action") == "paid"
-            mailer.send(u["email"], "Your withdrawal has been paid 💷" if paid_ else "Your withdrawal",
+            tell(u["email"], "Your withdrawal has been paid 💷" if paid_ else "Your withdrawal", kind="withdrawal",
+                 key=f"withdraw-{'paid' if paid_ else 'returned'}:{w['id']}", user_id=u["id"],
+                 link=url_for("public.withdrawal_detail", wid=w["id"]),
+                 title=f"Withdrawal of £{w['amount']/100:.2f} {'paid' if paid_ else 'returned to your balance'}", body=
                         f"Hi {u['name'].split()[0]},\n\n"
                         + ("Your withdrawal is on its way — it should show in your account shortly:" if paid_
                            else "We couldn't complete your withdrawal, so it's been returned to your cash balance:")
@@ -1015,7 +1079,7 @@ def payouts():
 
 
 @bp.route("/deposit-refunds/<int:did>/done", methods=["POST"])
-@owner_required
+@require("money")
 def deposit_refund_done(did):
     db = get_db()
     db.execute("UPDATE deposits SET status='expired' WHERE id=? AND status='needs_refund'", (did,))
@@ -1025,7 +1089,7 @@ def deposit_refund_done(did):
 
 
 @bp.route("/refunds/<int:cid>/done", methods=["POST"])
-@owner_required
+@require("money")
 def refund_done(cid):
     db = get_db()
     db.execute("UPDATE checkouts SET status='expired' WHERE id=? AND status='needs_refund'", (cid,))
@@ -1035,7 +1099,7 @@ def refund_done(cid):
 
 
 @bp.route("/payouts/export.csv")
-@owner_required
+@require("money")
 def payouts_csv():
     """Pending withdrawals in a simple CSV you can use for bank bulk payments."""
     rows = get_db().execute(
@@ -1053,7 +1117,7 @@ def payouts_csv():
 
 
 @bp.route("/stats")
-@owner_required
+@require("reports")
 def stats():
     from datetime import timedelta
     db = get_db()
@@ -1095,7 +1159,7 @@ FREE_DAILY_PRIZES = [("£50 Cash", 5000, 1, "cash"), ("£10 Cash", 1000, 5, "cas
 
 
 @bp.route("/games/free-daily", methods=["POST"])
-@admin_required
+@require("comps")
 def free_daily_game():
     from datetime import timedelta
     db = get_db()
@@ -1125,9 +1189,19 @@ def free_daily_game():
 # ---------------- site settings ----------------
 
 @bp.route("/settings", methods=["GET", "POST"])
-@admin_required
+@require("settings")
 def settings():
     keys = ("announcement", "live_now_url", "live_now_title")
+    if request.method == "POST" and request.form.get("site_status") is not None:
+        mode = request.form["site_status"] if request.form["site_status"] in ("ok", "payments_paused", "maintenance") else "ok"
+        set_setting("site_status", mode)
+        set_setting("site_status_message", request.form.get("site_status_message", "").strip()[:300])
+        if mode == "ok":
+            set_setting("payments_auto_paused_until", "")
+        audit(get_db(), "site.status", None, f"Site status set to {mode}: {request.form.get('site_status_message', '')[:200]}")
+        flash({"ok": "Everything's open again.", "payments_paused": "Payments paused — customers see your message.",
+               "maintenance": "Maintenance mode on. Admins can still use the site; customers see the maintenance page."}[mode])
+        return redirect(url_for("admin.settings"))
     if request.method == "POST":
         for k in keys:
             v = request.form.get(k, "").strip()
@@ -1140,13 +1214,15 @@ def settings():
             discord(f"🔴 **We're LIVE!** {request.form.get('live_now_title') or ''} {request.form['live_now_url']}")
         flash("Saved.")
         return redirect(url_for("admin.settings"))
-    return render_template("admin/settings.html", s={k: get_setting(k) for k in keys})
+    from .status import state
+    return render_template("admin/settings.html", s={k: get_setting(k) for k in keys}, state=state(),
+                           status_message=get_setting("site_status_message"), mode=get_setting("site_status", "ok"))
 
 
 # ---------------- audit log ----------------
 
 @bp.route("/audit")
-@admin_required
+@require("audit")
 def audit_log():
     db = get_db()
     target = request.args.get("target", "").strip()[:40]
@@ -1156,3 +1232,85 @@ def audit_log():
         args.append(target)
     rows = db.execute(sql + " ORDER BY id DESC LIMIT 300", args).fetchall()
     return render_template("admin/audit.html", rows=rows, target=target)
+
+
+# ---------------- redraws & prize claims ----------------
+
+@bp.route("/competitions/<int:cid>/redraw", methods=["POST"])
+@require("draws")
+def redraw_comp(cid):
+    if request.form.get("confirm", "").strip().upper() != "REDRAW":
+        flash("Type REDRAW to confirm.", "error")
+        return redirect(url_for("admin.entries", cid=cid) + "#draw")
+    try:
+        n = redraw(cid, request.form.get("reason", ""), g.user)
+    except PurchaseError as e:
+        flash(str(e), "error")
+        return redirect(url_for("admin.entries", cid=cid) + "#draw")
+    announce_draw(cid)
+    flash(f"Redraw complete — new winning ticket #{n}. The reason and previous result are kept in the draw record.")
+    return redirect(url_for("admin.entries", cid=cid) + "#draw")
+
+
+def _evidence_dir():
+    d = os.path.join(os.path.dirname(current_app.config["UPLOAD_DIR"]), "evidence")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+@bp.route("/prizes")
+@require("prizes")
+def prizes():
+    db = get_db()
+    claims = db.execute(
+        "SELECT pc.*, c.title, c.slug, c.cash_alternative, c.prize_value, t.number, COALESCE(u.name, p.name) AS winner, "
+        "COALESCE(u.email, p.email) AS email, (SELECT MAX(created_at) FROM claim_events e WHERE e.claim_id=pc.id) AS last_event "
+        "FROM prize_claims pc JOIN competitions c ON c.id=pc.competition_id JOIN tickets t ON t.id=pc.ticket_id "
+        "LEFT JOIN users u ON u.id=pc.user_id LEFT JOIN postal_entries p ON p.id=t.postal_entry_id "
+        "ORDER BY pc.status IN ('delivered','forfeited'), pc.updated_at").fetchall()
+    unsent = db.execute(
+        "SELECT ip.*, c.title AS comp, t.number AS won_number, COALESCE(u.name, p.name) AS winner FROM instant_prizes ip "
+        "JOIN competitions c ON c.id=ip.competition_id JOIN tickets t ON t.id=ip.ticket_id LEFT JOIN users u ON u.id=t.user_id "
+        "LEFT JOIN postal_entries p ON p.id=t.postal_entry_id WHERE ip.fulfilled=0 ORDER BY ip.won_at").fetchall()
+    return render_template("admin/prizes.html", claims=claims, unsent=unsent, names=CLAIM_NAMES)
+
+
+@bp.route("/prizes/<int:claim_id>", methods=["GET", "POST"])
+@require("prizes")
+def claim_detail(claim_id):
+    db = get_db()
+    if request.method == "POST":
+        evidence = None
+        f = request.files.get("evidence")
+        if f and f.filename:
+            ext = os.path.splitext(f.filename)[1].lower()
+            if ext not in IMAGE_EXT | {".pdf"}:
+                flash("Evidence must be an image or PDF.", "error")
+                return redirect(url_for("admin.claim_detail", claim_id=claim_id))
+            evidence = f"claim{claim_id}-{secrets.token_hex(6)}{ext}"
+            f.save(os.path.join(_evidence_dir(), evidence))
+        try:
+            update_claim(claim_id, request.form.get("status") or None, request.form.get("note", ""), g.user, evidence,
+                         request.form.get("choice"))
+            flash("Saved.")
+        except PurchaseError as e:
+            flash(str(e), "error")
+        return redirect(url_for("admin.claim_detail", claim_id=claim_id))
+    c = db.execute(
+        "SELECT pc.*, c.title, c.slug, c.cash_alternative, c.prize_value, c.id AS comp_id, t.number, "
+        "COALESCE(u.name, p.name) AS winner, COALESCE(u.email, p.email) AS email, u.phone, p.address, u.id AS uid "
+        "FROM prize_claims pc JOIN competitions c ON c.id=pc.competition_id JOIN tickets t ON t.id=pc.ticket_id "
+        "LEFT JOIN users u ON u.id=pc.user_id LEFT JOIN postal_entries p ON p.id=t.postal_entry_id WHERE pc.id=?",
+        (claim_id,)).fetchone()
+    if c is None:
+        abort(404)
+    events = db.execute("SELECT e.*, u.email AS actor FROM claim_events e LEFT JOIN users u ON u.id=e.actor_id "
+                        "WHERE claim_id=? ORDER BY e.id DESC", (claim_id,)).fetchall()
+    return render_template("admin/claim.html", c=c, events=events, statuses=CLAIM_STATUSES, names=CLAIM_NAMES)
+
+
+@bp.route("/evidence/<name>")
+@require("prizes")
+def evidence(name):
+    from flask import send_from_directory
+    return send_from_directory(_evidence_dir(), os.path.basename(name), as_attachment=False)

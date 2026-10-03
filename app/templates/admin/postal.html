@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Postal entries · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Postal entries</h1>
+<p class="muted">Free entries go into exactly the same pool as paid entries. Log every envelope as <b>received</b> the day it arrives (from the competition's page), then approve or reject it here. A competition can't close or be drawn while any of its envelopes are waiting.</p>
+
+<h2>Waiting to be processed ({{ rows|length }})</h2>
+{% if rows %}
+<div class="stack">
+{% for r in rows %}{% set e = r.e %}
+  <section class="panel">
+    <div class="row" style="flex-wrap:wrap"><b>{{ e.name }}</b> <span class="small muted">{{ e.email }}{% if e.user_id %} · <span class="pill small">has an account</span>{% endif %}</span>
+      <span class="small"><a href="{{ url_for('admin.entries', cid=e.competition_id) }}#postal">{{ e.title }}</a> · closes {{ e.ends_at|uktime('%d %b %H:%M') }}</span></div>
+    <p class="small muted" style="margin:6px 0">{{ e.address }} · arrived {{ e.received_at|uktime('%d %b %Y') }} · answer {{ 'correct' if e.answer_correct else 'wrong' }}{% if e.dob %} · born {{ e.dob }}{% endif %} · logged by {{ e.added_by_name or '—' }}</p>
+    {% if r.problem %}<p class="notice warn" style="margin:0 0 var(--s3)">Can't be accepted: <b>{{ r.problem }}</b></p>{% else %}<p class="notice good" style="margin:0 0 var(--s3)">Meets every rule — ready to approve.</p>{% endif %}
+    <form method="post" action="{{ url_for('admin.postal_process', pid=e.id) }}" class="inline-form" style="flex-wrap:wrap">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      {% if not r.problem %}<button class="btn small good" name="action" value="approve">Approve — issue ticket</button>{% endif %}
+      <label class="sr-only" for="reason{{ e.id }}">Reason</label>
+      <select id="reason{{ e.id }}" name="reason">{% if r.problem %}<option>{{ r.problem }}</option>{% endif %}{% for x in reasons %}<option>{{ x }}</option>{% endfor %}</select>
+      <label class="sr-only" for="note{{ e.id }}">Note</label><input id="note{{ e.id }}" name="note" placeholder="Note (for Other)" style="max-width:200px">
+      <button class="btn small danger" name="action" value="reject">Reject</button>
+    </form>
+  </section>
+{% endfor %}
+</div>
+{% else %}<div class="panel"><p class="muted" style="margin:0">Nothing waiting. 👍</p></div>{% endif %}
+
+<h2>Recently processed</h2>
+<div class="panel table-scroll" tabindex="0"><table>
+  <tr><th>Arrived</th><th>Name</th><th>Competition</th><th>Outcome</th></tr>
+  {% for e in recent %}<tr><td>{{ (e.received_at or e.created_at)|uktime('%d %b') }}</td><td>{{ e.name }}<div class="tiny muted">{{ e.email }}</div></td><td>{{ e.title }}</td>
+    <td>{% if e.status == 'accepted' %}<span class="pill new">Accepted</span>{% else %}<span class="pill hot">Rejected</span> {{ e.reject_reason }}{% endif %}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">None yet.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

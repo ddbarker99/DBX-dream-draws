@@ -11,7 +11,7 @@ from . import db as dbmod
 from .db import parse_iso, utcnow
 
 UK = ZoneInfo("Europe/London")
-ASSET_V = "18"   # bump when style.css or images change, so browsers fetch the new copy
+ASSET_V = "19"   # bump when style.css or images change, so browsers fetch the new copy
 _PLACEHOLDERS = ("example street", "example.com", "yourdomain", "ab1 2cd")
 
 
@@ -61,6 +61,7 @@ def create_app(test_config=None):
         SOCIAL={k: _env(k.upper() + "_URL") for k in ("facebook", "instagram", "tiktok", "youtube", "discord", "twitch")},
         TRUSTPILOT_URL=_env("TRUSTPILOT_URL"),
         BLOCK_CREDIT_CARDS=_env("BLOCK_CREDIT_CARDS", "1") == "1",
+        ADMIN_MFA=_env("ADMIN_MFA", "1") == "1",          # two-step verification for every admin account
         MAX_CONTENT_LENGTH=8 * 1024 * 1024,
         SEND_FILE_MAX_AGE_DEFAULT=60 * 60 * 24 * 30,   # static files carry ?v= so they can be cached hard
         SESSION_COOKIE_HTTPONLY=True,
@@ -92,6 +93,11 @@ def create_app(test_config=None):
                 session.clear()
             elif g.user is not None and session.get("pwv") is None:
                 session["pwv"] = pwv           # sessions from before this check existed
+            if g.user is not None:
+                from .security import check_session
+                if not check_session(g.user):  # signed out from another device
+                    g.user = None
+                    session.clear()
             if g.user is None:
                 session.pop("uid", None)
             elif request.endpoint not in ("static", "public.uploads", "public.service_worker", "public.manifest"):
@@ -110,31 +116,23 @@ def create_app(test_config=None):
         if ref and not session.get("ref") and not g.get("user"):
             if dbmod.get_db().execute("SELECT 1 FROM users WHERE referral_code=?", (ref,)).fetchone():
                 session["ref"] = ref
-        from .services import due_auto_draws, due_scheduled
+        if request.endpoint in ("public.stripe_webhook", "public.health"):
+            return
+        from .jobs import run_all_jobs
         try:
-            launched = due_scheduled()
+            run_all_jobs()            # throttled per job; the worker container normally does this
         except Exception:
-            app.logger.exception("scheduled publish failed")
-            launched = []
-        if launched:
-            from .admin import announce_live
-            for c in launched:
-                try:
-                    announce_live(c)
-                except Exception:
-                    app.logger.exception("announce live %s failed", c["id"])
-        try:
-            drawn = due_auto_draws()
-        except Exception:
-            app.logger.exception("auto draw failed")
-            drawn = []
-        if drawn:
-            from .admin import announce_draw
-            for cid in drawn:
-                try:
-                    announce_draw(cid)
-                except Exception:
-                    app.logger.exception("announce draw %s failed", cid)
+            app.logger.exception("background jobs failed")
+
+    @app.before_request
+    def maintenance():
+        from .status import maintenance_gate
+        return maintenance_gate()
+
+    @app.before_request
+    def admin_mfa():
+        from .security import gate
+        return gate()
 
     @app.before_request
     def csrf_protect():
@@ -159,16 +157,19 @@ def create_app(test_config=None):
         from .services import CATEGORIES, get_setting
         if "csrf" not in session:
             session["csrf"] = secrets.token_urlsafe(32)
-        wallet = None
+        wallet, unread = None, 0
         if g.get("user"):
             from .services import balances
             wallet = balances(dbmod.get_db(), g.user["id"])
+            from .notify import unread_count
+            unread = unread_count(g.user["id"])
         return {
-            "csrf_token": session["csrf"], "config": app.config, "user": g.get("user"), "wallet": wallet,
+            "csrf_token": session["csrf"], "config": app.config, "user": g.get("user"), "wallet": wallet, "unread": unread,
             "basket_count": len(session.get("basket", [])),
             "announcement": get_setting("announcement"),
             "live_now": get_setting("live_now_url"), "live_title": get_setting("live_now_title", "We're live!"),
             "categories": CATEGORIES, "asset_v": ASSET_V,
+            "site_state": __import__("app.status", fromlist=["state"]).state(),
         }
 
     @app.template_filter("gbp")
@@ -239,6 +240,24 @@ def create_app(test_config=None):
         """Take admin access away from an account."""
         _set_admin(app, email, 0)
 
+    @app.cli.command("run-jobs")
+    @click.option("--loop", is_flag=True, help="Keep running every 20 seconds (for the worker container).")
+    def run_jobs_cmd(loop):
+        """Run background jobs: closing, draws, emails, health alerts…"""
+        import time
+        from .jobs import run_all_jobs
+        while True:
+            with app.test_request_context("/__jobs__"):
+                g.user = None
+                res = run_all_jobs()
+                done = {k: v for k, v in res.items() if v not in (None, True)}
+                if done:
+                    click.echo(f"{utcnow():%H:%M:%S} {done}")
+                dbmod.close_db()
+            if not loop:
+                break
+            time.sleep(20)
+
     @app.cli.command("list-admins")
     def list_admins():
         """Show every account with admin access."""
@@ -252,14 +271,18 @@ def create_app(test_config=None):
 
     from .routes import bp as public_bp
     from .admin import bp as admin_bp
+    from .security import bp as security_bp
+    from .control import bp as control_bp
     app.register_blueprint(public_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(security_bp)
+    app.register_blueprint(control_bp)
     return app
 
 
 def _set_admin(app, email, value):
     conn = dbmod._connect(app.config["DATABASE"])
-    cur = conn.execute("UPDATE users SET is_admin=? WHERE email=?", (value, email.strip().lower()))
+    cur = conn.execute("UPDATE users SET is_admin=?, admin_role='admin' WHERE email=?", (value, email.strip().lower()))
     conn.close()
     if cur.rowcount:
         click.echo(f"{email}: admin {'ON' if value else 'OFF'}")

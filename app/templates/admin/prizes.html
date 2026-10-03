@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Winners & prizes · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Winners &amp; prizes</h1>
+<p class="muted">Every main-draw winner moves through: Winner selected → Contacted → Verification required → Verified → Prize chosen → Fulfilment in progress → Paid / delivered. Open a claim to update it, add notes or attach evidence.</p>
+<h2>Main draw winners</h2>
+<div class="panel table-scroll" tabindex="0"><table>
+  <tr><th>Competition</th><th>Winner</th><th>Ticket</th><th>Status</th><th>Last update</th></tr>
+  {% for c in claims %}<tr><td><a href="{{ url_for('admin.claim_detail', claim_id=c.id) }}">{{ c.title }}</a></td><td>{{ c.winner }}<div class="tiny muted">{{ c.email }}</div></td><td>#{{ c.number }}</td>
+    <td><span class="pill {{ 'paid' if c.status == 'delivered' else ('cancelled' if c.status == 'forfeited' else 'pending') }}">{{ names[c.status] }}</span></td>
+    <td class="small muted">{{ (c.last_event or c.updated_at)|ago }}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">No draws yet.</td></tr>{% endfor %}
+</table></div>
+<h2>Instant prizes to send ({{ unsent|length }})</h2>
+<div class="panel table-scroll" tabindex="0"><table>
+  <tr><th>Prize</th><th>Competition</th><th>Ticket</th><th>Winner</th><th></th></tr>
+  {% for p in unsent %}<tr><td>{{ p.title }}</td><td>{{ p.comp }}</td><td>#{{ p.won_number }}</td><td>{{ p.winner }}</td>
+    <td><form method="post" action="{{ url_for('admin.instant_fulfilled', pid=p.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="back" value="{{ url_for('admin.prizes') }}"><button class="btn small good">Mark sent</button></form></td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Nothing to send.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

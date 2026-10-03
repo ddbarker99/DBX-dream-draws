@@ -94,8 +94,8 @@ def render(subject, body, button=None, heading=None, highlight=None, preheader=N
 </td></tr></table></body></html>"""
 
 
-def send(to, subject, body, button=None, heading=None, highlight=None, preheader=None):
-    """button=(label, url); highlight=str (big prize line) or list (ticket chips)."""
+def _build(to, subject, body, button=None, heading=None, highlight=None, preheader=None):
+    """-> (text, EmailMessage or None if SMTP isn't configured)."""
     cfg = current_app.config
     text = body
     if highlight:
@@ -104,8 +104,7 @@ def send(to, subject, body, button=None, heading=None, highlight=None, preheader
         text += f"\n\n{button[0]}: {button[1]}"
     text += f"\n\n— {cfg['SITE_NAME']}\n{cfg['SITE_URL']}"
     if not cfg.get("SMTP_HOST"):
-        current_app.logger.warning("EMAIL NOT SENT (SMTP not set in .env) to=%s subject=%s\n%s", to, subject, text)
-        return
+        return text, None
     msg = EmailMessage()
     name, addr = parseaddr(cfg["MAIL_FROM"])
     msg["From"] = formataddr((name or cfg["SITE_NAME"], addr or cfg["MAIL_FROM"]))
@@ -117,21 +116,49 @@ def send(to, subject, body, button=None, heading=None, highlight=None, preheader
         msg["Reply-To"] = cfg["SUPPORT_EMAIL"]
     msg.set_content(text)
     msg.add_alternative(render(subject, body, button, heading, highlight, preheader), subtype="html")
-    settings = (cfg["SMTP_HOST"], int(cfg["SMTP_PORT"]), cfg["SMTP_USER"], cfg["SMTP_PASSWORD"])
-    logger = current_app.logger
+    return text, msg
+
+
+def _transmit(msg, settings):
+    host, port, user, pw = settings
+    if port == 465:
+        s = smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=20)
+    else:
+        s = smtplib.SMTP(host, port, timeout=20)
+        s.starttls(context=ssl.create_default_context())
+    if user:
+        s.login(user, pw)
+    s.send_message(msg)
+    s.quit()
+
+
+def _settings():
+    cfg = current_app.config
+    return cfg["SMTP_HOST"], int(cfg["SMTP_PORT"]), cfg["SMTP_USER"], cfg["SMTP_PASSWORD"]
+
+
+def deliver(to, subject, body, button=None, heading=None, highlight=None, preheader=None):
+    """Send now and report the outcome: 'sent', 'not_configured', or raises on failure (the outbox retries)."""
+    text, msg = _build(to, subject, body, button, heading, highlight, preheader)
+    if msg is None:
+        current_app.logger.warning("EMAIL NOT SENT (SMTP not set in .env) to=%s subject=%s\n%s", to, subject, text)
+        return "not_configured"
+    _transmit(msg, _settings())
+    current_app.logger.warning("Email sent to %s: %s", to, subject)
+    return "sent"
+
+
+def send(to, subject, body, button=None, heading=None, highlight=None, preheader=None):
+    """Fire-and-forget, for staff alerts. Customer emails go through notify.notify() so they're tracked and retried."""
+    text, msg = _build(to, subject, body, button, heading, highlight, preheader)
+    if msg is None:
+        current_app.logger.warning("EMAIL NOT SENT (SMTP not set in .env) to=%s subject=%s\n%s", to, subject, text)
+        return
+    settings, logger = _settings(), current_app.logger
 
     def worker():
-        host, port, user, pw = settings
         try:
-            if port == 465:
-                s = smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=20)
-            else:
-                s = smtplib.SMTP(host, port, timeout=20)
-                s.starttls(context=ssl.create_default_context())
-            if user:
-                s.login(user, pw)
-            s.send_message(msg)
-            s.quit()
+            _transmit(msg, settings)
             logger.warning("Email sent to %s: %s", to, subject)
         except Exception:
             logger.exception("Email to %s failed", to)

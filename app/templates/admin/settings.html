@@ -3,6 +3,17 @@
 {% block content %}
 {% include "admin/_bar.html" %}
 <h1>Site settings</h1>
+<form class="panel" method="post" style="max-width:720px;margin-bottom:var(--s4)">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <h2 style="margin-top:0;font-size:20px">Site status</h2>
+  {% if state[0] == 'payments_paused' and mode == 'ok' %}<p class="notice warn">Card payments are <b>automatically paused</b> because the payment provider kept failing. They reopen by themselves, or set the status to Normal to reopen now.</p>{% endif %}
+  <fieldset><legend class="sr-only">Status</legend>
+    <label class="check"><input type="radio" name="site_status" value="ok" {{ 'checked' if mode == 'ok' }}> Normal</label>
+    <label class="check"><input type="radio" name="site_status" value="payments_paused" {{ 'checked' if mode == 'payments_paused' }}> Pause payments — browsing and accounts work, checkout and deposits show your message</label>
+    <label class="check"><input type="radio" name="site_status" value="maintenance" {{ 'checked' if mode == 'maintenance' }}> Maintenance — customers see a maintenance page; log in, accounts, withdrawals and legal pages still work</label></fieldset>
+  <label for="ssm">Message for customers</label><input id="ssm" name="site_status_message" value="{{ status_message }}" placeholder="We're upgrading the site — back by 9pm. Your entries are safe.">
+  <button class="btn" style="margin-top:var(--s3)">Update status</button>
+</form>
 <form class="panel" method="post" style="max-width:720px">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <label>Announcement bar <span class="muted">(shown at the top of every page — leave blank to hide)</span></label>

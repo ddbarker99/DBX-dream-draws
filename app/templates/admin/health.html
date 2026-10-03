@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}System health · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<div class="row"><h1 style="margin:0">System health</h1><form method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn ghost small" name="run" value="1">Run jobs now</button></form></div>
+<p class="muted">Failing checks are emailed to SUPPORT_EMAIL (at most every 6 hours per check).</p>
+<ul class="healthgrid">{% for c in checks %}<li class="{{ 'ok' if c.ok else 'bad' }}"><b>{{ '✓' if c.ok else '✕' }} {{ c.name }}</b><span>{{ c.detail }}</span></li>{% endfor %}</ul>
+<h2>Job runs that changed something or failed</h2>
+<div class="panel table-scroll" tabindex="0"><table>
+  <tr><th>When</th><th>Job</th><th>Result</th></tr>
+  {% for r in runs %}<tr><td class="small">{{ r.started_at|uktime('%d %b %H:%M:%S') }}</td><td><code>{{ r.job }}</code></td>
+    <td>{% if r.ok %}<span class="pos">✓</span> {{ r.changed }}{% else %}<span class="neg">✕</span> <span class="small" style="white-space:pre-wrap">{{ r.error[:400] }}</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">Nothing recorded yet.</td></tr>{% endfor %}
+</table></div>
+{% if failed_mail %}<h2>Failed emails</h2><div class="panel table-scroll" tabindex="0"><table>
+  {% for n in failed_mail %}<tr><td class="small">{{ n.created_at|uktime('%d %b %H:%M') }}</td><td>{{ n.email }}</td><td>{{ n.title }}</td><td class="small neg">{{ n.email_error }} ({{ n.email_tries }} tries)</td></tr>{% endfor %}
+</table></div>{% endif %}
+{% endblock %}

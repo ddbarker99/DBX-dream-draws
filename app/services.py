@@ -565,62 +565,105 @@ def _age_on(dob, day):
     return day.year - dob.year - ((day.month, day.day) < (dob.month, dob.day))
 
 
-def add_postal_entry(comp_id, name, email, address, answer_correct, admin_id, received_at=None, dob=None, phone=None):
-    """Record one envelope. Every envelope is kept with its outcome so none is forgotten.
-    received_at: ISO UTC timestamp of the day it arrived (defaults to now). dob: date or None.
-    Returns (entry_id, ticket_number or None, reject_reason or None)."""
+POSTAL_REJECT_REASONS = ["Illegible or incomplete", "Competition not identified", "Not a UK resident", "Duplicate envelope",
+                         "Other (see note)"]
+
+
+def postal_problem(db, comp, entry):
+    """Why a received postal entry can't be accepted, or None. The same rules as online entries."""
     from datetime import date as _date
+    if comp["status"] != "live":
+        return "Competition is no longer accepting entries"
+    if parse_iso(entry["received_at"]) > parse_iso(comp["ends_at"]):
+        return "Arrived after the competition closed"
+    if not entry["answer_correct"]:
+        return "Wrong answer"
+    if entry["dob"] and _age_on(_date.fromisoformat(entry["dob"]), _date.today()) < 18:
+        return "Under 18"
+    if entrant_count(db, comp["id"], entry["user_id"], entry["email"]) >= comp["max_per_user"]:
+        return f"Per-person limit of {comp['max_per_user']} reached"
+    if taken_count(db, comp["id"]) >= comp["max_tickets"]:
+        return "Sold out"
+    return None
+
+
+def receive_postal(comp_id, name, email, address, answer_correct, admin_id, received_at=None, dob=None, phone=None):
+    """Step 1: log an envelope the day it arrives. It waits as 'received' until it's approved or rejected;
+    a competition won't close (or draw) while any of its envelopes are still waiting."""
     received = received_at or iso(utcnow())
     email = (email or "").strip().lower()
     with write_txn() as db:
-        cleanup_expired(db)
         comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
-        if comp is None or comp["status"] != "live":
+        if comp is None or comp["status"] not in ("live",):
             raise PurchaseError("This competition isn't accepting entries (it's a draft, drawn or cancelled).")
         if comp["free_daily"]:
             raise PurchaseError("The daily free game is already free — it doesn't take postal entries.")
+        if comp["locked_at"]:
+            raise PurchaseError("This competition has closed and its entry list is final. Envelopes must be logged as "
+                                "received before the closing time.")
         if parse_iso(received) > utcnow():
             raise PurchaseError("The received date can't be in the future.")
-        user = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone() if email else None
-        reason = None
-        if parse_iso(received) > parse_iso(comp["ends_at"]):
-            reason = "Arrived after the competition closed"
-        elif not answer_correct:
-            reason = "Wrong answer"
-        elif dob is not None and _age_on(dob, _date.today()) < 18:
-            reason = "Under 18"
-        elif entrant_count(db, comp_id, user["id"] if user else None, email) >= comp["max_per_user"]:
-            reason = f"Per-person limit of {comp['max_per_user']} reached"
-        elif taken_count(db, comp_id) >= comp["max_tickets"]:
-            reason = "Sold out"
+        user = db.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone() if email else None
         cur = db.execute(
             "INSERT INTO postal_entries (competition_id, name, email, address, answer_correct, added_by, created_at, "
-            "received_at, user_id, status, reject_reason, dob, phone) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "received_at, user_id, status, dob, phone) VALUES (?,?,?,?,?,?,?,?,?,'received',?,?)",
             (comp_id, name, email, address, 1 if answer_correct else 0, admin_id, iso(utcnow()), received,
-             user["id"] if user else None, "rejected" if reason else "accepted", reason,
-             dob.isoformat() if dob else None, phone or None))
-        pid = cur.lastrowid
-        if reason:
-            audit(db, "postal.reject", f"comp:{comp_id}", f"Postal entry #{pid} from {name} <{email}> rejected: {reason}")
-            return pid, None, reason
+             user["id"] if user else None, dob.isoformat() if dob else None, phone or None))
+        audit(db, "postal.receive", f"comp:{comp_id}", f"Postal entry #{cur.lastrowid} from {name} <{email}> received "
+              f"{received[:10]}")
+        return cur.lastrowid
+
+
+def process_postal(pid, approve, actor, reason=None):
+    """Step 2: approve (if it meets every rule) or reject with a reason. Returns (ticket_number, reason)."""
+    with write_txn() as db:
+        cleanup_expired(db)
+        e = db.execute("SELECT * FROM postal_entries WHERE id=?", (pid,)).fetchone()
+        if e is None:
+            raise PurchaseError("That postal entry doesn't exist.")
+        if e["status"] != "received":
+            raise PurchaseError("That postal entry has already been processed.")
+        comp = db.execute("SELECT * FROM competitions WHERE id=?", (e["competition_id"],)).fetchone()
+        problem = postal_problem(db, comp, e)
+        if approve and problem:
+            reason, approve = problem, False         # the rules decide; staff can't accept an invalid entry
+        if not approve:
+            reason = (reason or problem or "").strip()[:200]
+            if not reason:
+                raise PurchaseError("Choose a reason for rejecting it.")
+            db.execute("UPDATE postal_entries SET status='rejected', reject_reason=? WHERE id=?", (reason, pid))
+            audit(db, "postal.reject", f"comp:{comp['id']}", f"Postal entry #{pid} from {e['name']} <{e['email']}> rejected: "
+                  f"{reason}", actor=actor)
+            return None, reason
         n = _allocate(db, comp, 1, None)[0]
         now = iso(utcnow())
+        uid = e["user_id"]
         t = db.execute("INSERT INTO tickets (competition_id, number, user_id, postal_entry_id, status, revealed_at, created_at) "
                        "VALUES (?,?,?,?, 'issued', ?, ?)",
-                       (comp_id, n, user["id"] if user else None, pid, None if (comp["game_type"] and user) else now, now))
+                       (comp["id"], n, uid, pid, None if (comp["game_type"] and uid) else now, now))
+        db.execute("UPDATE postal_entries SET status='accepted' WHERE id=?", (pid,))
         ip = db.execute("SELECT * FROM instant_prizes WHERE competition_id=? AND number=? AND ticket_id IS NULL",
-                        (comp_id, n)).fetchone()
+                        (comp["id"], n)).fetchone()
         if ip:
             # Postal entrants win instant prizes on the same basis. Matched to an account: cash/credit is paid
             # to the wallet (games: when they reveal it). No account: staff pay it by hand from Payouts.
-            pay_now = bool(user) and not comp["game_type"] and prize_kind(ip) in ("cash", "credit") and bool(ip["credit_amount"])
+            pay_now = bool(uid) and not comp["game_type"] and prize_kind(ip) in ("cash", "credit") and bool(ip["credit_amount"])
             db.execute("UPDATE instant_prizes SET ticket_id=?, won_at=?, fulfilled=? WHERE id=?",
                        (t.lastrowid, now, 1 if pay_now else 0, ip["id"]))
             if pay_now:
-                pay_prize(db, user["id"], ip, comp["title"])
-        audit(db, "postal.accept", f"comp:{comp_id}", f"Postal entry #{pid} from {name} <{email}> — ticket #{n}"
-              + (f" (account #{user['id']})" if user else ""))
-        return pid, n, None
+                pay_prize(db, uid, ip, comp["title"])
+        audit(db, "postal.accept", f"comp:{comp['id']}", f"Postal entry #{pid} from {e['name']} <{e['email']}> — ticket #{n}"
+              + (f" (account #{uid})" if uid else ""), actor=actor)
+        return n, None
+
+
+def add_postal_entry(comp_id, name, email, address, answer_correct, admin_id, received_at=None, dob=None, phone=None):
+    """Receive and process in one go (what staff do when they open and check an envelope at the same time).
+    Returns (entry_id, ticket_number or None, reject_reason or None)."""
+    pid = receive_postal(comp_id, name, email, address, answer_correct, admin_id, received_at, dob, phone)
+    actor = get_db().execute("SELECT * FROM users WHERE id=?", (admin_id,)).fetchone() if admin_id else False
+    n, reason = process_postal(pid, True, actor)
+    return pid, n, reason
 
 
 # ---------------- instant wins ----------------
@@ -680,10 +723,79 @@ def instant_board(db, comp_id, reveal=False):
 
 # ---------------- the draw ----------------
 
-def run_draw(comp_id, actor=None):
-    """Pick the winner and keep a permanent snapshot of every eligible entry used. actor=None: automatic draw."""
+LIFECYCLE = [("draft", "Draft"), ("scheduled", "Scheduled"), ("live", "Live"), ("closing", "Closing"),
+             ("closed", "Closed"), ("winner_selected", "Winner selected"), ("fulfilment", "Prize fulfilment"),
+             ("completed", "Completed"), ("cancelled", "Cancelled")]
+LIFECYCLE_NAMES = dict(LIFECYCLE)
+
+CLAIM_STATUSES = [("selected", "Winner selected"), ("contacted", "Contacted"), ("verification", "Verification required"),
+                  ("verified", "Verified"), ("chosen", "Prize chosen"), ("fulfilment", "Fulfilment in progress"),
+                  ("delivered", "Paid / delivered"), ("forfeited", "Forfeited — redraw needed")]
+CLAIM_NAMES = dict(CLAIM_STATUSES)
+
+
+def lifecycle_stage(db, comp):
+    """Where a competition is in its life. Derived from stored facts, so it can't drift."""
+    if comp["status"] == "cancelled":
+        return "cancelled"
+    if comp["status"] == "draft":
+        return "scheduled" if comp["scheduled"] else "draft"
+    if comp["status"] == "live":
+        if parse_iso(comp["ends_at"]) > utcnow():
+            return "live"
+        if not comp["locked_at"]:
+            return "closing"                       # past closing time; payments in progress still finishing
+        return "completed" if comp["game_type"] and comp["completed_at"] else "closed"
+    if comp["completed_at"]:
+        return "completed"
+    claim = db.execute("SELECT status FROM prize_claims WHERE competition_id=? ORDER BY id DESC LIMIT 1",
+                       (comp["id"],)).fetchone()
+    if claim is None or claim["status"] in ("selected", "forfeited"):
+        return "winner_selected"
+    return "completed" if claim["status"] == "delivered" else "fulfilment"
+
+
+def _lock_db(db, comp):
+    """Freeze the final entry list: snapshot every issued ticket, then forbid any change (triggers)."""
+    rows = db.execute("SELECT number, postal_entry_id FROM tickets WHERE competition_id=? AND status='issued' ORDER BY number",
+                      (comp["id"],)).fetchall()
+    numbers = [r["number"] for r in rows]
+    postal = sum(1 for r in rows if r["postal_entry_id"])
+    now = iso(utcnow())
+    cur = db.execute("INSERT INTO entry_snapshots (competition_id, taken_at, entry_count, paid_count, postal_count, entries_hash, "
+                     "entries) VALUES (?,?,?,?,?,?,?)", (comp["id"], now, len(numbers), len(numbers) - postal, postal,
+                                                          entries_digest(numbers), json.dumps(numbers)))
+    db.execute("UPDATE competitions SET locked_at=? WHERE id=?", (now, comp["id"]))
+    audit(db, "comp.closed", f"comp:{comp['id']}", f"Closed with {len(numbers)} entries ({postal} postal); entry list "
+          f"frozen, hash {entries_digest(numbers)[:16]}…", actor=False)
+    return cur.lastrowid
+
+
+def close_competition(comp_id):
+    """Lock a competition whose closing time has passed, once no payment is still in progress. Returns True if locked."""
     with write_txn() as db:
         cleanup_expired(db)
+        comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
+        if comp is None or comp["status"] != "live" or comp["locked_at"] or parse_iso(comp["ends_at"]) > utcnow():
+            return False
+        if db.execute("SELECT 1 FROM tickets WHERE competition_id=? AND status='held'", (comp_id,)).fetchone():
+            return False
+        if db.execute("SELECT 1 FROM postal_entries WHERE competition_id=? AND status='received'", (comp_id,)).fetchone():
+            return False                              # envelopes that arrived in time must be processed first
+        _lock_db(db, comp)
+        if comp["game_type"]:
+            db.execute("UPDATE competitions SET completed_at=? WHERE id=?", (iso(utcnow()), comp_id))
+        return True
+
+
+def latest_snapshot(db, comp_id):
+    return db.execute("SELECT * FROM entry_snapshots WHERE competition_id=? ORDER BY id DESC LIMIT 1", (comp_id,)).fetchone()
+
+
+def run_draw(comp_id, actor=None):
+    """Pick the winner from the frozen entry list and keep a permanent record. actor=None: automatic draw."""
+    close_competition(comp_id)
+    with write_txn() as db:
         comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
         if comp is None or comp["status"] != "live":
             raise PurchaseError("Only live competitions can be drawn.")
@@ -692,25 +804,124 @@ def run_draw(comp_id, actor=None):
         if parse_iso(comp["ends_at"]) > utcnow():
             # We publish a draw time on every competition, and sell-outs don't bring it forward.
             raise PurchaseError("The draw can only run after the advertised closing time.")
-        if db.execute("SELECT 1 FROM tickets WHERE competition_id=? AND status='held'", (comp_id,)).fetchone():
+        if not comp["locked_at"]:
+            if db.execute("SELECT 1 FROM postal_entries WHERE competition_id=? AND status='received'", (comp_id,)).fetchone():
+                raise PurchaseError("Postal entries are still waiting to be processed. Approve or reject them first.")
             raise PurchaseError("Some checkouts are still in progress. Try again in up to 45 minutes.")
-        tickets = db.execute("SELECT id, number FROM tickets WHERE competition_id=? AND status='issued' ORDER BY number",
-                             (comp_id,)).fetchall()
-        if not tickets:
+        snap = latest_snapshot(db, comp_id)
+        numbers = json.loads(snap["entries"])
+        if not numbers:
             raise PurchaseError("No entries to draw from.")
-        numbers = [t["number"] for t in tickets]
-        digest = entries_digest(numbers)
-        idx = pick_index(comp["seed"], digest, len(tickets))
-        winner, now = tickets[idx], iso(utcnow())
+        live = [r[0] for r in db.execute("SELECT number FROM tickets WHERE competition_id=? AND status='issued' ORDER BY number",
+                                         (comp_id,))]
+        if entries_digest(live) != snap["entries_hash"]:     # can't happen with the triggers — but never draw if it did
+            audit(db, "draw.blocked", f"comp:{comp_id}", "Entry list differs from the closing snapshot", actor=False)
+            raise PurchaseError("The entry list doesn't match the closing snapshot. The draw was not run — contact an administrator.")
+        digest = snap["entries_hash"]
+        idx = pick_index(comp["seed"], digest, len(numbers))
+        win_no = numbers[idx]
+        winner = db.execute("SELECT id, user_id FROM tickets WHERE competition_id=? AND number=?", (comp_id, win_no)).fetchone()
+        now = iso(utcnow())
+        cur = db.execute("INSERT INTO draws (competition_id, drawn_at, method, run_by, seed, seed_hash, entries_hash, entry_count, "
+                         "winning_index, winning_number, winning_ticket_id, entries, winner_user_id, snapshot_id) "
+                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         (comp_id, now, "manual" if actor else "automatic", actor["id"] if actor else None, comp["seed"],
+                          comp["seed_hash"], digest, len(numbers), idx, win_no, winner["id"], snap["entries"],
+                          winner["user_id"], snap["id"]))
         db.execute("UPDATE competitions SET status='drawn', entries_hash=?, winner_ticket_id=?, drawn_at=? WHERE id=?",
                    (digest, winner["id"], now, comp_id))
-        db.execute("INSERT INTO draws (competition_id, drawn_at, method, run_by, seed, seed_hash, entries_hash, entry_count, "
-                   "winning_index, winning_number, winning_ticket_id, entries) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                   (comp_id, now, "manual" if actor else "automatic", actor["id"] if actor else None, comp["seed"],
-                    comp["seed_hash"], digest, len(numbers), idx, winner["number"], winner["id"], json.dumps(numbers)))
+        _new_claim(db, comp_id, cur.lastrowid, winner, actor)
         audit(db, "draw.run", f"comp:{comp_id}", f"{'Manual' if actor else 'Automatic'} draw of {len(numbers)} entries: "
-              f"winning ticket #{winner['number']}", actor=actor or False)
-        return winner["number"]
+              f"winning ticket #{win_no}", actor=actor or False)
+        return win_no
+
+
+def redraw(comp_id, reason, actor):
+    """Pick a new winner when the first can't receive the prize (e.g. failed verification). Every previous
+    winning ticket is excluded; the method is the same, with the attempt number mixed into the HMAC so it's
+    still reproducible. The earlier draw records stay — this adds one, with the reason and who ran it."""
+    reason = " ".join((reason or "").split())[:500]
+    if len(reason) < 10:
+        raise PurchaseError("Give the reason for the redraw (at least a sentence). It's kept permanently.")
+    with write_txn() as db:
+        comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
+        if comp is None or comp["status"] != "drawn":
+            raise PurchaseError("Only drawn competitions can be redrawn.")
+        draws = db.execute("SELECT * FROM draws WHERE competition_id=? ORDER BY id", (comp_id,)).fetchall()
+        excluded = {d["winning_number"] for d in draws}
+        snap = latest_snapshot(db, comp_id)
+        base = json.loads(snap["entries"]) if snap else json.loads(draws[0]["entries"])
+        numbers = [n for n in base if n not in excluded]
+        if not numbers:
+            raise PurchaseError("There are no other eligible entries to draw from.")
+        attempt = len(draws) + 1
+        digest = entries_digest(numbers)
+        idx = int(hmac.new(comp["seed"].encode(), f"{digest}:redraw:{attempt}".encode(), hashlib.sha256).hexdigest(), 16) % len(numbers)
+        win_no = numbers[idx]
+        winner = db.execute("SELECT id, user_id FROM tickets WHERE competition_id=? AND number=?", (comp_id, win_no)).fetchone()
+        now = iso(utcnow())
+        cur = db.execute("INSERT INTO draws (competition_id, drawn_at, method, run_by, seed, seed_hash, entries_hash, entry_count, "
+                         "winning_index, winning_number, winning_ticket_id, entries, winner_user_id, snapshot_id, redraw_of, reason) "
+                         "VALUES (?,?,'redraw',?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         (comp_id, now, actor["id"], comp["seed"], comp["seed_hash"], digest, len(numbers), idx, win_no,
+                          winner["id"], json.dumps(numbers), winner["user_id"], snap["id"] if snap else None, draws[-1]["id"], reason))
+        db.execute("UPDATE prize_claims SET status='forfeited', updated_at=? WHERE competition_id=? AND status!='forfeited'",
+                   (now, comp_id))
+        db.execute("UPDATE competitions SET winner_ticket_id=? WHERE id=?", (winner["id"], comp_id))
+        _new_claim(db, comp_id, cur.lastrowid, winner, actor)
+        audit(db, "draw.redraw", f"comp:{comp_id}", f"Redraw {attempt - 1}: ticket #{win_no} replaces "
+              f"#{draws[-1]['winning_number']}. Reason: {reason}", actor=actor)
+        return win_no
+
+
+def _new_claim(db, comp_id, draw_id, winner, actor):
+    now = iso(utcnow())
+    cur = db.execute("INSERT INTO prize_claims (competition_id, draw_id, ticket_id, user_id, status, created_at, updated_at) "
+                     "VALUES (?,?,?,?, 'selected', ?, ?)", (comp_id, draw_id, winner["id"], winner["user_id"], now, now))
+    db.execute("INSERT INTO claim_events (claim_id, created_at, actor_id, status, note) VALUES (?,?,?,?,?)",
+               (cur.lastrowid, now, actor["id"] if actor else None, "selected", "Selected by the draw"))
+
+
+def update_claim(claim_id, status, note, actor, evidence=None, choice=None):
+    if status and status not in CLAIM_NAMES:
+        raise PurchaseError("Unknown status.")
+    if not (status or (note or "").strip() or evidence):
+        raise PurchaseError("Choose a new status, or add a note or evidence.")
+    with write_txn() as db:
+        c = db.execute("SELECT * FROM prize_claims WHERE id=?", (claim_id,)).fetchone()
+        if c is None:
+            raise PurchaseError("That claim doesn't exist.")
+        if c["status"] in ("delivered", "forfeited") and status and status != c["status"]:
+            raise PurchaseError("This claim is finished. Add a note instead, or redraw if the winner forfeited.")
+        now = iso(utcnow())
+        if status and status != c["status"]:
+            db.execute("UPDATE prize_claims SET status=?, updated_at=? WHERE id=?", (status, now, claim_id))
+        if choice in ("prize", "cash"):
+            db.execute("UPDATE prize_claims SET prize_choice=?, updated_at=? WHERE id=?", (choice, now, claim_id))
+        db.execute("INSERT INTO claim_events (claim_id, created_at, actor_id, status, note, evidence) VALUES (?,?,?,?,?,?)",
+                   (claim_id, now, actor["id"], status if status != c["status"] else None, (note or "").strip()[:2000] or None,
+                    evidence))
+        if status == "delivered":
+            db.execute("UPDATE competitions SET completed_at=? WHERE id=? AND completed_at IS NULL", (now, c["competition_id"]))
+            audit(db, "comp.completed", f"comp:{c['competition_id']}", "Prize delivered — competition completed", actor=actor)
+        audit(db, "claim.update", f"comp:{c['competition_id']}", f"Claim #{claim_id}: "
+              + (f"{CLAIM_NAMES.get(c['status'])} → {CLAIM_NAMES.get(status)}" if status and status != c["status"] else "note added")
+              + (f" · {note.strip()[:200]}" if (note or "").strip() else "") + (" · evidence attached" if evidence else ""), actor=actor)
+        return c
+
+
+_last_close = {"t": None}
+
+
+def due_closures(force=False):
+    """Freeze entry lists of competitions past their closing time. Throttled. Returns ids closed."""
+    now = utcnow()
+    if not force and _last_close["t"] and (now - _last_close["t"]).total_seconds() < 30:
+        return []
+    _last_close["t"] = now
+    rows = get_db().execute("SELECT id FROM competitions WHERE status='live' AND locked_at IS NULL AND ends_at<?",
+                            (iso(now),)).fetchall()
+    return [r["id"] for r in rows if close_competition(r["id"])]
 
 
 def winner_details(db, comp):
@@ -938,10 +1149,10 @@ def cancel_competition(comp_id):
 _last_auto = {"t": None}
 
 
-def due_auto_draws():
+def due_auto_draws(force=False):
     """Run main draws whose timer has ended. Throttled to once a minute per worker. Returns drawn comp ids."""
     now = utcnow()
-    if _last_auto["t"] and (now - _last_auto["t"]).total_seconds() < 60:
+    if not force and _last_auto["t"] and (now - _last_auto["t"]).total_seconds() < 60:
         return []
     _last_auto["t"] = now
     db = get_db()
@@ -1005,7 +1216,11 @@ def _delete_comp_rows(db, comp_ids):
     images += [r[0] for r in db.execute(f"SELECT winner_photo FROM competitions WHERE id IN ({q}) AND winner_photo IS NOT NULL", comp_ids)]
     checkouts = [r[0] for r in db.execute(
         f"SELECT DISTINCT checkout_id FROM orders WHERE competition_id IN ({q}) AND checkout_id IS NOT NULL", comp_ids)]
+    db.execute(f"UPDATE competitions SET purging=1 WHERE id IN ({q})", comp_ids)
     db.execute(f"DELETE FROM draws WHERE competition_id IN ({q})", comp_ids)
+    db.execute(f"DELETE FROM entry_snapshots WHERE competition_id IN ({q})", comp_ids)
+    db.execute(f"DELETE FROM claim_events WHERE claim_id IN (SELECT id FROM prize_claims WHERE competition_id IN ({q}))", comp_ids)
+    db.execute(f"DELETE FROM prize_claims WHERE competition_id IN ({q})", comp_ids)
     db.execute(f"DELETE FROM instant_prizes WHERE competition_id IN ({q})", comp_ids)
     db.execute(f"DELETE FROM tickets WHERE competition_id IN ({q})", comp_ids)
     db.execute(f"DELETE FROM postal_entries WHERE competition_id IN ({q})", comp_ids)
@@ -1061,6 +1276,10 @@ def start_fresh(competitions="", wallets=False, accounts=False, promos=False):
             if players:
                 q = ",".join("?" * len(players))
                 db.execute(f"DELETE FROM password_resets WHERE user_id IN ({q})", players)
+                for t in ("user_sessions", "notifications", "watchlist", "points_ledger"):
+                    db.execute(f"DELETE FROM {t} WHERE user_id IN ({q})", players)
+                db.execute(f"UPDATE cases SET user_id=NULL WHERE user_id IN ({q})", players)
+                db.execute(f"UPDATE postal_entries SET user_id=NULL WHERE user_id IN ({q})", players)
                 db.execute(f"UPDATE postal_entries SET added_by=NULL WHERE added_by IN ({q})", players)
                 db.execute(f"UPDATE users SET referred_by=NULL WHERE referred_by IN ({q})", players)
                 db.execute(f"DELETE FROM users WHERE id IN ({q})", players)
@@ -1085,10 +1304,10 @@ def publish_problem(db, comp):
 _last_sched = {"t": None}
 
 
-def due_scheduled():
+def due_scheduled(force=False):
     """Put scheduled competitions live once their start time arrives. Returns the ones that went live."""
     now = utcnow()
-    if _last_sched["t"] and (now - _last_sched["t"]).total_seconds() < 30:
+    if not force and _last_sched["t"] and (now - _last_sched["t"]).total_seconds() < 30:
         return []
     _last_sched["t"] = now
     db = get_db()
@@ -1101,6 +1320,7 @@ def due_scheduled():
         with write_txn() as w:
             if w.execute("UPDATE competitions SET status='live', scheduled=0 WHERE id=? AND status='draft' AND scheduled=1",
                          (c["id"],)).rowcount:
+                audit(w, "comp.opened", f"comp:{c['id']}", f"Went live on schedule: “{c['title']}”", actor=False)
                 out.append(c)
     return out
 

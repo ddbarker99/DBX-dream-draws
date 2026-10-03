@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Flags for review · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<div class="row"><h1 style="margin:0">Flags for review</h1>
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn ghost small" name="run" value="1">Check now</button></form></div>
+<p class="muted">Patterns a rule noticed — duplicate details, repeated failed payments, limit or break circumvention, changed payout details. <b>A flag is not proof of anything</b> and never blocks a customer by itself. Look, then mark it reviewed (with what you found) or dismissed.</p>
+<nav class="chips">{% for k in ('open','reviewed','dismissed') %}<a class="chip" href="{{ url_for('control.flags', show=k) }}"{% if show == k %} aria-current="page"{% endif %}>{{ k|capitalize }}</a>{% endfor %}</nav>
+<div class="stack">{% for f in rows %}
+  <section class="panel"><div class="row"><b>{{ f.kind }}</b><span class="small muted">{{ f.created_at|uktime('%d %b %Y %H:%M') }}</span></div>
+    <p class="small" style="margin:6px 0">{{ f.detail }}</p>
+    {% if f.subject.startswith('user:') %}<p class="small"><a href="{{ url_for('control.timeline', uid=f.subject[5:]|int) }}">Open customer timeline</a></p>{% endif %}
+    {% if f.status != 'open' %}<p class="small muted">{{ f.status|capitalize }} by {{ f.reviewer }} {{ f.reviewed_at|uktime('%d %b') }}{% if f.note %}: {{ f.note }}{% endif %}</p>{% endif %}
+    <form method="post" class="inline-form" style="flex-wrap:wrap"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="fid" value="{{ f.id }}">
+      <label class="sr-only" for="n{{ f.id }}">Note</label><input id="n{{ f.id }}" name="note" placeholder="What you found" style="max-width:280px">
+      {% if f.status == 'open' %}<button class="btn small" name="status" value="reviewed">Reviewed</button><button class="btn small ghost" name="status" value="dismissed">Dismiss</button>
+      {% else %}<button class="btn small ghost" name="status" value="open">Reopen</button>{% endif %}</form></section>
+{% else %}<div class="panel"><p class="muted" style="margin:0">Nothing here.</p></div>{% endfor %}</div>
+{% endblock %}

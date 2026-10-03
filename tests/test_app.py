@@ -26,11 +26,20 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         os.environ["DATA_DIR"] = self.tmp
-        self.app = create_app({"TESTING": True, "DEMO_PAYMENTS": True, "STRIPE_WEBHOOK_SECRET": "whsec_test",
+        self.app = create_app({"TESTING": True, "DEMO_PAYMENTS": True, "STRIPE_WEBHOOK_SECRET": "whsec_test", "ADMIN_MFA": False,
                                "REFERRAL_BONUS": 100})
         self.client = self.app.test_client()
-        from app import routes
+        from app import jobs, routes
         routes._FAILS.clear()          # rate limits are per process; each test starts clean
+        jobs._last.clear()             # and background jobs are due straight away
+
+    def jobs_due(self):
+        """Make every background job due on the next request (they're throttled per process and in the database)."""
+        from app import jobs
+        jobs._last.clear()
+        db = self.db()
+        db.execute("DELETE FROM job_status")
+        db.commit()
 
     def cli(self, *args):
         return self.app.test_cli_runner().invoke(args=list(args))
@@ -572,8 +581,7 @@ class V4Tests(Base):
         db = self.db()
         db.execute("UPDATE competitions SET ends_at='2000-01-01T00:00:00Z'")
         db.commit()
-        from app import services
-        services._last_auto["t"] = None
+        self.jobs_due()
         with self.assertLogs(self.app.logger, level="WARNING") as logs:
             self.client.get("/")
         self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", auto), "drawn")
@@ -740,7 +748,7 @@ class OverhaulTests(Base):
             for bad in ("example.com", "Example Street", "Template only", "Admin only"):
                 self.assertNotIn(bad, html, (url, bad))
         self.assertIn("Admin only", self.client.get("/terms").get_data(as_text=True))   # admins still see it
-        self.assertIn("Site setup", self.client.get("/admin/").get_data(as_text=True))
+        self.assertIn("Site setup", self.client.get("/admin/competitions").get_data(as_text=True))
 
     def test_basket_quantity_promo_preview_and_totals(self):
         self.post("/admin/promos", {"code": "SAVE10", "percent": "10", "fixed": "0", "min_spend": "0", "per_user": "1"})
@@ -946,7 +954,7 @@ class CreateTests(Base):
         self.assertEqual(self.client.get(f"/c/{c['slug']}").status_code, 404)              # not public yet
         db = self.db()
         db.execute("UPDATE competitions SET starts_at='2000-01-01T00:00:00Z' WHERE id=?", (c["id"],))
-        services._last_sched["t"] = None
+        self.jobs_due()
         self.client.get("/")                                                                  # any visit launches it
         self.assertEqual((self.last()["status"], self.last()["scheduled"]), ("live", 0))
         self.post(f"/admin/competitions/{c['id']}/status", {"action": "unpublish"})
@@ -962,7 +970,7 @@ class CreateTests(Base):
         self.assertIn("can&#39;t go back to draft", r.get_data(as_text=True))
         r = self.post(f"/admin/competitions/{cid}/edit", self.base(kind="draw", title="Renamed"), follow_redirects=True)
         self.assertEqual(self.q("SELECT title FROM competitions WHERE id=?", cid), "Renamed")
-        self.assertIn("Ready to launch", self.client.get("/admin/").get_data(as_text=True))
+        self.assertIn("Ready to launch", self.client.get("/admin/competitions").get_data(as_text=True))
 
 
 
@@ -1235,7 +1243,7 @@ class IntegrityTests(Base):
         self.assertEqual(other.get("/account").status_code, 302)        # the other one is signed out
 
     def test_staff_cannot_touch_money(self):
-        self.post(f"/admin/users/{self.uid}", {"action": "admin", "role": "staff"})
+        self.post(f"/admin/users/{self.uid}", {"action": "admin", "role": "competitions"})
         self.assertEqual(self.p.get("/admin/").status_code, 200)
         self.assertEqual(self.p.get(f"/admin/competitions/{self.cid}").status_code, 200)
         for url in ("/admin/payouts", "/admin/users", f"/admin/users/{self.uid}", "/admin/start-fresh", "/admin/promos"):
@@ -1297,6 +1305,216 @@ class IntegrityTests(Base):
             for _ in range(5):
                 self.post("/forgot", {"email": "player@example.com"})
         self.assertEqual(sum("Reset your password" in line for line in logs.output), 3)
+
+
+class PlatformTests(Base):
+    """Phase 2 (platform): roles, MFA, sessions, lifecycle, redraws, claims, notifications, operations tools."""
+
+    def setUp(self):
+        super().setUp()
+        self.signup("admin@example.com", name="Admin Person")
+        self.cli("make-admin", "admin@example.com")
+        self.cid = self.make_comp(max_tickets=20, max_per_user=10)
+        self.p = self.app.test_client()
+        self.signup("player@example.com", client=self.p, name="Pat Player")
+        self.uid = self.q("SELECT id FROM users WHERE email='player@example.com'")
+
+    def close(self, cid=None):
+        db = self.db()
+        db.execute("UPDATE competitions SET ends_at='2000-01-01T00:00:00Z' WHERE id=?", (cid or self.cid,))
+        db.commit()
+
+    def run_jobs(self):
+        self.jobs_due()
+        self.client.get("/")
+
+    def role(self, r, client=None):
+        self.post(f"/admin/users/{self.uid}", {"action": "admin", "role": r})
+
+    def test_mfa_required_for_admins(self):
+        from app.security import totp
+        self.app.config["ADMIN_MFA"] = True
+        r = self.client.get("/admin/")
+        self.assertIn("/admin/mfa/setup", r.headers["Location"])
+        html = self.client.get("/admin/mfa/setup").get_data(as_text=True)
+        secret = re.search(r'secret=([A-Z2-7]+)', html).group(1)
+        self.post("/admin/mfa/setup", {"code": "000000"})
+        self.assertEqual(self.q("SELECT mfa_enabled FROM users WHERE email='admin@example.com'"), 0)
+        r = self.post("/admin/mfa/setup", {"code": totp(secret)})
+        codes = re.findall(r"([0-9a-f]{6}-[0-9a-f]{6})", r.get_data(as_text=True))
+        self.assertEqual(len(codes), 8)
+        self.assertEqual(self.client.get("/admin/").status_code, 200)
+        other = self.app.test_client()
+        self.post("/login", {"email": "admin@example.com", "password": "supersecret123"}, client=other)
+        self.assertIn("/admin/mfa/", other.get("/admin/payouts").headers["Location"])
+        self.post("/admin/mfa/", {"code": "123456"}, client=other)
+        self.assertEqual(other.get("/admin/payouts").status_code, 302)
+        self.post("/admin/mfa/", {"code": codes[0]}, client=other)                  # recovery code, once
+        self.assertEqual(other.get("/admin/payouts").status_code, 200)
+        third = self.app.test_client()
+        self.post("/login", {"email": "admin@example.com", "password": "supersecret123"}, client=third)
+        self.post("/admin/mfa/", {"code": codes[0]}, client=third)                  # already used
+        self.assertEqual(third.get("/admin/payouts").status_code, 302)
+        self.assertGreater(self.q("SELECT COUNT(*) FROM audit_log WHERE action='admin.mfa_failed'"), 0)
+
+    def test_roles_limit_what_staff_can_do(self):
+        self.add(self.cid, 1, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        for role, allowed, denied in (
+                ("support", ["/admin/", "/admin/postal", "/admin/cases", f"/admin/customers/{self.uid}/timeline"],
+                 ["/admin/payouts", "/admin/finance", "/admin/prizes", "/admin/start-fresh", "/admin/settings"]),
+                ("finance", ["/admin/finance", "/admin/payouts", "/admin/flags"],
+                 ["/admin/postal", "/admin/prizes", "/admin/competitions/new", "/admin/start-fresh"]),
+                ("competitions", ["/admin/competitions/new", "/admin/prizes", "/admin/postal"],
+                 ["/admin/payouts", "/admin/finance", "/admin/users", "/admin/start-fresh"])):
+            self.role(role)
+            for url in allowed:
+                self.assertEqual(self.p.get(url).status_code, 200, (role, url))
+            for url in denied:
+                self.assertEqual(self.p.get(url).status_code, 302, (role, url))
+        self.role("support")
+        self.post(f"/admin/competitions/{self.cid}/draw", client=self.p)
+        self.assertEqual(self.q("SELECT status FROM competitions WHERE id=?", self.cid), "live")    # support can't draw
+
+    def test_sign_out_other_devices(self):
+        other = self.app.test_client()
+        self.post("/login", {"email": "player@example.com", "password": "supersecret123"}, client=other)
+        self.assertIn("Where you", self.p.get("/account?tab=profile").get_data(as_text=True))
+        self.post("/account/sessions/revoke", {"sid": "others"}, client=self.p)
+        self.assertEqual(other.get("/account").status_code, 302)
+        self.assertEqual(self.p.get("/account").status_code, 200)
+
+    def test_closing_freezes_the_entry_list(self):
+        self.add(self.cid, 3, client=self.p)
+        self.checkout(client=self.p)
+        self.post(f"/admin/competitions/{self.cid}/postal", {"name": "Post Person", "email": "post@example.com",
+                  "address": "1 Road", "answer_correct": "1", "mode": "receive",
+                  "received": time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))})
+        db = self.db()
+        db.execute("UPDATE competitions SET ends_at=strftime('%Y-%m-%dT%H:%M:%SZ','now','-1 minute') WHERE id=?", (self.cid,))
+        db.commit()
+        self.run_jobs()
+        self.assertIsNone(self.q("SELECT locked_at FROM competitions WHERE id=?", self.cid))   # envelope still waiting
+        r = self.post(f"/admin/competitions/{self.cid}/draw", follow_redirects=True)
+        self.assertIn("Postal entries are still waiting", r.get_data(as_text=True))
+        pid = self.q("SELECT id FROM postal_entries")
+        self.post(f"/admin/postal/{pid}", {"action": "approve"})
+        self.assertEqual(self.q("SELECT status FROM postal_entries"), "accepted")
+        self.run_jobs()
+        self.assertIsNotNone(self.q("SELECT locked_at FROM competitions WHERE id=?", self.cid))
+        snap = self.db().execute("SELECT * FROM entry_snapshots").fetchone()
+        self.assertEqual((snap["entry_count"], snap["paid_count"], snap["postal_count"]), (4, 3, 1))
+        db = self.db()
+        for sql in ("INSERT INTO tickets (competition_id, number, status, created_at) VALUES (%d, 19, 'issued', 'x')" % self.cid,
+                    "DELETE FROM tickets WHERE competition_id=%d" % self.cid,
+                    "UPDATE tickets SET user_id=NULL WHERE competition_id=%d" % self.cid,
+                    "UPDATE competitions SET locked_at=NULL WHERE id=%d" % self.cid):
+            with self.assertRaises(sqlite3.DatabaseError, msg=sql):
+                db.execute(sql)
+        self.assertIn("Entry list frozen", self.client.get(f"/admin/competitions/{self.cid}").get_data(as_text=True))
+
+    def test_redraw_and_prize_claim(self):
+        other = self.app.test_client()
+        self.signup("second@example.com", client=other, name="Second Person")
+        self.add(self.cid, 5, client=self.p)
+        self.checkout(client=self.p)
+        self.add(self.cid, 5, client=other)
+        self.checkout(client=other)
+        self.close()
+        self.post(f"/admin/competitions/{self.cid}/draw")
+        first = self.q("SELECT winning_number FROM draws")
+        claim = self.q("SELECT id FROM prize_claims")
+        self.post(f"/admin/prizes/{claim}", {"status": "contacted", "note": "Called, left voicemail"})
+        self.assertEqual(self.q("SELECT status FROM prize_claims WHERE id=?", claim), "contacted")
+        r = self.post(f"/admin/competitions/{self.cid}/redraw", {"reason": "no", "confirm": "REDRAW"}, follow_redirects=True)
+        self.assertIn("Give the reason", r.get_data(as_text=True))
+        self.post(f"/admin/competitions/{self.cid}/redraw", {"reason": "Winner failed age verification", "confirm": "REDRAW"})
+        rows = self.db().execute("SELECT method, winning_number, reason FROM draws ORDER BY id").fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1]["method"], "redraw")
+        self.assertNotEqual(rows[1]["winning_number"], first)
+        self.assertEqual(self.q("SELECT status FROM prize_claims WHERE id=?", claim), "forfeited")
+        db = self.db()
+        with self.assertRaises(sqlite3.DatabaseError):          # result only changes through a recorded redraw
+            db.execute("UPDATE competitions SET winner_ticket_id=(SELECT MIN(id) FROM tickets) WHERE id=?", (self.cid,))
+        new_claim = self.q("SELECT MAX(id) FROM prize_claims")
+        for st in ("contacted", "verification", "verified", "chosen", "fulfilment", "delivered"):
+            self.post(f"/admin/prizes/{new_claim}", {"status": st})
+        self.assertIsNotNone(self.q("SELECT completed_at FROM competitions WHERE id=?", self.cid))
+        self.assertEqual(self.q("SELECT COUNT(*) FROM claim_events WHERE claim_id=?", new_claim), 7)
+        self.assertIn("Redraw 1", self.client.get(f"/admin/competitions/{self.cid}").get_data(as_text=True))
+
+    def test_notifications_are_recorded_once(self):
+        self.add(self.cid, 2, client=self.p)
+        chk = self.checkout(client=self.p, pay=False)
+        body = json.dumps({"type": "checkout.session.completed", "data": {"object": {
+            "id": "cs_1", "payment_status": "paid", "amount_total": 500, "metadata": {"checkout_id": str(chk)}}}}).encode()
+        ts = int(time.time())
+        sig = hmac.new(b"whsec_test", f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+        for _ in range(3):
+            self.client.post("/stripe/webhook", data=body, headers={"Stripe-Signature": f"t={ts},v1={sig}"})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM notifications WHERE dedupe_key=?", f"order:{chk}"), 1)
+        self.assertIn("1 new", self.p.get("/").get_data(as_text=True))
+        self.assertIn("Entries confirmed", self.p.get("/account/notifications").get_data(as_text=True))
+        self.assertNotIn("1 new", self.p.get("/").get_data(as_text=True))                     # read now
+
+    def test_finance_reconciles(self):
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "1", "kind": "credit", "reason": "Promo"})
+        self.post("/admin/promos", {"code": "TEN", "percent": "10", "per_user": "1"})
+        self.add(self.cid, 4, client=self.p)
+        self.checkout(client=self.p, promo="TEN", use_credit=True)
+        html = self.client.get("/admin/finance").get_data(as_text=True)
+        self.assertIn("✓ balances", html)
+        csv_ = self.client.get("/admin/finance/payments.csv").get_data(as_text=True)
+        self.assertTrue(csv_.startswith("date_utc,type,dbx_ref,stripe_session"))
+
+    def test_timeline_flags_cases_health(self):
+        self.add(self.cid, 1, client=self.p)
+        self.checkout(client=self.p)
+        html = self.client.get(f"/admin/customers/{self.uid}/timeline").get_data(as_text=True)
+        self.assertIn("Order paid", html)
+        self.assertIn("Account created", html)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM audit_log WHERE action='customer.viewed'"), 1)
+        db = self.db()
+        db.execute("UPDATE users SET phone='07700900000'")
+        db.commit()
+        self.post("/admin/flags", {"run": "1"})
+        self.assertIn("Shared phone number", self.client.get("/admin/flags").get_data(as_text=True))
+        self.post("/contact", {"name": "Pat Player", "email": "player@example.com", "topic": "A payment",
+                               "message": "Where is my refund please?"}, client=self.p)
+        case = self.q("SELECT id FROM cases")
+        self.assertEqual(self.q("SELECT user_id FROM cases"), self.uid)
+        self.post(f"/admin/cases/{case}", {"action": "reply", "body": "Sorted — it's in your wallet."})
+        self.assertEqual(self.q("SELECT status FROM cases"), "waiting")
+        self.assertEqual(self.client.get("/admin/health").status_code, 200)
+        self.assertEqual(self.client.get("/healthz").get_json()["ok"], True)
+        self.assertEqual(self.client.get("/admin/").status_code, 200)
+
+    def test_payments_paused_and_maintenance(self):
+        self.post("/admin/settings", {"site_status": "payments_paused", "site_status_message": "Back at 9pm"})
+        self.add(self.cid, 1, client=self.p)
+        r = self.post("/basket/checkout", {}, client=self.p, follow_redirects=True)
+        self.assertIn("Back at 9pm", r.get_data(as_text=True))
+        self.assertEqual(self.q("SELECT COUNT(*) FROM checkouts"), 0)
+        self.post("/admin/settings", {"site_status": "maintenance", "site_status_message": "Upgrading"})
+        self.assertEqual(self.p.get("/competitions").status_code, 503)
+        self.assertEqual(self.p.get("/account").status_code, 200)
+        self.assertEqual(self.client.get("/competitions").status_code, 200)                 # admins still see it
+        self.post("/admin/settings", {"site_status": "ok"})
+        self.assertEqual(self.p.get("/competitions").status_code, 200)
+
+    def test_provider_failures_pause_payments(self):
+        from unittest import mock
+        from app import payments
+        self.app.config["STRIPE_SECRET_KEY"] = "sk_test_x"
+        with mock.patch.object(payments, "create_checkout", side_effect=RuntimeError("down")):
+            for _ in range(3):
+                self.add(self.cid, 1, client=self.p)
+                self.post("/basket/checkout", {}, client=self.p)
+        self.add(self.cid, 1, client=self.p)
+        r = self.post("/basket/checkout", {}, client=self.p, follow_redirects=True)
+        self.assertIn("temporarily unavailable", r.get_data(as_text=True))
 
 
 class MigrationTest(unittest.TestCase):

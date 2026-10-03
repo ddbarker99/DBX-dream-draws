@@ -110,6 +110,42 @@ MIGRATIONS = [
     ("users", "admin_role", "TEXT NOT NULL DEFAULT 'owner'"),  # owner (everything) | staff (no money or accounts)
     ("competitions", "winner_consent_at", "TEXT"),           # winner agreed to their photo/quote being shown
     ("competitions", "winner_consent_by", "INTEGER"),
+    # v9: lifecycle, MFA, redraws
+    ("competitions", "locked_at", "TEXT"),                   # final entry list frozen
+    ("competitions", "purging", "INTEGER NOT NULL DEFAULT 0"),  # set only while deleting test data
+    ("competitions", "completed_at", "TEXT"),
+    ("users", "mfa_secret", "TEXT"),
+    ("users", "mfa_enabled", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "mfa_recovery", "TEXT"),                       # JSON list of hashed one-time recovery codes
+    ("draws", "redraw_of", "INTEGER"),
+    ("draws", "reason", "TEXT"),
+    ("draws", "winner_user_id", "INTEGER"),
+    ("draws", "snapshot_id", "INTEGER"),
+]
+
+# Triggers that use columns added by MIGRATIONS, so they're created after them.
+POST_TRIGGERS = [
+    # Once the final entry list is frozen, tickets can't be added, removed or reassigned.
+    """CREATE TRIGGER IF NOT EXISTS tickets_locked_insert BEFORE INSERT ON tickets
+       WHEN (SELECT locked_at FROM competitions WHERE id=NEW.competition_id) IS NOT NULL
+       BEGIN SELECT RAISE(ABORT, 'This competition has closed: its entry list is final.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS tickets_locked_delete BEFORE DELETE ON tickets
+       WHEN (SELECT locked_at IS NOT NULL AND purging=0 FROM competitions WHERE id=OLD.competition_id)
+       BEGIN SELECT RAISE(ABORT, 'This competition has closed: its entry list is final.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS tickets_locked_update BEFORE UPDATE OF number, status, user_id, competition_id ON tickets
+       WHEN (SELECT locked_at FROM competitions WHERE id=OLD.competition_id) IS NOT NULL
+       BEGIN SELECT RAISE(ABORT, 'This competition has closed: its entry list is final.'); END""",
+    """CREATE TRIGGER IF NOT EXISTS comp_lock_permanent BEFORE UPDATE OF locked_at ON competitions
+       WHEN OLD.locked_at IS NOT NULL AND NEW.locked_at IS NOT OLD.locked_at
+       BEGIN SELECT RAISE(ABORT, 'A closed competition cannot be reopened.'); END""",
+    # Result fields of a drawn competition only change through a recorded redraw.
+    "DROP TRIGGER IF EXISTS comp_result_locked",
+    """CREATE TRIGGER comp_result_locked BEFORE UPDATE ON competitions
+       WHEN OLD.status = 'drawn' AND (NEW.status IS NOT OLD.status OR NEW.entries_hash IS NOT OLD.entries_hash
+            OR NEW.drawn_at IS NOT OLD.drawn_at OR NEW.seed IS NOT OLD.seed OR NEW.ends_at IS NOT OLD.ends_at
+            OR (NEW.winner_ticket_id IS NOT OLD.winner_ticket_id AND NEW.winner_ticket_id IS NOT
+                (SELECT winning_ticket_id FROM draws WHERE competition_id=OLD.id ORDER BY id DESC LIMIT 1)))
+       BEGIN SELECT RAISE(ABORT, 'Draw results are permanent.'); END""",
 ]
 
 POST_INDEXES = """
@@ -140,6 +176,10 @@ def init_db(path):
         for stmt in POST_INDEXES.strip().split(";"):
             if stmt.strip():
                 conn.execute(stmt)
+        for stmt in POST_TRIGGERS:
+            conn.execute(stmt)
+        conn.execute("UPDATE users SET admin_role=CASE admin_role WHEN 'owner' THEN 'admin' WHEN 'staff' THEN 'competitions' "
+                     "ELSE admin_role END WHERE admin_role IN ('owner','staff')")
         conn.execute("UPDATE postal_entries SET status='rejected', reject_reason='Wrong answer' "
                      "WHERE answer_correct=0 AND status='accepted' AND reject_reason IS NULL")
         for r in conn.execute("SELECT id FROM users WHERE referral_code IS NULL").fetchall():

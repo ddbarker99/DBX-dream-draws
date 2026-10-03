@@ -11,6 +11,8 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from . import mailer, payments
+from .notify import notify, tell, unread_count
+from .security import device_name, end_session, revoke_others, start_session
 from .db import get_db, iso, parse_iso, utcnow, write_txn
 from .services import (audit, entrant_count, CATEGORIES, CATEGORY_NAMES, check_promo, MIN_DEPOSIT, MAX_DEPOSIT, create_deposit, deposit_room,
                        fulfil_deposit, set_deposit_status, expire_stale_deposits, refundable_deposits, refund_deposits, MIN_WITHDRAWAL, REDEEM_BLOCK, TIERS, balances, claim_free_play, free_play_today,
@@ -544,11 +546,18 @@ def basket_remove():
 def checkout():
     db = get_db()
     lines = _basket()
+    from .status import payments_paused
+    paused = payments_paused()
+    if paused:
+        flash(paused, "error")
+        return redirect(url_for("public.basket"))
     promo = request.form.get("promo") or session.get("promo", "")
     idem = (request.form.get("idem") or "")[:64] or None
     try:
         cid, cash, created = reserve_checkout(g.user, lines, promo, request.form.get("use_credit") == "1", idem)
     except (PurchaseError, ValueError) as e:
+        if "spend limit" in str(e):
+            audit(db, "safer.limit_block", f"user:{g.user['id']}", str(e)[:200])
         flash(str(e), "error")
         return redirect(url_for("public.basket"))
     if not created:                                  # second press of the same Pay button
@@ -571,6 +580,8 @@ def checkout():
                                           cancel_url=f"{base}{url_for('public.checkout_cancel', cid=cid)}")
         except Exception:
             current_app.logger.exception("Stripe checkout failed")
+            from .status import record_provider_error
+            record_provider_error()
             expire_checkout(cid)
             _restore_basket(cid)
             flash("Payment provider unavailable — you have not been charged. Please try again.", "error")
@@ -618,7 +629,8 @@ def _confirm_email(cid):
     base = current_app.config["SITE_URL"]
     button = (("▶ Play now", base + url_for("public.play", slug=games_[0]["slug"])) if games_
               else ("View my entries", base + url_for("public.account", tab="entries")))
-    mailer.send(c["email"], "You're in! Your entries are confirmed 🎟️",
+    tell(c["email"], "You're in! Your entries are confirmed 🎟️", kind="order", key=f"order:{cid}", user_id=c["user_id"],
+         link=url_for("public.order_detail", cid=cid), title=f"Entries confirmed — order #{cid}", body=
                 f"Hi {c['name'].split()[0]},\n\nThanks for entering — you're all set.\n\n" + "\n".join(lines) +
                 ("\n\nYour ticket numbers:" if chips else "") ,
                 highlight=chips or None, button=button, heading="You're in!",
@@ -697,7 +709,7 @@ def _refuse_credit_card(cid, session):
         status = "needs_refund"
     refuse_checkout(cid, status, session.get("id"))
     current_app.logger.warning("Checkout %s paid by credit card — %s", cid, status)
-    mailer.send(c["email"], "Please use a debit card",
+    tell(c["email"], "Please use a debit card", kind="payment", key=f"refused:{cid}", user_id=None, body=
                 f"Hi {c['name'].split()[0]},\n\nSorry — we can't accept credit cards for competition entries, so your "
                 "payment has been refunded in full (it can take 5–10 days to show). No tickets were issued.\n\n"
                 "Please try again with a debit card, Apple Pay / Google Pay linked to a debit card, or Pay by Bank.",
@@ -750,6 +762,10 @@ def _own_deposit(did):
 @login_required
 def deposit():
     back = url_for("public.account", tab="wallet") + "#deposit"
+    from .status import payments_paused
+    if payments_paused():
+        flash(payments_paused(), "error")
+        return redirect(back)
     try:
         amount = round(float(request.form.get("amount", "").replace("£", "").strip()) * 100)
         did = create_deposit(g.user, amount)
@@ -827,7 +843,8 @@ def deposit_refund():
         return redirect(url_for("public.account", tab="wallet"))
     if total:
         flash(f"£{total / 100:.2f} is on its way back to your card. Refunds usually take 5–10 working days to appear.")
-        mailer.send(g.user["email"], "Your deposit refund",
+        tell(g.user["email"], "Your deposit refund", kind="wallet", key=f"deposit-refund:{g.user['id']}:{utcnow():%Y%m%d%H%M%S}",
+             user_id=g.user["id"], link=url_for("public.account", tab="wallet"), body=
                     f"Hi {g.user['name'].split()[0]},\n\nWe've refunded £{total / 100:.2f} of unspent deposited funds to the card "
                     "you paid with. It usually takes 5–10 working days to appear on your statement.",
                     heading="Refund on its way")
@@ -841,7 +858,8 @@ def _deposit_email(did):
     d = db.execute("SELECT d.*, u.email, u.name FROM deposits d JOIN users u ON u.id=d.user_id WHERE d.id=?", (did,)).fetchone()
     if not d or d["status"] != "paid":
         return
-    mailer.send(d["email"], f"£{d['amount'] / 100:.2f} added to your wallet",
+    tell(d["email"], f"£{d['amount'] / 100:.2f} added to your wallet", kind="wallet", key=f"deposit:{did}", user_id=d["user_id"],
+         link=url_for("public.account", tab="wallet"), body=
                 f"Hi {d['name'].split()[0]},\n\nYour deposit of £{d['amount'] / 100:.2f} is in your wallet and ready to use on "
                 "any competition or instant win game. It's used automatically at checkout.\n\n"
                 "Changed your mind? Unspent deposits can be refunded to your card at any time from your wallet.",
@@ -919,11 +937,14 @@ def contact():
             flash("You've sent a few messages already — we'll be in touch soon. For anything urgent, email us.", "error")
             return render_template("contact.html", form=f, errors={}, topics=CONTACT_TOPICS), 429
         _fail(key)
-        who = f"{name} <{email}>" + (f" (account #{g.user['id']})" if g.user else "")
+        from .control import open_case
+        case_id = open_case(name, email, topic, msg, g.user["id"] if g.user else None)
+        who = f"{name} <{email}>" + (f" (account #{g.user['id']})" if g.user else "") + f" — case #{case_id}"
         if current_app.config["SUPPORT_EMAIL"]:
             mailer.send(current_app.config["SUPPORT_EMAIL"], f"Contact form: {topic}",
                         f"From: {who}\nTopic: {topic}\n\n{msg}\n\nReply to: {email}")
-        mailer.send(email, "We've got your message",
+        tell(email, f"We've got your message [case #{case_id}]", kind="support", key=f"case:{case_id}",
+             user_id=g.user["id"] if g.user else None, title=f"Message received — case #{case_id}", body=
                     f"Hi {name.split()[0]},\n\nThanks for getting in touch about \"{topic.lower()}\". We reply within "
                     "1 working day.\n\nYour message:\n" + msg, heading="Message received")
         current_app.logger.warning("Contact form from %s: %s", email, topic)
@@ -1021,6 +1042,7 @@ def signup():
         if promo_keep:
             session["promo"] = promo_keep
         session["pwv"] = _pw_version(db, cur.lastrowid)
+        start_session(db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone())
         send_verification(db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone())
         flash("Welcome! We've emailed you a link to confirm your email address.")
         return redirect(safe_next(request.args.get("next")))
@@ -1047,6 +1069,7 @@ def login():
             session["uid"] = u["id"]
             session["pwv"] = u["password_hash"][-16:]
             session["basket"] = basket_keep
+            start_session(u)
             return redirect(safe_next(request.args.get("next")))
         flash("That email and password don't match an account. Check them and try again, or reset your password.", "error")
         return render_template("login.html"), 400
@@ -1055,6 +1078,7 @@ def login():
 
 @bp.route("/logout", methods=["POST"])
 def logout():
+    end_session()
     session.clear()
     return redirect(url_for("public.home"))
 
@@ -1098,6 +1122,7 @@ def reset(token):
         else:
             db.execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(pw), r["user_id"]))
             db.execute("DELETE FROM password_resets WHERE user_id=?", (r["user_id"],))
+            revoke_others(r["user_id"])
             audit(db, "account.password_reset", f"user:{r['user_id']}", "Password reset by email link; all devices signed out",
                   actor=False)
             flash("Password updated — log in with your new password.")
@@ -1200,6 +1225,11 @@ def account():
     if tab == "points":
         ctx.update(tiers=TIERS, redeem_block=REDEEM_BLOCK,
                    referred=db.execute("SELECT COUNT(*) FROM users WHERE referred_by=?", (uid,)).fetchone()[0])
+    if tab == "profile":
+        ctx["sessions"] = db.execute("SELECT * FROM user_sessions WHERE user_id=? AND revoked_at IS NULL ORDER BY last_seen DESC",
+                                     (uid,)).fetchall()
+        ctx["this_sid"] = session.get("sid")
+        ctx["device_name"] = device_name
     if tab == "safer":
         ctx.update(limits=effective_limits(user), spent=spend_summary(db, uid))
         user = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()   # limits may have just come into force
@@ -1304,7 +1334,8 @@ def withdraw():
     if current_app.config["SUPPORT_EMAIL"]:
         mailer.send(current_app.config["SUPPORT_EMAIL"], "Withdrawal request",
                     f"{g.user['name']} ({g.user['email']}) requested £{amount/100:.2f}. Pay it from Admin → Payouts.")
-    mailer.send(g.user["email"], "We've received your withdrawal request",
+    tell(g.user["email"], "We've received your withdrawal request", kind="withdrawal", key=f"withdraw-req:{wid}",
+         user_id=g.user["id"], link=url_for("public.withdrawal_detail", wid=wid), body=
                 f"Hi {g.user['name'].split()[0]},\n\nWe've received your request to withdraw £{amount/100:.2f}. "
                 "We aim to pay within 24 hours and we'll email you as soon as it's been sent.",
                 heading="Withdrawal requested", highlight=f"£{amount/100:.2f}")
@@ -1335,11 +1366,39 @@ def profile():
         new_hash = generate_password_hash(f["new_password"])
         db.execute("UPDATE users SET password_hash=? WHERE id=?", (new_hash, g.user["id"]))
         session["pwv"] = new_hash[-16:]          # this device stays logged in; every other one is signed out
+        revoke_others(g.user["id"], session.get("sid"))
         audit(db, "account.password_changed", f"user:{g.user['id']}", "Changed password from account settings")
+        tell(g.user["email"], "Your password was changed", kind="security", key=f"pw:{g.user['id']}:{new_hash[-12:]}",
+             user_id=g.user["id"], link=url_for("public.account", tab="profile"),
+             body="Your password was just changed and every other device was signed out. If this wasn't you, reset your "
+                  "password straight away and contact us.", heading="Password changed")
     phone = "".join(ch for ch in f.get("phone", "") if ch.isdigit() or ch == "+")[:20] or None
     db.execute("UPDATE users SET marketing=?, phone=? WHERE id=?", (1 if f.get("marketing") else 0, phone, g.user["id"]))
     flash("Saved.")
     return redirect(url_for("public.account", tab="profile"))
+
+
+@bp.route("/account/notifications")
+@login_required
+def notifications():
+    db = get_db()
+    rows = db.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 100", (g.user["id"],)).fetchall()
+    db.execute("UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL", (iso(utcnow()), g.user["id"]))
+    return render_template("notifications.html", rows=rows)
+
+
+@bp.route("/account/sessions/revoke", methods=["POST"])
+@login_required
+def revoke_session():
+    sid = request.form.get("sid")
+    if sid == "others":
+        n = revoke_others(g.user["id"], session.get("sid"))
+        flash(f"Signed out of {n} other device{'s' if n != 1 else ''}.")
+    elif sid and sid != session.get("sid"):
+        get_db().execute("UPDATE user_sessions SET revoked_at=? WHERE sid=? AND user_id=?", (iso(utcnow()), sid, g.user["id"]))
+        flash("Signed out of that device.")
+    audit(get_db(), "account.sessions_revoked", f"user:{g.user['id']}", "Signed out other device(s)")
+    return redirect(url_for("public.account", tab="profile") + "#devices")
 
 
 @bp.route("/verify/<token>")
@@ -1384,6 +1443,16 @@ def redeem():
     else:
         flash(f"Redeemed {blocks * REDEEM_BLOCK} points for £{blocks} site credit.")
     return redirect(url_for("public.account", tab="points"))
+
+
+@bp.route("/healthz")
+def health():
+    """For an external uptime monitor: 200 when the app and database answer, 503 otherwise."""
+    try:
+        get_db().execute("SELECT 1").fetchone()
+        return jsonify({"ok": True, "time": iso(utcnow())})
+    except Exception:
+        return jsonify({"ok": False}), 503
 
 
 @bp.route("/robots.txt")
