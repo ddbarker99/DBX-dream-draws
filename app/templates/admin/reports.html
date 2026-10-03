@@ -1,18 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Business reports · Admin<section class="section" aria-labelledby="em-h"><h2 id="em-h">Emailed summaries</h2>
-<p class="small muted">Sent automatically to {{ config.REPORT_EMAILS or config.SUPPORT_EMAIL or 'nobody — set SUPPORT_EMAIL or REPORT_EMAILS' }}: a daily operations summary at 7am and a weekly management report on Mondays at 8am. The latest copies:</p>
-<div class="two">
-  <details class="panel"><summary><b>Latest daily summary</b></summary><pre class="small" style="white-space:pre-wrap">{{ daily or 'Not sent yet.' }}</pre></details>
-  <details class="panel"><summary><b>Latest weekly report</b></summary><pre class="small" style="white-space:pre-wrap">{{ weekly or 'Not sent yet.' }}</pre></details>
-</div></section>
-{% endblock %}
-{% block robots %}<meta name="robots" content="noindex"><section class="section" aria-labelledby="em-h"><h2 id="em-h">Emailed summaries</h2>
-<p class="small muted">Sent automatically to {{ config.REPORT_EMAILS or config.SUPPORT_EMAIL or 'nobody — set SUPPORT_EMAIL or REPORT_EMAILS' }}: a daily operations summary at 7am and a weekly management report on Mondays at 8am. The latest copies:</p>
-<div class="two">
-  <details class="panel"><summary><b>Latest daily summary</b></summary><pre class="small" style="white-space:pre-wrap">{{ daily or 'Not sent yet.' }}</pre></details>
-  <details class="panel"><summary><b>Latest weekly report</b></summary><pre class="small" style="white-space:pre-wrap">{{ weekly or 'Not sent yet.' }}</pre></details>
-</div></section>
-{% endblock %}
+{% block title %}Business reports · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
 {% block content %}
 {% include "admin/_bar.html" %}
 <h1>Business reports</h1>
@@ -30,13 +18,13 @@
   <div><b>{{ r.contribution|gbp }}</b><span>Estimated contribution</span></div>
 </div>
 <div class="two">
-<section class="panel" aria-labelledby="m-h"><h2 id="m-h" style="font-size:20px">Money</h2>
+<section class="panel table-scroll" aria-labelledby="m-h"><h2 id="m-h" style="font-size:20px">Money</h2>
   <div class="table-scroll" tabindex="0" role="region" aria-labelledby="m-h"><table>
   <thead><tr><th scope="col">Figure</th><th scope="col" class="num">This period</th><th scope="col" class="num">Previous</th></tr></thead><tbody>
   {% for k, label in rows %}<tr><td>{{ label }}</td><td class="num">{{ r[k]|gbp }}</td><td class="num muted">{{ p[k]|gbp }}</td></tr>{% endfor %}
   </tbody></table></div></section>
 <div class="stack">
-<section class="panel" aria-labelledby="c-h"><h2 id="c-h" style="font-size:20px">Customers &amp; volume</h2>
+<section class="panel table-scroll" aria-labelledby="c-h"><h2 id="c-h" style="font-size:20px">Customers &amp; volume</h2>
   <div class="table-scroll" tabindex="0" role="region" aria-labelledby="c-h"><table>
   <thead><tr><th scope="col">Figure</th><th scope="col" class="num">This period</th><th scope="col" class="num">Previous</th></tr></thead><tbody>
   {% for k, label in counts %}<tr><td>{{ label }}</td><td class="num">{{ '{:,}'.format(r[k]) }}</td><td class="num muted">{{ '{:,}'.format(p[k]) }}</td></tr>{% endfor %}

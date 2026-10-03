@@ -63,59 +63,67 @@ class ApprovalError(Exception):
 
 
 def decide(rid, approve, staff, note=""):
-    """Approve (and carry out) or reject a request. The approver must be a different admin with the permission."""
-    from .services import audit
-    db = get_db()
-    expire_old(db)
-    a = db.execute("SELECT * FROM approvals WHERE id=?", (rid,)).fetchone()
-    if a is None or a["status"] != "pending":
-        raise ApprovalError("That request has already been decided or has expired.")
-    if a["requested_by"] == staff["id"]:
-        raise ApprovalError("You can't approve your own request — another administrator has to.")
-    if not can(staff, KINDS[a["kind"]][1]):
-        raise ApprovalError(f"Your role ({ROLES[role_of(staff)][0]}) can't approve this.")
-    now = iso(utcnow())
-    if not approve:
-        db.execute("UPDATE approvals SET status='rejected', decided_by=?, decided_at=?, decision_note=? WHERE id=?",
-                   (staff["id"], now, (note or "")[:300], rid))
-        audit(db, "approval.rejected", f"approval:{rid}", f"{a['summary'][:200]} — {note[:100]}")
-        return None
-    requester = db.execute("SELECT * FROM users WHERE id=?", (a["requested_by"],)).fetchone()
-    result = EXECUTORS[a["kind"]](json.loads(a["payload"]), requester, staff)
-    db.execute("UPDATE approvals SET status='approved', decided_by=?, decided_at=?, decision_note=?, result=? WHERE id=?",
-               (staff["id"], now, (note or "")[:300], str(result)[:300], rid))
-    audit(db, "approval.approved", f"approval:{rid}", f"{a['summary'][:200]} — approved by {staff['email']}")
+    """Approve (and carry out) or reject a request. The approver must be a different admin with the permission.
+
+    Checking the request, carrying it out and recording the decision happen in ONE locked transaction, so two admins
+    pressing Approve at the same moment (or one double-click) can only ever carry it out once."""
+    from .services import PurchaseError, audit
+    expire_old(get_db())
+    after = None
+    with write_txn() as db:
+        a = db.execute("SELECT * FROM approvals WHERE id=?", (rid,)).fetchone()
+        if a is None or a["status"] != "pending":
+            raise ApprovalError("That request has already been decided or has expired.")
+        if a["requested_by"] == staff["id"]:
+            raise ApprovalError("You can't approve your own request — another administrator has to.")
+        if not can(staff, KINDS[a["kind"]][1]):
+            raise ApprovalError(f"Your role ({ROLES[role_of(staff)][0]}) can't approve this.")
+        now = iso(utcnow())
+        if not approve:
+            db.execute("UPDATE approvals SET status='rejected', decided_by=?, decided_at=?, decision_note=? WHERE id=?",
+                       (staff["id"], now, (note or "")[:300], rid))
+            audit(db, "approval.rejected", f"approval:{rid}", f"{a['summary'][:200]} — {note[:100]}")
+            return None
+        requester = db.execute("SELECT * FROM users WHERE id=?", (a["requested_by"],)).fetchone()
+        payload = json.loads(a["payload"])
+        try:
+            result = EXECUTORS[a["kind"]](db, payload, requester, staff)
+        except PurchaseError as e:
+            raise ApprovalError(str(e))
+        db.execute("UPDATE approvals SET status='approved', decided_by=?, decided_at=?, decision_note=?, result=? WHERE id=?",
+                   (staff["id"], now, (note or "")[:300], str(result)[:300], rid))
+        audit(db, "approval.approved", f"approval:{rid}", f"{a['summary'][:200]} — approved by {staff['email']}")
+        if a["kind"] == "redraw":
+            after = payload["cid"]
+    if after:                                         # after the decision is saved: check the new result, tell people
+        from .services import verify_after_draw
+        verify_after_draw(after)
+        try:
+            from .admin import announce_draw
+            announce_draw(after)
+        except Exception:
+            pass
     return result
 
 
-def _wallet_adjust(p, requester, approver):
+def _wallet_adjust(db, p, requester, approver):
     from .services import add_credit, audit, balance
-    with write_txn() as db:
-        if p["amount"] < 0 and balance(db, p["uid"], p["kind"]) + p["amount"] < 0:
-            raise ApprovalError("That would now make their balance negative — reject it and ask for a new request.")
-        add_credit(db, p["uid"], p["amount"], p["reason"], f"admin{requester['id']}+{approver['id']}", kind=p["kind"])
-        audit(db, "wallet.adjust", f"user:{p['uid']}", f"{p['amount']:+}p {p['kind']}: {p['reason']} (requested by "
-              f"{requester['email']}, approved by {approver['email']})")
+    if p["amount"] < 0 and balance(db, p["uid"], p["kind"]) + p["amount"] < 0:
+        raise ApprovalError("That would now make their balance negative — reject it and ask for a new request.")
+    add_credit(db, p["uid"], p["amount"], p["reason"], f"admin{requester['id']}+{approver['id']}", kind=p["kind"])
+    audit(db, "wallet.adjust", f"user:{p['uid']}", f"{p['amount']:+}p {p['kind']}: {p['reason']} (requested by "
+          f"{requester['email']}, approved by {approver['email']})")
     return f"{p['amount']:+}p {p['kind']} applied"
 
 
-def _redraw(p, requester, approver):
-    from .services import PurchaseError, redraw
-    try:
-        n = redraw(p["cid"], f"{p['reason']} (approved by a second administrator)", requester)
-    except PurchaseError as e:
-        raise ApprovalError(str(e))
-    try:
-        from .admin import announce_draw
-        announce_draw(p["cid"])
-    except Exception:
-        pass
+def _redraw(db, p, requester, approver):
+    from .services import _redraw_db
+    n = _redraw_db(db, p["cid"], f"{p['reason']} (approved by a second administrator)", requester, p.get("expect"))
     return f"new winning ticket #{n}"
 
 
-def _admin_access(p, requester, approver):
+def _admin_access(db, p, requester, approver):
     from .services import audit
-    db = get_db()
     if p["role"]:
         db.execute("UPDATE users SET is_admin=1, admin_role=? WHERE id=?", (p["role"], p["uid"]))
     else:

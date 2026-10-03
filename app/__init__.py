@@ -13,7 +13,7 @@ from . import db as dbmod
 from .db import parse_iso, utcnow
 
 UK = ZoneInfo("Europe/London")
-ASSET_V = "28"   # bump when style.css or images change, so browsers fetch the new copy
+ASSET_V = "30"   # bump when style.css or images change, so browsers fetch the new copy
 _PLACEHOLDERS = ("example street", "example.com", "yourdomain", "ab1 2cd")
 
 
@@ -229,6 +229,7 @@ def create_app(test_config=None):
             "categories": CATEGORIES, "asset_v": ASSET_V,
             "site_state": __import__("app.status", fromlist=["state"]).state(),
             "back": __import__("app.navigation", fromlist=["back_link"]).back_link(),
+            "once_token": lambda: secrets.token_urlsafe(16),     # one-time form token: a double submit only counts once
         }
 
     @app.template_filter("fromjson")

@@ -1,14 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Compliance &amp; retention · Admin<section id="retention" style="margin-top:var(--s5)"><h2>How long we keep data</h2>
-<p class="small muted">Applied automatically every night where there's an automatic action; the rest are kept on purpose. Confirm the periods with your solicitor; change them in <code>app/retention.py</code>. Full detail: <code>docs/RETENTION.md</code>.</p>
-<div class="panel table-scroll" tabindex="0"><table><tr><th>Data</th><th>Kept for</th><th>Why</th><th>Automatic?</th></tr>
-{% for data, days, why, sql in retention %}<tr><td>{{ data }}</td><td class="small">{{ (days ~ ' day' ~ ('s' if days != 1 else '')) if days else 'See reason' }}</td><td class="small">{{ why }}</td><td class="small">{{ 'Yes, nightly' if sql else 'No — kept' }}</td></tr>{% endfor %}</table></div></section>
-{% endblock %}
-{% block robots %}<meta name="robots" content="noindex"><section id="retention" style="margin-top:var(--s5)"><h2>How long we keep data</h2>
-<p class="small muted">Applied automatically every night where there's an automatic action; the rest are kept on purpose. Confirm the periods with your solicitor; change them in <code>app/retention.py</code>. Full detail: <code>docs/RETENTION.md</code>.</p>
-<div class="panel table-scroll" tabindex="0"><table><tr><th>Data</th><th>Kept for</th><th>Why</th><th>Automatic?</th></tr>
-{% for data, days, why, sql in retention %}<tr><td>{{ data }}</td><td class="small">{{ (days ~ ' day' ~ ('s' if days != 1 else '')) if days else 'See reason' }}</td><td class="small">{{ why }}</td><td class="small">{{ 'Yes, nightly' if sql else 'No — kept' }}</td></tr>{% endfor %}</table></div></section>
-{% endblock %}
+{% block title %}Compliance &amp; retention · Admin{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
 {% block content %}
 {% include "admin/_bar.html" %}
 <h1>Compliance &amp; retention</h1>

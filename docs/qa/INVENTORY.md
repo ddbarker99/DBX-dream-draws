@@ -83,7 +83,7 @@ Generated from the code by `tests/qa_inventory.py`. Regenerate after any change.
 | `/admin/support-insights` | GET | `control.support_insights` | staff: `cases` |
 | `/admin/targets` | GET,POST | `control.targets` | staff: `reports` |
 
-## Routes — Customer-facing (public + account) (84)
+## Routes — Customer-facing (public + account) (85)
 
 | URL | Methods | Endpoint | Protected by |
 |---|---|---|---|
@@ -133,6 +133,7 @@ Generated from the code by `tests/qa_inventory.py`. Regenerate after any change.
 | `/deposit/<int:did>/demo-pay` | GET,POST | `public.deposit_demo` | logged in |
 | `/deposit/<int:did>/done` | GET | `public.deposit_done` | logged in |
 | `/draws` | GET | `public.draw_calendar` | public |
+| `/favicon.ico` | GET | `public.favicon` | public |
 | `/feedback` | POST | `public.feedback` | public |
 | `/forgot` | GET,POST | `public.forgot` | public |
 | `/free-play/<slug>` | POST | `public.free_play` | logged in |
@@ -268,7 +269,7 @@ Generated from the code by `tests/qa_inventory.py`. Regenerate after any change.
 | `admin/entries.html` | POST | `admin.instant` | random_table |
 | `admin/entries.html` | POST | `admin.instant_fulfilled` |  |
 | `admin/entries.html` | POST | `admin.postal` | address, answer_correct, dob, email, mode, name, phone, received |
-| `admin/entries.html` | POST | `admin.redraw_comp` | confirm, reason |
+| `admin/entries.html` | POST | `admin.redraw_comp` | confirm, reason, replaces |
 | `admin/entries.html` | POST | `admin.delete_comp` | confirm |
 | `admin/error_ref.html` | POST | `control.resolve_error` |  |
 | `admin/experiments.html` | POST | `(same page)` | action, decision, key |
@@ -302,8 +303,8 @@ Generated from the code by `tests/qa_inventory.py`. Regenerate after any change.
 | `admin/targets.html` | POST | `(same page)` |  |
 | `admin/targets.html` | POST | `control.backlog` | kind, source, source_id, title |
 | `admin/targets.html` | POST | `control.resolve_error` |  |
-| `admin/user.html` | POST | `(same page)` | action, amount, case_id, reason |
-| `admin/user.html` | POST | `(same page)` | action, amount, kind, reason |
+| `admin/user.html` | POST | `(same page)` | action, amount, case_id, once, reason |
+| `admin/user.html` | POST | `(same page)` | action, amount, kind, once, reason |
 | `admin/user.html` | POST | `(same page)` | action |
 | `admin/user.html` | POST | `(same page)` | action, role |
 | `admin/users.html` | GET | `(same page)` | q |
@@ -396,7 +397,7 @@ Generated from the code by `tests/qa_inventory.py`. Regenerate after any change.
 
 ## Summary
 
-- Routes: 158
+- Routes: 159
 - Forms: 123
 - Templates: 111
 - Background jobs: 13

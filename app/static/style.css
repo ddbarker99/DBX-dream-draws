@@ -779,3 +779,12 @@ dl.facts>dt{padding-top:10px;color:var(--text-2);font-size:var(--fs-sm)}
 .backbtn:hover{color:var(--text);border-color:var(--red-fill)}
 .backbtn:focus-visible{outline:3px solid var(--red);outline-offset:2px}
 .backbtn + .crumbs{margin-top:0}
+
+/* QA fixes: no sideways scrolling on the smallest phones */
+.balcard{min-width:0;overflow-wrap:anywhere}
+@media (max-width:360px){.balcard{padding:var(--s4)}.balgrid3 .balcard b{font-size:24px}}
+.admore>div{max-width:calc(100vw - 32px)}
+@media (max-width:520px){.adminbar .admore{position:static}.adminbar .admore>div{left:16px;right:16px;min-width:0}}
+main input,main select,main textarea{max-width:100%}
+.inline-form>*{min-width:0}
+.two>*,.three>*{min-width:0}

@@ -701,7 +701,7 @@ class CreditCardTests(Base):
 
     def test_credit_card_refunded_tickets_released_balance_returned(self):
         chk, refund = self.pay("credit")
-        refund.assert_called_once_with("pi_1")
+        refund.assert_called_once_with("pi_1", key="refuse-checkout:1")   # idempotent at Stripe
         self.assertEqual(self.q("SELECT status FROM checkouts WHERE id=?", chk), "credit_refused")
         self.assertEqual(self.q("SELECT COUNT(*) FROM tickets"), 0)
         self.assertEqual(self.q("SELECT SUM(amount) FROM credit_ledger WHERE user_id=?", self.uid), 100)
@@ -1450,9 +1450,10 @@ class PlatformTests(PlatformBase):
         claim = self.q("SELECT id FROM prize_claims")
         self.post(f"/admin/prizes/{claim}", {"status": "contacted", "note": "Called, left voicemail"})
         self.assertEqual(self.q("SELECT status FROM prize_claims WHERE id=?", claim), "contacted")
-        r = self.post(f"/admin/competitions/{self.cid}/redraw", {"reason": "no", "confirm": "REDRAW"}, follow_redirects=True)
+        rep = str(self.q("SELECT MAX(id) FROM draws WHERE competition_id=?", self.cid))
+        r = self.post(f"/admin/competitions/{self.cid}/redraw", {"reason": "no", "confirm": "REDRAW", "replaces": rep}, follow_redirects=True)
         self.assertIn("Give the reason", r.get_data(as_text=True))
-        self.post(f"/admin/competitions/{self.cid}/redraw", {"reason": "Winner failed age verification", "confirm": "REDRAW"})
+        self.post(f"/admin/competitions/{self.cid}/redraw", {"reason": "Winner failed age verification", "confirm": "REDRAW", "replaces": rep})
         rows = self.db().execute("SELECT method, winning_number, reason FROM draws ORDER BY id").fetchall()
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[1]["method"], "redraw")
@@ -3463,7 +3464,8 @@ class Phase7TrustTests(AutoDrawBase):
         self.signup("second@example.com", client=second, name="Second Admin")
         self.cli("make-admin", "second@example.com")
         first_winner = self.q("SELECT winning_number FROM draws")
-        self.post(f"/admin/competitions/{self.cid}/redraw", {"confirm": "REDRAW", "reason": "Winner failed age verification checks"})
+        self.post(f"/admin/competitions/{self.cid}/redraw", {"confirm": "REDRAW", "reason": "Winner failed age verification checks",
+                                                             "replaces": str(self.q("SELECT MAX(id) FROM draws"))})
         self.assertEqual(self.q("SELECT COUNT(*) FROM draws"), 1)                         # nothing changed yet
         aid = self.q("SELECT id FROM approvals WHERE kind='redraw'")
         self.post("/admin/approvals", {"id": aid, "decision": "approve"})                 # can't approve your own

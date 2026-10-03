@@ -516,3 +516,104 @@ class AccountAudit(AuditBase):
         r = self.p.get(f"/account/notifications/{bid}/open")
         self.assertIn(r.status_code, (302, 404))
         self.assertIsNone(self.q("SELECT read_at FROM notifications WHERE id=?", bid))
+
+
+class PageStructureAudit(AuditBase):
+    def test_titles_are_plain_text_and_ids_unique(self):
+        """QA-UI-01 | Pages | Structure | Every page title is plain text (no stray HTML) and no page repeats an element id"""
+        from collections import Counter
+        from html.parser import HTMLParser
+        cid = self.cid
+        urls = ["/", "/competitions", f"/c/{self.slug(cid)}", "/faq", "/results", "/status", "/cookies", "/admin/", "/admin/reports",
+                "/admin/compliance", "/admin/approvals", "/admin/risk", "/admin/calendar", "/admin/backlog", f"/admin/competitions/{cid}",
+                "/admin/competitions/new?kind=draw", "/admin/settings", "/admin/emergency", "/admin/communications"]
+
+        class P(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.ids, self.title, self._t = Counter(), "", False
+
+            def handle_starttag(self, tag, attrs):
+                self._t = tag == "title"
+                for k, v in attrs:
+                    if k == "id":
+                        self.ids[v] += 1
+
+            def handle_data(self, d):
+                if self._t:
+                    self.title += d
+
+            def handle_endtag(self, tag):
+                self._t = False if tag == "title" else self._t
+        for u in urls:
+            html = self.client.get(u).get_data(as_text=True)
+            title = re.search(r"<title>(.*?)</title>", html, re.S).group(1)
+            self.assertNotIn("<", title, u)
+            p = P()
+            p.feed(html)
+            self.assertEqual([i for i, n in p.ids.items() if n > 1], [], u)
+        self.assertEqual(self.client.get("/favicon.ico").status_code, 301)
+        self.assertIn("dbxPrev", self.client.get("/cookies").get_data(as_text=True))
+
+
+class RaceRegressionAudit(AuditBase):
+    def test_double_submitted_redraw_runs_once(self):
+        """QA-RACE-01 | Draws | Double redraw | The same redraw form submitted repeatedly (or a stale form) redraws exactly once"""
+        self.add(self.cid, 4, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        self.run_jobs()
+        rep = str(self.q("SELECT MAX(id) FROM draws"))
+        for _ in range(4):
+            self.post(f"/admin/competitions/{self.cid}/redraw", {"confirm": "REDRAW", "reason": "Winner failed the age check", "replaces": rep})
+        self.post(f"/admin/competitions/{self.cid}/redraw", {"confirm": "REDRAW", "reason": "Winner failed the age check"})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM draws"), 2)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM prize_claims WHERE status!='forfeited'"), 1)
+
+    def test_approval_carried_out_once_even_if_approved_twice(self):
+        """QA-RACE-02 | Approvals | Double approve | Approving the same request twice applies it once (one ledger line)"""
+        fin = self.app.test_client()
+        self.signup("fin@example.com", client=fin)
+        fid = self.q("SELECT id FROM users WHERE email='fin@example.com'")
+        self.post(f"/admin/users/{fid}", {"action": "admin", "role": "finance"})
+        self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "150", "kind": "cash", "reason": "Prize payment"}, client=fin)
+        aid = self.q("SELECT id FROM approvals")
+        for _ in range(3):
+            self.post("/admin/approvals", {"id": aid, "decision": "approve"})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM credit_ledger WHERE user_id=?", self.uid), 1)
+        self.assertEqual(self.bal("cash"), 15000)
+
+    def test_wallet_adjustment_form_double_submit_counts_once(self):
+        """QA-RACE-03 | Admin money | Double submit | The same wallet-adjustment form submitted twice credits once"""
+        for _ in range(2):
+            self.post(f"/admin/users/{self.uid}", {"action": "credit", "amount": "10", "kind": "credit", "reason": "Goodwill fix",
+                                                   "once": "tok-123"})
+        self.assertEqual(self.bal("credit"), 1000)
+
+    def test_deposit_refund_reserves_before_card_refund(self):
+        """QA-RACE-04 | Wallet | Deposit refund | Refund is reserved before Stripe is called; a failed card refund returns the money"""
+        from app import payments
+        from app.services import refund_deposits
+        db = self.db()
+        db.execute("INSERT INTO deposits (user_id, amount, status, payment_intent, created_at, paid_at) VALUES (?,2000,'paid','pi_dep',"
+                   "strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now'))", (self.uid,))
+        did = self.q("SELECT MAX(id) FROM deposits")
+        db.execute("INSERT INTO credit_ledger (user_id, amount, reason, ref, created_at, kind) VALUES (?,2000,'Deposit',?,"
+                   "strftime('%Y-%m-%dT%H:%M:%SZ','now'),'deposit')", (self.uid, f"d{did}"))
+        db.commit()
+        calls = []
+
+        def boom(pi, amount, key):
+            calls.append((pi, amount, key))
+            raise RuntimeError("Stripe down")
+        with self.app.app_context():
+            with self.assertRaises(RuntimeError):
+                refund_deposits(self.uid, boom)
+        self.assertEqual(self.bal("deposit"), 2000)                 # money back in the wallet
+        self.assertEqual(self.q("SELECT refunded FROM deposits"), 0)
+        with self.app.app_context():
+            self.assertEqual(refund_deposits(self.uid, lambda pi, amount, key: calls.append((pi, amount, key))), 2000)
+            self.assertEqual(refund_deposits(self.uid, lambda pi, amount, key: calls.append((pi, amount, key))), 0)  # nothing twice
+        self.assertEqual(self.bal("deposit"), 0)
+        self.assertTrue(all(c[2].startswith("deposit-refund:") for c in calls))
+        _ = payments

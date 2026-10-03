@@ -980,8 +980,11 @@ def _refuse_credit_card(cid, session):
                    (cid,)).fetchone()
     if c is None or c["status"] != "pending":
         return c is not None and c["status"] in ("credit_refused", "needs_refund")
+    from .services import once
+    if not once(f"refuse-checkout:{cid}"):        # a duplicate webhook is already refunding this payment
+        return True
     try:
-        payments.refund(pi)
+        payments.refund(pi, key=f"refuse-checkout:{cid}")
         status = "credit_refused"
     except Exception:
         current_app.logger.exception("Auto-refund failed for checkout %s — refund it in Stripe", cid)
@@ -1136,14 +1139,15 @@ def deposit_cancel(did):
 @bp.route("/account/deposit/refund", methods=["POST"])
 @login_required
 def deposit_refund():
-    def card_refund(pi, amount):
+    def card_refund(pi, amount, key):
         if payments.enabled():
-            payments.refund(pi, amount=amount, why="unspent wallet deposit")
+            payments.refund(pi, amount=amount, why="unspent wallet deposit", key=key)
     try:
         total = refund_deposits(g.user["id"], card_refund)
     except Exception:
         current_app.logger.exception("Deposit refund failed for user %s", g.user["id"])
-        flash("We couldn't process the refund automatically — we've been notified and will refund you by hand.", "error")
+        flash("We couldn't send the refund to your card just now, so the money is still in your wallet. We've been notified "
+              "and will sort it out — you don't need to do anything.", "error")
         if current_app.config["SUPPORT_EMAIL"]:
             mailer.send(current_app.config["SUPPORT_EMAIL"], "Deposit refund needs doing by hand",
                         f"{g.user['name']} ({g.user['email']}) asked for unspent deposits back and the automatic Stripe refund failed. "
@@ -1188,8 +1192,11 @@ def _refuse_credit_card_deposit(did, sess):
     except Exception:
         current_app.logger.exception("Couldn't check card type for deposit %s — accepting it", did)
         return False
+    from .services import once
+    if not once(f"refuse-deposit:{did}"):         # a duplicate webhook is already refunding this deposit
+        return True
     try:
-        payments.refund(pi)
+        payments.refund(pi, key=f"refuse-deposit:{did}")
         status = "credit_refused"
     except Exception:
         current_app.logger.exception("Auto-refund failed for deposit %s — refund it in Stripe", did)
@@ -2304,6 +2311,12 @@ def api_competitions():
     resp = jsonify({"competitions": out, "generated_at": iso(utcnow())})
     resp.headers["Cache-Control"] = "public, max-age=30"
     return resp
+
+
+@bp.route("/favicon.ico")
+def favicon():
+    """Browsers ask for /favicon.ico whatever the page says; send them the site icon instead of a 404."""
+    return redirect(url_for("static", filename="icon-192.png"), code=301)
 
 
 @bp.route("/robots.txt")

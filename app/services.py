@@ -992,48 +992,52 @@ def verify_after_draw(comp_id):
     return ok
 
 
-def redraw(comp_id, reason, actor):
-    win_no = _redraw(comp_id, reason, actor)
+def redraw(comp_id, reason, actor, expect=None):
+    """expect: the id of the draw the person is replacing (from the page they pressed the button on). A second press
+    of the same button, or two staff at once, then finds it already replaced and does nothing."""
+    with write_txn() as db:
+        win_no = _redraw_db(db, comp_id, reason, actor, expect)
     verify_after_draw(comp_id)
     return win_no
 
 
-def _redraw(comp_id, reason, actor):
+def _redraw_db(db, comp_id, reason, actor, expect=None):
     """Pick a new winner when the first can't receive the prize (e.g. failed verification). Every previous
     winning ticket is excluded; the method is the same, with the attempt number mixed into the HMAC so it's
     still reproducible. The earlier draw records stay — this adds one, with the reason and who ran it."""
     reason = " ".join((reason or "").split())[:500]
     if len(reason) < 10:
         raise PurchaseError("Give the reason for the redraw (at least a sentence). It's kept permanently.")
-    with write_txn() as db:
-        comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
-        if comp is None or comp["status"] != "drawn":
-            raise PurchaseError("Only drawn competitions can be redrawn.")
-        draws = db.execute("SELECT * FROM draws WHERE competition_id=? ORDER BY id", (comp_id,)).fetchall()
-        excluded = {d["winning_number"] for d in draws}
-        snap = latest_snapshot(db, comp_id)
-        base = json.loads(snap["entries"]) if snap else json.loads(draws[0]["entries"])
-        numbers = [n for n in base if n not in excluded]
-        if not numbers:
-            raise PurchaseError("There are no other eligible entries to draw from.")
-        attempt = len(draws) + 1
-        digest = entries_digest(numbers)
-        idx = int(hmac.new(comp["seed"].encode(), f"{digest}:redraw:{attempt}".encode(), hashlib.sha256).hexdigest(), 16) % len(numbers)
-        win_no = numbers[idx]
-        winner = db.execute("SELECT id, user_id FROM tickets WHERE competition_id=? AND number=?", (comp_id, win_no)).fetchone()
-        now = iso(utcnow())
-        cur = db.execute("INSERT INTO draws (competition_id, drawn_at, method, run_by, seed, seed_hash, entries_hash, entry_count, "
-                         "winning_index, winning_number, winning_ticket_id, entries, winner_user_id, snapshot_id, redraw_of, reason) "
-                         "VALUES (?,?,'redraw',?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                         (comp_id, now, actor["id"], comp["seed"], comp["seed_hash"], digest, len(numbers), idx, win_no,
-                          winner["id"], json.dumps(numbers), winner["user_id"], snap["id"] if snap else None, draws[-1]["id"], reason))
-        db.execute("UPDATE prize_claims SET status='forfeited', updated_at=? WHERE competition_id=? AND status!='forfeited'",
-                   (now, comp_id))
-        db.execute("UPDATE competitions SET winner_ticket_id=? WHERE id=?", (winner["id"], comp_id))
-        _new_claim(db, comp_id, cur.lastrowid, winner, actor)
-        audit(db, "draw.redraw", f"comp:{comp_id}", f"Redraw {attempt - 1}: ticket #{win_no} replaces "
-              f"#{draws[-1]['winning_number']}. Reason: {reason}", actor=actor)
-        return win_no
+    comp = db.execute("SELECT * FROM competitions WHERE id=?", (comp_id,)).fetchone()
+    if comp is None or comp["status"] != "drawn":
+        raise PurchaseError("Only drawn competitions can be redrawn.")
+    draws = db.execute("SELECT * FROM draws WHERE competition_id=? ORDER BY id", (comp_id,)).fetchall()
+    if expect is not None and draws and draws[-1]["id"] != expect:
+        raise PurchaseError("This result has already been redrawn — refresh the page to see the current winner.")
+    excluded = {d["winning_number"] for d in draws}
+    snap = latest_snapshot(db, comp_id)
+    base = json.loads(snap["entries"]) if snap else json.loads(draws[0]["entries"])
+    numbers = [n for n in base if n not in excluded]
+    if not numbers:
+        raise PurchaseError("There are no other eligible entries to draw from.")
+    attempt = len(draws) + 1
+    digest = entries_digest(numbers)
+    idx = int(hmac.new(comp["seed"].encode(), f"{digest}:redraw:{attempt}".encode(), hashlib.sha256).hexdigest(), 16) % len(numbers)
+    win_no = numbers[idx]
+    winner = db.execute("SELECT id, user_id FROM tickets WHERE competition_id=? AND number=?", (comp_id, win_no)).fetchone()
+    now = iso(utcnow())
+    cur = db.execute("INSERT INTO draws (competition_id, drawn_at, method, run_by, seed, seed_hash, entries_hash, entry_count, "
+                     "winning_index, winning_number, winning_ticket_id, entries, winner_user_id, snapshot_id, redraw_of, reason) "
+                     "VALUES (?,?,'redraw',?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (comp_id, now, actor["id"], comp["seed"], comp["seed_hash"], digest, len(numbers), idx, win_no,
+                      winner["id"], json.dumps(numbers), winner["user_id"], snap["id"] if snap else None, draws[-1]["id"], reason))
+    db.execute("UPDATE prize_claims SET status='forfeited', updated_at=? WHERE competition_id=? AND status!='forfeited'",
+               (now, comp_id))
+    db.execute("UPDATE competitions SET winner_ticket_id=? WHERE id=?", (winner["id"], comp_id))
+    _new_claim(db, comp_id, cur.lastrowid, winner, actor)
+    audit(db, "draw.redraw", f"comp:{comp_id}", f"Redraw {attempt - 1}: ticket #{win_no} replaces "
+          f"#{draws[-1]['winning_number']}. Reason: {reason}", actor=actor)
+    return win_no
 
 
 def _new_claim(db, comp_id, draw_id, winner, actor):
@@ -1788,17 +1792,38 @@ def refundable_deposits(db, user_id):
     return out
 
 
+def once(key):
+    """True for the first caller to claim `key`, False for everyone after (even at the same instant)."""
+    return get_db().execute("INSERT OR IGNORE INTO once_keys (key, at) VALUES (?,?)", (key[:200], iso(utcnow()))).rowcount == 1
+
+
 def refund_deposits(user_id, refund_fn):
-    """Send unspent deposits back to the cards they came from. refund_fn(payment_intent, amount) does the
-    card refund (or is a no-op in test mode). Returns pence refunded."""
+    """Send unspent deposits back to the cards they came from. refund_fn(payment_intent, amount, key) does the card
+    refund (or is a no-op in test mode). Returns pence refunded.
+
+    Each refund is reserved first — the money leaves the wallet inside one locked transaction — and only then sent to
+    the card; the deposit is marked refunded once the card refund succeeds. So two clicks, two tabs, or a refund racing
+    a purchase can never refund the same money twice or refund money that has just been spent. If the card refund
+    fails, a matching wallet line puts the money straight back."""
+    import secrets as _secrets
     total = 0
-    db = get_db()
-    for d, take in refundable_deposits(db, user_id):
-        if d["payment_intent"]:
-            refund_fn(d["payment_intent"], take)          # raises if the payment provider says no
+    while True:
+        with write_txn() as w:
+            todo = refundable_deposits(w, user_id)
+            if not todo:
+                break
+            d, take = todo[0]
+            ref = f"dr{d['id']}-{d['refunded'] + take}-{_secrets.token_hex(3)}"
+            add_credit(w, user_id, -take, f"Deposit #{d['id']} refunded to your card", ref, kind="deposit")
+        try:
+            if d["payment_intent"]:
+                refund_fn(d["payment_intent"], take, f"deposit-refund:{ref}")
+        except Exception:
+            with write_txn() as w:                     # give the money back; staff are told to refund by hand
+                add_credit(w, user_id, take, f"Deposit #{d['id']} card refund failed — returned to your wallet", ref + "-back",
+                           kind="deposit")
+            raise
         with write_txn() as w:
             w.execute("UPDATE deposits SET refunded=refunded+? WHERE id=?", (take, d["id"]))
-            add_credit(w, user_id, -take, f"Deposit #{d['id']} refunded to your card", f"dr{d['id']}-{d['refunded'] + take}",
-                       kind="deposit")
         total += take
     return total

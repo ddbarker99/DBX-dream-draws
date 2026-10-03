@@ -9,7 +9,7 @@ from .db import iso, parse_iso, utcnow
 from .services import audit, get_setting, set_setting
 
 # Pages that keep working during maintenance: admin, signing in, your account, legal pages, payment callbacks.
-MAINTENANCE_OPEN = ("static", "public.uploads", "public.login", "public.logout", "public.stripe_webhook", "public.health",
+MAINTENANCE_OPEN = ("static", "public.favicon", "public.uploads", "public.login", "public.logout", "public.stripe_webhook", "public.health",
                     "public.page", "public.account", "public.robots", "public.manifest", "public.service_worker",
                     "public.forgot", "public.reset", "public.verify_email", "public.withdrawal_detail", "public.order_detail",
                     "public.notifications", "public.contact", "public.status_page")

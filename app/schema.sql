@@ -611,3 +611,10 @@ CREATE TABLE IF NOT EXISTS mechanic_signoffs (
 );
 CREATE TRIGGER IF NOT EXISTS mechanic_signoffs_permanent BEFORE UPDATE ON mechanic_signoffs
 BEGIN SELECT RAISE(ABORT, 'Sign-offs are permanent; record a new one instead.'); END;
+
+-- One-time actions (app/services.py once()): the first request to claim a key does the action; any concurrent or
+-- repeated request sees the claim and does nothing. Used before calling Stripe so a refund can't be sent twice.
+CREATE TABLE IF NOT EXISTS once_keys (
+    key  TEXT PRIMARY KEY,
+    at   TEXT NOT NULL
+);

@@ -8,7 +8,7 @@
 <div class="two">
   <div class="stack">
   {% if can('goodwill') %}<form class="panel" method="post" style="margin:0" aria-labelledby="gw-h">
-    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="goodwill">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="goodwill"><input type="hidden" name="once" value="{{ once_token() }}">
     <strong id="gw-h">Goodwill credit</strong>
     <p class="small muted" style="margin:4px 0 8px">For a genuine service problem. Site credit only, up to {{ config.GOODWILL_LIMIT|gbp }} per customer in 30 days (more needs an Administrator). Logged.</p>
     <div class="two"><div><label for="gw-amt">Amount (£)</label><input id="gw-amt" name="amount" type="number" step="0.01" min="0.01" required></div>
@@ -17,7 +17,7 @@
     <button class="btn small" style="margin-top:12px">Give goodwill credit</button>
   </form>{% endif %}
   {% if can('money') %}<form class="panel" method="post" style="margin:0">
-    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="credit">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="credit"><input type="hidden" name="once" value="{{ once_token() }}">
     <strong>Cash {{ bal.cash|gbp }} · Deposited {{ bal.deposit|gbp }} · Credit {{ bal.credit|gbp }}</strong>
     <div class="two"><div><label>Amount (£, negative to remove)</label><input name="amount" type="number" step="0.01" required></div>
     <div><label>Balance</label><select name="kind"><option value="credit">Site credit (spend only)</option><option value="cash">Cash (withdrawable)</option></select></div></div>

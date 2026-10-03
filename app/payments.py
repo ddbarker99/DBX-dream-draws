@@ -63,11 +63,14 @@ def card_funding(payment_intent_id):
     return card.get("funding") if card else None
 
 
-def refund(payment_intent_id, reason="requested_by_customer", amount=None, why="credit card not accepted"):
+def refund(payment_intent_id, reason="requested_by_customer", amount=None, why="credit card not accepted", key=None):
+    """Refund (all or part of) a payment. `key` makes it idempotent at Stripe: repeating a refund with the same key —
+    a double click, a retried webhook, two staff at once — returns the first refund instead of refunding again."""
     data = {"payment_intent": payment_intent_id, "reason": reason, "metadata[why]": why}
     if amount:
         data["amount"] = str(amount)
-    r = requests.post(f"{API}/refunds", data=data,
+    headers = {"Idempotency-Key": (key or f"refund:{payment_intent_id}:{amount or 'full'}")[:255]}
+    r = requests.post(f"{API}/refunds", data=data, headers=headers,
                       auth=(current_app.config["STRIPE_SECRET_KEY"], ""), timeout=20)
     r.raise_for_status()
     return r.json()

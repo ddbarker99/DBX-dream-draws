@@ -71,8 +71,18 @@ def _install_stripe_stub():
         _stub_log("card_funding", pi=pi)
         return "credit" if str(pi).startswith("pi_credit") else "debit"
 
-    def refund(pi, reason="requested_by_customer", amount=None, why=""):
+    def refund(pi, reason="requested_by_customer", amount=None, why="", key=None):
+        """Models Stripe's Idempotency-Key: the first request with a key refunds; repeats return that refund unchanged."""
         time.sleep(0.05)
+        if key:
+            import hashlib
+            kdir = os.path.join(os.environ.get("RACE_STUB_LOG", "/tmp") + ".keys")
+            os.makedirs(kdir, exist_ok=True)
+            try:
+                os.close(os.open(os.path.join(kdir, hashlib.sha256(key.encode()).hexdigest()), os.O_CREAT | os.O_EXCL))
+            except FileExistsError:
+                _stub_log("refund_replayed", pi=pi, amount=amount, why=why)
+                return {"id": f"re_race_replay"}
         _stub_log("refund", pi=pi, amount=amount, why=why)
         return {"id": f"re_race_{time.time_ns()}"}
 
@@ -800,7 +810,8 @@ def s7b_double_redraw(env):
     from app.services import run_draw
     env.service(run_draw, cid, None)
     _, s, tok = _admin(env)
-    data = {"csrf": tok, "confirm": "REDRAW", "reason": "Winner failed the age verification check"}
+    current = env.val("SELECT MAX(id) FROM draws WHERE competition_id=?", cid)      # what the redraw form carries
+    data = {"csrf": tok, "confirm": "REDRAW", "reason": "Winner failed the age verification check", "replaces": str(current)}
     res = fire([(ch_post, (env.base, s.cookies.get_dict(), f"/admin/competitions/{cid}/redraw", data)) for _ in range(6)])
     draws = env.val("SELECT COUNT(*) FROM draws WHERE competition_id=?", cid)
     redraws = draws - 1

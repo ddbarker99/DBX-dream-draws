@@ -1069,6 +1069,11 @@ def user_detail(uid):
         if not need or not can(g.user, need):
             flash("Your role can't do that.", "error")
             return redirect(url_for("admin.user_detail", uid=uid))
+        if f.get("action") in ("credit", "goodwill") and f.get("once"):
+            from .services import once
+            if not once(f"user-money:{f['once']}"):          # the same form submitted twice (double-click, refresh)
+                flash("That was already done — it wasn't applied a second time.")
+                return redirect(url_for("admin.user_detail", uid=uid))
         if f.get("action") == "credit":
             try:
                 amt = money(f.get("amount"), "Amount")
@@ -1200,7 +1205,8 @@ def order_detail(cid):
         r = db.execute("SELECT * FROM refunds WHERE id=?", (rid,)).fetchone()
         if r["method"] == "card" and r["card_amount"] > 0:
             try:
-                res = payments.refund(k["payment_intent"], amount=r["card_amount"], why=f"order refund: {r['reason'][:80]}")
+                res = payments.refund(k["payment_intent"], amount=r["card_amount"], why=f"order refund: {r['reason'][:80]}",
+                                      key=f"order-refund:{rid}")
                 db.execute("UPDATE refunds SET status='done', stripe_refund_id=? WHERE id=?", (res.get("id"), rid))
             except Exception:
                 current_app.logger.exception("Card refund failed for refund %s", rid)
@@ -1523,6 +1529,9 @@ def redraw_comp(cid):
     if request.form.get("confirm", "").strip().upper() != "REDRAW":
         flash("Type REDRAW to confirm.", "error")
         return redirect(url_for("admin.entries", cid=cid) + "#draw")
+    if not request.form.get("replaces", type=int):
+        flash("Refresh the page and try again — the redraw form was out of date.", "error")
+        return redirect(url_for("admin.entries", cid=cid) + "#draw")
     from . import approvals
     if approvals.required(get_db(), "redraw", g.user):
         reason = request.form.get("reason", "").strip()
@@ -1530,12 +1539,13 @@ def redraw_comp(cid):
             flash("Explain why a redraw is needed (at least 10 characters) — it's published in the draw record.", "error")
             return redirect(url_for("admin.entries", cid=cid) + "#draw")
         title = get_db().execute("SELECT title FROM competitions WHERE id=?", (cid,)).fetchone()["title"]
-        approvals.request_approval(get_db(), "redraw", f"comp:{cid}", {"cid": cid, "reason": reason},
+        approvals.request_approval(get_db(), "redraw", f"comp:{cid}", {"cid": cid, "reason": reason,
+                                                                       "expect": request.form.get("replaces", type=int)},
                                    f"Redraw “{title}”", reason, g.user)
         flash("A redraw changes a published result, so a second administrator has to approve it — sent for approval.")
         return redirect(url_for("admin.entries", cid=cid) + "#draw")
     try:
-        n = redraw(cid, request.form.get("reason", ""), g.user)
+        n = redraw(cid, request.form.get("reason", ""), g.user, request.form.get("replaces", type=int))
     except PurchaseError as e:
         flash(str(e), "error")
         return redirect(url_for("admin.entries", cid=cid) + "#draw")

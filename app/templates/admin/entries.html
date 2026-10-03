@@ -76,12 +76,12 @@
 </div>
 {% endif %}
 <h2 id="instant">{{ '🏆 Game prizes' if c.game_type else '⚡ Instant wins' }}</h2>
-<div class="panel">
+<div class="panel table-scroll" tabindex="0">
   {% if board %}
   <table><tr><th>Prize</th><th class="num">Value</th><th>Type</th><th class="num">Won</th><th>Numbers (admin only)</th><th></th></tr>
     {% for g in board %}<tr><td><b>{{ g.title }}</b></td><td class="num">{{ g.value|gbp }}</td><td><span class="kind {{ g.kind }}">{{ {'cash':'Cash','credit':'Credit','physical':'Physical'}[g.kind] }}</span></td>
       <td class="num">{{ g.won|length }} / {{ g.total }}</td>
-      <td class="tiny muted">{% for w in g.won %}<b>#{{ w.number }}</b> {% endfor %}{% for n in g.hidden %}#{{ n }} {% endfor %}</td>
+      <td class="tiny muted" style="overflow-wrap:anywhere">{% for w in g.won %}<b>#{{ w.number }}</b> {% endfor %}{% for n in g.hidden %}#{{ n }} {% endfor %}</td>
       <td>{% if can_edit_instant %}<form method="post" action="{{ url_for('admin.instant', cid=c.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="linkbtn small" name="remove" value="{{ g.title }}">Remove</button></form>{% endif %}</td></tr>{% endfor %}
   </table>
   <p class="tiny muted">Sealed hash: {{ c.instant_hash }}</p>
@@ -176,6 +176,7 @@
   <details class="faq" style="margin-top:var(--s4)"><summary>Redraw (winner forfeited or ineligible)</summary><div>
     <form method="post" action="{{ url_for('admin.redraw_comp', cid=c.id) }}">
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="replaces" value="{{ draw_recs[-1].id }}">
       <p class="small muted">Use only when the current winner can't receive the prize under the terms (failed verification, no response in time, ineligible). Every previous winning ticket is excluded. The reason is published in the draw record permanently.</p>
       <label for="rd-reason">Reason</label><textarea id="rd-reason" name="reason" rows="2" required></textarea>
       <label for="rd-confirm">Type REDRAW to confirm</label><input id="rd-confirm" name="confirm" autocomplete="off">

@@ -38,5 +38,157 @@
     "status": "Fixed",
     "retest": "pyflakes: no undefined names; suite passes",
     "tests": []
+  },
+  {
+    "id": "BUG-004",
+    "severity": "P0",
+    "area": "Admin money / approvals",
+    "title": "One approved large wallet adjustment could be applied several times when approved at the same moment",
+    "found_by": "tests/race_audit.py S11 (8 simultaneous approvals \u2192 customer credited 3\u00d7)",
+    "reproduce": "Two admins (or a double-click) press Approve on the same request at once.",
+    "fix": "decide() now checks, carries out and records the approval in one locked database transaction; executors run inside it.",
+    "status": "Fixed",
+    "retest": "S11 PASS (1 ledger line); QA-RACE-02 passes",
+    "tests": [
+      "test_approval_carried_out_once_even_if_approved_twice",
+      "test_large_adjustments_need_an_administrator"
+    ]
+  },
+  {
+    "id": "BUG-005",
+    "severity": "P0",
+    "area": "Wallet / deposits",
+    "title": "Refunding unspent deposits sent the card refund to Stripe once per click (6 clicks \u2192 6 refunds of \u00a320)",
+    "found_by": "tests/race_audit.py S12a",
+    "reproduce": "Press 'Refund unspent deposits' repeatedly / in two tabs at once.",
+    "fix": "Refund reserved in the wallet ledger inside a locked transaction before Stripe is called; Stripe Idempotency-Key on every refund; failed card refund puts the money back.",
+    "status": "Fixed",
+    "retest": "S12a PASS 3/3; QA-RACE-04 passes",
+    "tests": [
+      "test_deposit_refund_reserves_before_card_refund"
+    ]
+  },
+  {
+    "id": "BUG-006",
+    "severity": "P0",
+    "area": "Wallet / deposits",
+    "title": "A deposit refund racing a purchase could refund money that had just been spent on entries",
+    "found_by": "tests/race_audit.py S12b (\u00a310 deposit: \u00a322 refunded + \u00a310 spent)",
+    "reproduce": "Refund unspent deposits while a checkout paid from the same deposit runs.",
+    "fix": "Same reservation-first design as BUG-005: the refund amount is worked out and taken from the wallet in the same locked transaction.",
+    "status": "Fixed",
+    "retest": "S12b PASS 3/3",
+    "tests": [
+      "test_deposit_refund_reserves_before_card_refund"
+    ]
+  },
+  {
+    "id": "BUG-007",
+    "severity": "P0",
+    "area": "Payments / webhooks",
+    "title": "Duplicate Stripe webhooks for a credit-card payment sent the automatic refund up to 10 times",
+    "found_by": "tests/race_audit.py S6c",
+    "reproduce": "Stripe delivers the same checkout.session.completed event several times at once for a credit-card payment.",
+    "fix": "Refusal claims a one-time key (once_keys table) before refunding; Stripe Idempotency-Key per checkout/deposit.",
+    "status": "Fixed",
+    "retest": "S6c PASS 3/3; credit-card tests pass",
+    "tests": [
+      "test_credit_card_refunded_tickets_released_balance_returned"
+    ]
+  },
+  {
+    "id": "BUG-008",
+    "severity": "P0",
+    "area": "Draws",
+    "title": "A double-submitted redraw ran several redraws (6 submissions \u2192 5 redraws, winner changed 5 times)",
+    "found_by": "tests/race_audit.py S7b",
+    "reproduce": "Press Redraw several times quickly or submit the same form twice.",
+    "fix": "Redraw form carries the id of the result it replaces (now required); the redraw runs only if that is still the current result, inside one transaction.",
+    "status": "Fixed",
+    "retest": "S7b round 1 PASS (1 redraw); QA-RACE-01 passes",
+    "tests": [
+      "test_double_submitted_redraw_runs_once",
+      "test_redraw_and_prize_claim"
+    ]
+  },
+  {
+    "id": "BUG-009",
+    "severity": "P1",
+    "area": "Admin money",
+    "title": "Wallet adjustment / goodwill forms could be applied twice by a double-click or refresh",
+    "found_by": "Code review during the race audit",
+    "reproduce": "Double-click 'Adjust' on a customer's admin page.",
+    "fix": "One-time form token checked server-side; a repeat shows 'already done'.",
+    "status": "Fixed",
+    "retest": "QA-RACE-03 passes",
+    "tests": [
+      "test_wallet_adjustment_form_double_submit_counts_once"
+    ]
+  },
+  {
+    "id": "BUG-010",
+    "severity": "P2",
+    "area": "Admin UI",
+    "title": "Reports and Compliance pages had a page section pasted into the <title> and <head> (garbled tab title, duplicate ids)",
+    "found_by": "tests/browser_audit.py (duplicate_id)",
+    "reproduce": "Open Admin \u2192 Reports or Compliance; look at the tab title / page source.",
+    "fix": "Stray copies removed; regression test checks every page title is plain text and ids are unique.",
+    "status": "Fixed",
+    "retest": "QA-UI-01 passes",
+    "tests": [
+      "test_titles_are_plain_text_and_ids_unique"
+    ]
+  },
+  {
+    "id": "BUG-011",
+    "severity": "P2",
+    "area": "Legal / cookies",
+    "title": "Cookie policy didn't mention the session-storage item used by the Back button",
+    "found_by": "tests/browser_audit.py storage inventory",
+    "reproduce": "Compare browser storage (sessionStorage dbxPrev) with /cookies.",
+    "fix": "Cookie policy now describes it.",
+    "status": "Fixed",
+    "retest": "QA-UI-01 passes",
+    "tests": [
+      "test_titles_are_plain_text_and_ids_unique"
+    ]
+  },
+  {
+    "id": "BUG-012",
+    "severity": "P2",
+    "area": "Mobile",
+    "title": "Wallet page scrolled sideways on 320px-wide phones",
+    "found_by": "tests/browser_audit.py responsive",
+    "reproduce": "Open My account \u2192 Wallet at 320px width.",
+    "fix": "Balance cards can shrink; smaller padding/fonts under 360px.",
+    "status": "Fixed",
+    "retest": "Overflow sweep 320\u2013414px clean",
+    "tests": []
+  },
+  {
+    "id": "BUG-013",
+    "severity": "P3",
+    "area": "Mobile (admin)",
+    "title": "Admin competition page and Reports scrolled sideways on phones",
+    "found_by": "tests/browser_audit.py responsive",
+    "reproduce": "Open an admin competition or Reports at 320\u2013414px.",
+    "fix": "Prize table and report panels scroll inside their box; admin dropdowns fit the screen.",
+    "status": "Fixed",
+    "retest": "Overflow sweep clean",
+    "tests": []
+  },
+  {
+    "id": "BUG-014",
+    "severity": "P3",
+    "area": "Assets",
+    "title": "/favicon.ico returned 404 (browsers request it automatically)",
+    "found_by": "tests/browser_audit.py console errors",
+    "reproduce": "Request /favicon.ico",
+    "fix": "Redirects to the site icon.",
+    "status": "Fixed",
+    "retest": "QA-UI-01 passes",
+    "tests": [
+      "test_titles_are_plain_text_and_ids_unique"
+    ]
   }
 ]
