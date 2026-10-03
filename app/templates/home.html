@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block canonical %}{{ config.SITE_URL }}/{% endblock %}
+{% block content %}
+<div class="hero-banner">
+  <picture>
+    <source media="(max-width:700px)" srcset="{{ url_for('static', filename='brand/banner-900.webp') }}?v={{ asset_v }}" type="image/webp">
+    <source srcset="{{ url_for('static', filename='brand/banner.webp') }}?v={{ asset_v }}" type="image/webp">
+    <img src="{{ url_for('static', filename='brand/banner.jpg') }}" alt="{{ config.SITE_NAME }}" width="1800" height="669" fetchpriority="high">
+  </picture>
+</div>
+
+<section class="intro">
+  <div>
+    <h1>Win big from <span class="nocase">{{ 10|pp }}</span></h1>
+    <p>Prize draws for cars, tech and cash, plus instant win games with real cash prizes. Every draw is provably fair and every competition has a free entry route.</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('public.competitions') }}">View competitions</a>
+    <a class="btn ghost" href="{{ url_for('public.instant_wins') }}">Play Instant Wins</a>
+  </div>
+</section>
+
+<div class="trust" role="list">
+  <div role="listitem"><span class="i" aria-hidden="true">💷</span><span><b>Real cash prizes</b>Withdraw to your bank</span></div>
+  <div role="listitem"><span class="i" aria-hidden="true">🔒</span><span><b>Provably fair</b>Every draw can be checked</span></div>
+  <div role="listitem"><span class="i" aria-hidden="true">✉️</span><span><b>Free entry route</b>On every competition</span></div>
+  <div role="listitem"><span class="i" aria-hidden="true">🏆</span><span><b>{% if stats.winners %}{{ stats.won_value|gbp }} won{% else %}Winners every week{% endif %}</b>{% if stats.winners %}by {{ '{:,}'.format(stats.winners) }} winners{% else %}Results published in full{% endif %}</span></div>
+</div>
+
+{% if free_game %}<div class="section">{% include "_freebanner.html" %}</div>{% endif %}
+
+{% if featured %}{% set f = featured %}
+<section class="section" aria-labelledby="feat-h">
+  <a class="feature" href="{{ url_for('public.competition', slug=f.c.slug) }}">
+    <div class="copy">
+      <span class="eyebrow">Featured competition</span>
+      <h2 id="feat-h">{{ f.c.title }}</h2>
+      {% if f.c.cash_alternative %}<p class="muted" style="margin:0">Or take {{ f.c.cash_alternative }} cash</p>{% endif %}
+      <div class="meta">
+        <div><b>{{ f.c.ticket_price|pp }}</b>per ticket</div>
+        <div><b>{{ '{:,}'.format(f.c.max_tickets - f.sold) }}</b>tickets left</div>
+        <div><b data-ends="{{ f.c.ends_at|epoch }}">{{ f.c.ends_at|uktime('%d %b') }}</b>until the draw</div>
+      </div>
+      <div class="bar" role="img" aria-label="{{ f.pct|round|int }}% sold"><i style="width:{{ f.pct }}%"></i></div>
+      <span class="btn" style="align-self:flex-start">Enter now</span>
+    </div>
+    <div class="img">{% if f.c.image %}<img src="{{ url_for('public.uploads', name=f.c.image) }}" alt="" width="800" height="600">{% else %}<span aria-hidden="true">🏆</span>{% endif %}</div>
+  </a>
+</section>
+{% endif %}
+
+<section class="section" aria-labelledby="ending-h">
+  <div class="section-head">
+    <div><h2 id="ending-h">Ending soon</h2><p>Prize draws closing next.</p></div>
+    <a class="btn ghost small" href="{{ url_for('public.competitions') }}">All {{ n_draws }} competition{{ 's' if n_draws != 1 }}</a>
+  </div>
+  {% if ending %}
+  <div class="grid">{% for it in ending %}{% include "_card.html" %}{% endfor %}</div>
+  {% elif not featured %}
+  <div class="empty"><p>New competitions are on the way. Try an instant win game while you wait.</p><a class="btn" href="{{ url_for('public.instant_wins') }}">Play Instant Wins</a></div>
+  {% endif %}
+</section>
+
+{% if games %}
+<section class="section" aria-labelledby="games-h">
+  <div class="section-head">
+    <div><h2 id="games-h">Instant Wins</h2><p>Scratch, spin or open a box and find out straight away. From {{ 10|pp }} a play.</p></div>
+    <a class="btn ghost small" href="{{ url_for('public.instant_wins') }}">All {{ n_games }} game{{ 's' if n_games != 1 }}</a>
+  </div>
+  <div class="grid">{% for it in games %}{% include "_gamecard.html" %}{% endfor %}</div>
+</section>
+{% endif %}
+
+<section class="section" aria-labelledby="how-h">
+  <div class="section-head"><div><h2 id="how-h">How it works</h2></div><a class="btn ghost small" href="{{ url_for('public.how_it_works') }}">Full details</a></div>
+  <ol class="steps">
+    <li><h3>Choose a prize</h3><p>Pick a draw or an instant win game. Every page shows the price, odds and closing date.</p></li>
+    <li><h3>Answer the question</h3><p>Choose how many tickets you want and answer a simple question.</p></li>
+    <li><h3>Pay securely</h3><p>Check out by debit card, Apple Pay or Google Pay. Your ticket numbers arrive straight away.</p></li>
+    <li><h3>Win</h3><p>Instant prizes pay at once. Main draws are run on the closing date and the winner is published.</p></li>
+  </ol>
+</section>
+
+{% if draw_winners or recent %}
+<section class="section" aria-labelledby="win-h">
+  <div class="section-head"><div><h2 id="win-h">Recent winners</h2></div><a class="btn ghost small" href="{{ url_for('public.winners') }}">See all winners</a></div>
+  <div class="winners-row">
+    {% for w in draw_winners %}<a class="winner" href="{{ url_for('public.competition', slug=w.c.slug) }}"><span class="av" aria-hidden="true">{{ w.name[:1] }}</span><span><b>{{ w.name }}</b><span>won {{ w.c.title }}</span></span></a>{% endfor %}
+    {% for r in recent %}<a class="winner" href="{{ url_for('public.competition', slug=r.slug) }}"><span class="av" aria-hidden="true">{{ public_name(r.name)[:1] }}</span><span><b>{{ public_name(r.name) }}</b><span>won {{ r.title }} · {{ r.won_at|ago }}</span></span></a>{% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

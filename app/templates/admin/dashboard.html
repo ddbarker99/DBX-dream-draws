@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Admin · {{ config.SITE_NAME }}{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<div class="row" style="flex-wrap:wrap"><h1 style="margin:0">Dashboard</h1>
+  <div class="actions"><a class="btn" href="{{ url_for('admin.new_competition', kind='draw') }}">+ Prize draw</a>
+  <a class="btn" href="{{ url_for('admin.new_competition', kind='game') }}">+ Instant win game</a>
+  <a class="btn ghost" href="{{ url_for('admin.new_competition', kind='free') }}">+ Daily free game</a></div></div>
+{% if launch_missing %}
+<details class="panel" style="margin-top:16px" {{ 'open' if launch_missing >= 3 }}>
+  <summary style="cursor:pointer"><strong>Ready to launch? {{ launch|length - launch_missing }} of {{ launch|length }} done</strong> <span class="small muted">— what a strong comp site has live</span></summary>
+  <ul class="checklist" style="margin-top:10px">{% for ok, text, link in launch %}<li><span class="pill {{ 'paid' if ok else 'pending' }}">{{ 'Done' if ok else 'To do' }}</span> {{ text }}{% if not ok and link %} — <a href="{{ link }}">set up</a>{% endif %}</li>{% endfor %}</ul>
+</details>
+{% endif %}
+<div class="statstrip" style="margin-top:16px">
+  <div><b>{{ stats.today|gbp }}</b><span>Card revenue today</span></div>
+  <div><b>{{ stats.revenue|gbp }}</b><span>Card revenue all time</span></div>
+  <div><b>{{ '{:,}'.format(stats.tickets) }}</b><span>Tickets issued</span></div>
+  <div><b>{{ '{:,}'.format(stats.users) }}</b><span>Users · {{ stats.credit|gbp }} wallet credit</span></div>
+</div>
+{% if setup_missing %}
+<details class="panel" style="margin-bottom:18px;border-color:var(--amber-line)" open>
+  <summary style="cursor:pointer"><strong>Site setup — {{ setup_missing }} thing{{ 's' if setup_missing != 1 }} to finish</strong> <span class="small muted">(set these in your .env, then restart)</span></summary>
+  <ul class="checklist" style="margin-top:10px">{% for ok, text in setup %}<li><span class="pill {{ 'paid' if ok else 'pending' }}">{{ 'Done' if ok else 'To do' }}</span> {{ text }}</li>{% endfor %}</ul>
+</details>
+{% endif %}
+<div class="panel" style="margin-bottom:18px">
+  <div class="row" style="flex-wrap:wrap"><strong>⚡ Instant win games</strong>
+    {% if draft_games %}<form method="post" action="{{ url_for('admin.publish_draft_games') }}"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="btn small">Publish {{ draft_games }} draft game{{ 's' if draft_games != 1 }} now</button></form>{% endif %}</div>
+  <form method="post" action="{{ url_for('admin.random_games') }}" style="margin-top:10px">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <p class="small muted" style="margin:0 0 8px">🎲 Create random games — random type, name, number of plays and prize table (about 30–50% paid back, a win roughly every 7–24 plays). They go live and get posted to Discord straight away.</p>
+    <div class="actions">
+      {% for p in [10, 40, 50, 100, 500] %}<label class="check" style="margin:0"><input type="hidden" name="p{{ p }}" value="0"><input type="checkbox" name="p{{ p }}" value="1" checked> {{ p|pp }}</label>{% endfor %}
+    </div>
+    <div class="actions" style="margin-top:10px">
+      <label style="margin:0">Games per price <input name="per_price" type="number" value="1" min="1" max="5" style="width:70px;display:inline-block"></label>
+      <label style="margin:0">Run for <input name="days" type="number" value="30" min="1" max="365" style="width:80px;display:inline-block"> days</label>
+      <label class="check" style="margin:0"><input type="checkbox" name="draft" value="1"> Keep as drafts</label>
+      <button class="btn small">🎲 Create random games</button>
+    </div>
+  </form>
+  <form method="post" action="{{ url_for('admin.free_daily_game') }}" class="actions" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <span class="small muted">🎁 Daily free game — every verified member gets one free play a day (great for sign-ups):</span>
+    <select name="kind" style="width:auto"><option value="spin">Spin</option><option value="scratch">Scratch</option><option value="box">Mystery box</option></select>
+    <button class="btn ghost small">Launch free daily game</button>
+  </form>
+  <form method="post" action="{{ url_for('admin.starter_games') }}" class="actions" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="days" value="30">
+    <span class="small muted">Or add the 5 fixed starter games (10p scratch, 40p wheel, 50p box, £1 scratch, £5 wheel):</span>
+    <button class="btn ghost small">Create starter games</button>
+  </form>
+</div>
+<div class="todo">
+  <a class="{{ 'alert' if todo.draws }}" href="#comps"><b>{{ todo.draws }}</b><span>Ready to draw</span></a>
+  <a class="{{ 'alert' if todo.prizes }}" href="{{ url_for('admin.payouts') }}"><b>{{ todo.prizes }}</b><span>Instant prizes to send</span></a>
+  <a class="{{ 'alert' if todo.withdrawals }}" href="{{ url_for('admin.payouts') }}"><b>{{ todo.withdrawals }}</b><span>Withdrawals to pay</span></a>
+  <a class="{{ 'alert' if todo.refunds }}" href="{{ url_for('admin.payouts') }}"><b>{{ todo.refunds }}</b><span>Refunds needed</span></a>
+</div>
+<form method="post" action="{{ url_for('admin.delete_selected') }}" id="bulk" onsubmit="return confirm('Delete the ticked competitions and games for good? Ones with paid entries that haven\'t been refunded are skipped.')">
+<input type="hidden" name="csrf" value="{{ csrf_token }}">
+<div class="row" style="margin:18px 0 8px;flex-wrap:wrap"><h2 style="margin:0">Competitions &amp; games</h2>
+  <div class="actions"><button class="btn danger small" type="submit">Delete ticked</button><a class="btn ghost small" href="{{ url_for('admin.reset') }}">Start fresh…</a></div></div>
+<div class="panel table-scroll" id="comps"><table>
+  <tr><th><input type="checkbox" aria-label="Tick all" onclick="document.querySelectorAll('#bulk input[name=cid]').forEach(function(b){b.checked=this.checked}.bind(this))"></th><th>Competition</th><th>Status</th><th class="num">Sold</th><th class="num">Revenue</th><th>Ends (UK)</th><th></th></tr>
+  {% for it in comps %}
+  <tr>
+    <td><input type="checkbox" name="cid" value="{{ it.c.id }}" aria-label="Tick {{ it.c.title }}"></td>
+    <td><a href="{{ url_for('admin.entries', cid=it.c.id) }}"><b>{{ it.c.title }}</b></a>{% if it.c.featured %} <span class="pill hot">Featured</span>{% endif %}{% if it.c.game_type %} <span class="pill instant">{{ game_names[it.c.game_type] }} · {{ it.c.ticket_price|pp }}</span>{% endif %}</td>
+    <td>{% if it.c.scheduled %}<span class="pill pending">Scheduled {{ it.c.starts_at|uktime('%d %b %H:%M') }}</span>{% else %}<span class="pill {{ it.state }}">{{ it.state }}</span>{% endif %}</td>
+    <td class="num">{{ '{:,}'.format(it.sold) }} / {{ '{:,}'.format(it.c.max_tickets) }}</td>
+    <td class="num">{{ it.revenue|gbp }}</td>
+    <td>{{ it.c.ends_at|uktime('%d %b %H:%M') }}</td>
+    <td><a class="small" href="{{ url_for('admin.new_competition', copy=it.c.id) }}">Duplicate</a></td>
+  </tr>
+  {% else %}<tr><td colspan="7" class="muted">No competitions yet.</td></tr>{% endfor %}
+</table></div>
+</form>
+{% endblock %}

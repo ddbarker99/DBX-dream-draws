@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Users · Admin{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Users</h1>
+<form class="actions" method="get" style="margin-bottom:14px"><input name="q" value="{{ q }}" placeholder="Search name or email" style="max-width:320px"><button class="btn ghost small">Search</button></form>
+<div class="panel table-scroll"><table>
+  <tr><th>Name</th><th>Email</th><th>Joined</th><th class="num">Spent</th><th class="num">Wallet</th><th></th></tr>
+  {% for u in rows %}<tr><td><a href="{{ url_for('admin.user_detail', uid=u.id) }}">{{ u.name }}</a>{% if u.is_admin %} <span class="pill hot">Admin</span>{% endif %}</td><td>{{ u.email }}</td>
+    <td>{{ u.created_at|uktime('%d %b %Y') }}</td><td class="num">{{ u.spent|gbp }}</td><td class="num">{{ u.credit|gbp }}</td>
+    <td>{% if u.marketing %}<span class="tiny muted">Marketing ✓</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">No users found.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

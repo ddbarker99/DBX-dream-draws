@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Responsible play · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}Spending limits, breaks and free, confidential support. Competitions should stay fun and affordable.{% endblock %}
+{% set S = config.SITE_NAME %}
+{% block content %}
+<div class="prose legal-doc">
+<h1>Responsible play</h1>
+<p>Competitions and prize draws should be an enjoyable form of entertainment. They should never interfere with essential household spending or cause financial difficulty. {{ S }} is for adults aged 18 and over only.</p>
+
+<h2>Tools in your account</h2>
+<ul>
+  <li><strong>Monthly cap for everyone.</strong> Paid entries are capped at {{ config.MAX_MONTHLY_LIMIT|gbp }} per calendar month for every customer. You can set a lower limit.</li>
+  <li><strong>Your own limits.</strong> Set daily, weekly and monthly spending limits. Lowering a limit takes effect immediately; raising or removing one takes 72 hours, to give you time to reconsider.</li>
+  <li><strong>Take a break.</strong> Stop yourself from buying entries for 24 hours, 7 days, 30 days, 90 days, 6 months or a year. A break can't be ended early. During a break you can't buy entries or claim the daily free play, and your basket is cleared. You can still log in to see your entries and results, receive prizes you've already won, and withdraw your cash balance.</li>
+  <li><strong>Your history.</strong> Every order, prize and wallet transaction is listed in your account.</li>
+</ul>
+{% if user %}<p><a class="btn" href="{{ url_for('public.account', tab='settings') }}#limits">Set my limits</a></p>{% else %}<p>Limits and breaks are in <b>My account → Settings</b> once you're logged in.</p>{% endif %}
+
+<h2>When to take a break</h2>
+<p>Consider taking a break if you find yourself:</p>
+<ul><li>spending more than you planned;</li><li>using money needed for bills or essentials;</li><li>trying to win back money you've already spent;</li><li>hiding how much you take part from people close to you; or</li><li>feeling stressed or anxious about competitions.</li></ul>
+
+<h2>Free, confidential support</h2>
+<p>If you're worried about gambling or similar spending, independent support is available:</p>
+<ul>
+  <li><a href="https://www.gamcare.org.uk" target="_blank" rel="noopener">GamCare</a> — National Gambling Helpline, 0808 8020 133, free 24/7</li>
+  <li><a href="https://www.gambleaware.org" target="_blank" rel="noopener">GambleAware</a> — information, advice and support</li>
+</ul>
+<p>GAMSTOP is a self-exclusion service for licensed online gambling operators. {{ S }} runs prize competitions and free draws, which are not covered by GAMSTOP — so registering with GAMSTOP will <strong>not</strong> block your {{ S }} account. To stop using {{ S }}, use <b>Take a break</b> in your account or <a href="{{ url_for('public.contact') }}">contact us</a> and we will close your account.</p>
+
+<h2>Under 18s</h2>
+<p>We don't allow anyone under 18 to take part. If you believe someone under 18 is using {{ S }}, please {% if config.SUPPORT_EMAIL %}email <a href="mailto:{{ config.SUPPORT_EMAIL }}">{{ config.SUPPORT_EMAIL }}</a> or {% endif %}<a href="{{ url_for('public.contact') }}">contact us</a> straight away.</p>
+</div>
+{% endblock %}

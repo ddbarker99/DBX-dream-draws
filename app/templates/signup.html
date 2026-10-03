@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Create an account · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}Join {{ config.SITE_NAME }} free to enter prize draws, play instant win games and claim a free play every day.{% endblock %}
+{% block content %}
+<div class="form-narrow">
+<form class="panel" method="post">
+  <h1>Create your account</h1>
+  <p class="muted">Free to join. You'll get a daily free play once your email is confirmed.</p>
+  {% if session.get('ref') %}<p class="notice good">You were invited by a friend.</p>{% endif %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <div class="field"><label for="name">Full name</label><input id="name" name="name" value="{{ form.get('name','') }}" required autocomplete="name"></div>
+  <div class="field"><label for="email">Email</label><input id="email" type="email" name="email" value="{{ form.get('email','') }}" required autocomplete="email"></div>
+  <div class="field"><label for="dob">Date of birth</label><input id="dob" type="date" name="dob" value="{{ form.get('dob','') }}" required autocomplete="bday" aria-describedby="dob-h"><span class="hint" id="dob-h">You must be 18 or over.</span></div>
+  <div class="field"><label for="phone">Mobile number <span class="dim">(optional)</span></label><input id="phone" name="phone" type="tel" value="{{ form.get('phone','') }}" autocomplete="tel" aria-describedby="phone-h"><span class="hint" id="phone-h">So we can call you when you win.</span></div>
+  <div class="field"><label for="pw">Password</label><input id="pw" type="password" name="password" minlength="10" required autocomplete="new-password" aria-describedby="pw-h"><span class="hint" id="pw-h">At least 10 characters.</span></div>
+  <label class="check"><input type="checkbox" name="agree" value="1" required> <span>I'm 18 or over, live in the UK and accept the <a href="{{ url_for('public.page', page='terms') }}" target="_blank">terms</a> and <a href="{{ url_for('public.page', page='privacy') }}" target="_blank">privacy policy</a>.</span></label>
+  <label class="check"><input type="checkbox" name="marketing" value="1" {{ 'checked' if form.get('marketing') }}> <span>Email me new competitions and offers (optional).</span></label>
+  <button class="btn block" style="margin-top:var(--s4)">Create account</button>
+  <p class="small muted center" style="margin:var(--s3) 0 0">Already have an account? <a href="{{ url_for('public.login', next=request.args.get('next')) }}">Log in</a></p>
+</form>
+</div>
+{% endblock %}

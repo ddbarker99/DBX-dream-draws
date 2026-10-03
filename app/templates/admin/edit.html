@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if c else 'New' }} · Admin{% endblock %}
+{% set kind = form.get('kind') or 'draw' %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>{{ 'Edit: ' ~ c.title if c else 'Create something new' }}</h1>
+<form class="panel" method="post" enctype="multipart/form-data" style="max-width:860px" id="compform">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  {% if form.get('keep_image') %}<input type="hidden" name="keep_image" value="{{ form.keep_image }}">{% endif %}
+
+  {% if c and locked %}<input type="hidden" name="kind" value="{{ kind }}">
+  {% else %}
+  <fieldset>
+    <legend>What are you creating?</legend>
+    <div class="three kindpick">
+      {% for k, icon, name, help in [('draw','🏆','Prize draw','A main prize drawn on the closing date. Optional instant prizes on ticket numbers.'),
+                                     ('game','⚡','Instant win game','Scratch card, wheel or mystery box. Each play wins or loses straight away.'),
+                                     ('free','🎁','Daily free game','One free play a day for verified members. Great for sign-ups.')] %}
+      <label class="kindcard"><input type="radio" name="kind" value="{{ k }}" {{ 'checked' if kind == k }}>
+        <span><b><span aria-hidden="true">{{ icon }}</span> {{ name }}</b><span class="small muted">{{ help }}</span></span></label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  {% endif %}
+
+  <h2 class="formh">The prize</h2>
+  <div class="field"><label for="title">Title</label><input id="title" name="title" value="{{ form.get('title','') }}" required placeholder="PS5 Pro + 2 controllers"></div>
+  <div class="field"><label for="description">Description</label><textarea id="description" name="description" placeholder="What's included, condition, delivery…">{{ form.get('description','') }}</textarea></div>
+  <div class="three">
+    <div class="field"><label for="category">Category</label><select id="category" name="category">{% for k, n in categories %}<option value="{{ k }}" {{ 'selected' if form.get('category') == k }}>{{ n }}</option>{% endfor %}</select></div>
+    <div class="field only-draw"><label for="prize_value">Prize value (£)</label><input id="prize_value" name="prize_value" type="number" step="1" min="0" value="{{ form.get('prize_value','') }}" placeholder="e.g. 600"></div>
+    <div class="field only-draw"><label for="cash_alternative">Cash alternative</label><input id="cash_alternative" name="cash_alternative" value="{{ form.get('cash_alternative') or '' }}" placeholder="£550 (optional)"></div>
+  </div>
+  <div class="field"><label for="image">Image {% if c and c.image %}<span class="dim">(leave empty to keep the current one)</span>{% elif form.get('keep_image') %}<span class="dim">(copied)</span>{% elif kind != 'draw' %}<span class="dim">(optional — games get artwork automatically)</span>{% endif %}</label><input id="image" type="file" name="image" accept="image/*"></div>
+
+  {% if not locked %}
+  <div class="field not-draw"><label for="game_type">Game style</label>
+    <select id="game_type" name="game_type">{% for k, n, i in game_types %}<option value="{{ k }}" {{ 'selected' if form.get('game_type') == k }}>{{ i }} {{ n }}</option>{% endfor %}</select></div>
+  {% endif %}
+
+  <h2 class="formh">Dates</h2>
+  <div class="two">
+    <div class="field"><label for="starts_at">Go live at <span class="dim">(optional)</span></label><input id="starts_at" type="datetime-local" name="starts_at" value="{{ form.get('starts_at') or '' }}"><span class="hint">Leave blank to publish by hand. Set a time, then press Schedule, to launch automatically.</span></div>
+    <div class="field"><label for="ends_at"><span class="only-draw">Draw date &amp; time (UK)</span><span class="not-draw">Closes at (UK)</span></label><input id="ends_at" type="datetime-local" name="ends_at" value="{{ form.get('ends_at','') }}" required></div>
+  </div>
+
+  {% if locked %}
+    <p class="notice warn" style="margin-top:16px">People have entered, so the type, price, limits, discounts and question are locked to keep it fair. You can still change the text, image and dates.</p>
+  {% else %}
+  <h2 class="formh">Price and limits</h2>
+  <div class="three">
+    <div class="field not-free"><label for="ticket_price">Price per <span class="only-draw">ticket</span><span class="not-draw">play</span> (£)</label><input id="ticket_price" name="ticket_price" type="number" step="0.01" min="0.01" value="{{ form.get('ticket_price','') }}" placeholder="e.g. 0.99"></div>
+    <div class="field"><label for="max_tickets">Total <span class="only-draw">tickets</span><span class="not-draw">plays</span></label><input id="max_tickets" name="max_tickets" type="number" min="1" value="{{ form.get('max_tickets','') }}" required></div>
+    <div class="field not-free"><label for="max_per_user">Max per person</label><input id="max_per_user" name="max_per_user" type="number" min="1" value="{{ form.get('max_per_user', 100) }}"></div>
+  </div>
+  <div class="field not-free"><label for="discount_tiers">Multi-buy discounts</label><input id="discount_tiers" name="discount_tiers" value="{{ form.get('discount_tiers') or '' }}" placeholder="Leave blank for none" aria-describedby="tiers-h"><span class="hint" id="tiers-h"><code>10:10, 25:15</code> = 10% off 10 or more, 15% off 25 or more</span></div>
+
+  <div class="not-free">
+  <h2 class="formh">Entry question</h2>
+  <div class="field"><label for="question">Question</label><input id="question" name="question" value="{{ form.get('question','') }}" placeholder="What is the capital of Scotland?"></div>
+  <div class="three">
+    {% for k in ['a','b','c'] %}<div class="field"><label for="answer_{{ k }}">Answer {{ k|upper }}</label><input id="answer_{{ k }}" name="answer_{{ k }}" value="{{ form.get('answer_' ~ k,'') if form.get('answer_' ~ k) != '-' else '' }}"></div>{% endfor %}
+  </div>
+  <div class="field"><label for="correct">Correct answer</label>
+  <select id="correct" name="correct" style="max-width:120px">{% for k in ['a','b','c'] %}<option value="{{ k }}" {{ 'selected' if form.get('correct') == k }}>{{ k|upper }}</option>{% endfor %}</select></div>
+  </div>
+  {% endif %}
+
+  <h2 class="formh">Options</h2>
+  <div class="field only-draw"><label for="live_url">Live draw link <span class="dim">(optional)</span></label><input id="live_url" name="live_url" value="{{ form.get('live_url') or '' }}" placeholder="https://youtube.com/live/…"></div>
+  <label class="check not-free"><input type="checkbox" name="featured" value="1" {{ 'checked' if form.get('featured') }}> <span>Feature on the home page</span></label>
+  <label class="check only-draw"><input type="checkbox" name="auto_draw" value="1" {{ 'checked' if form.get('auto_draw', 1) }}> <span>Draw automatically at the closing time (winner emailed and posted to Discord). Untick if you'll draw it live.</span></label>
+
+  {% if not c %}
+  <h2 class="formh"><span class="only-draw">Instant prizes <span class="dim" style="font:400 14px var(--font);text-transform:none">(optional)</span></span><span class="not-draw">Prizes</span></h2>
+  <div class="field">
+    <label for="prize_table">One prize per line: <code>how many, name, value in £, type</code></label>
+    <textarea id="prize_table" name="prize_table" rows="6" placeholder="1, £100 Cash, 100, cash&#10;5, £10 Cash, 10, cash&#10;20, £2 Site Credit, 2, credit&#10;1, AirPods Pro, 229, physical">{{ form.get('prize_table','') }}</textarea>
+    <span class="hint">Types: <b>cash</b> (paid to their cash balance, withdrawable) · <b>credit</b> (site credit, spend only) · <b>physical</b> (you send it). Winning numbers are picked at random and sealed when you save. You can also add or auto-fill prizes on the next page.</span>
+  </div>
+  {% endif %}
+
+  <button class="btn block" style="margin-top:var(--s5)">{{ 'Save changes' if c else 'Save as draft' }}</button>
+  {% if not c %}<p class="hint center">Nothing goes on the site until you press Publish or Schedule on the next page.</p>{% endif %}
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){var f=document.getElementById('compform');
+function sync(){var k=(f.querySelector('input[name=kind]:checked')||f.querySelector('input[name=kind]')||{}).value||'draw';
+  f.querySelectorAll('.only-draw').forEach(function(e){e.hidden=k!=='draw'});
+  f.querySelectorAll('.not-draw').forEach(function(e){e.hidden=k==='draw'});
+  f.querySelectorAll('.not-free').forEach(function(e){e.hidden=k==='free'});}
+f.addEventListener('change',function(e){if(e.target.name==='kind')sync()});sync();})();
+</script>
+{% endblock %}

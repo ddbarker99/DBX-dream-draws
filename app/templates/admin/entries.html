@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}{{ c.title }} · Admin{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<div class="row" style="flex-wrap:wrap"><h1 style="margin:0">{{ c.title }}</h1>
+  <div class="actions">{% if c.free_daily %}<span class="pill new">Daily free game</span>{% elif c.game_type %}<span class="pill instant">Instant win game</span>{% else %}<span class="pill">Prize draw</span>{% endif %}
+  {% if c.scheduled %}<span class="pill pending">Scheduled · live {{ c.starts_at|uktime('%a %d %b, %H:%M') }}</span>{% else %}<span class="pill {{ state }}">{{ state }}</span>{% endif %}</div></div>
+{% if c.status == 'draft' %}
+<div class="notice {{ 'warn' if not board and c.game_type else '' }}" style="margin:12px 0">
+  <span>{% if c.scheduled %}This will go live automatically at the time shown. Press <b>Unschedule</b> to stop that.
+  {% elif c.game_type and not board %}Add prizes below, then press <b>Publish</b>.
+  {% else %}This is a draft — nobody can see it yet. {% if c.starts_at and c.starts_at > now_iso %}Press <b>Schedule</b> to launch it at {{ c.starts_at|uktime('%a %d %b, %H:%M') }}, or <b>Publish now</b>.{% else %}Check it over, then press <b>Publish</b>.{% endif %}{% endif %}</span></div>
+{% endif %}
+<p class="muted">{{ '{:,}'.format(sold) }} / {{ '{:,}'.format(c.max_tickets) }} sold{% if held %} · {{ held }} held in checkouts{% endif %} · {{ c.ticket_price|gbp }} each · {{ revenue|gbp }} revenue · ends {{ c.ends_at|uktime }}</p>
+
+<div class="actions">
+  {% if c.status in ('draft','live') %}<a class="btn ghost small" href="{{ url_for('admin.edit_competition', cid=c.id) }}">Edit</a>{% endif %}
+  {% if c.status != 'draft' %}<a class="btn ghost small" href="{{ url_for('public.competition', slug=c.slug) }}">View page</a>{% endif %}
+  <a class="btn ghost small" href="{{ url_for('admin.export', cid=c.id) }}">Export CSV</a>
+  <a class="btn ghost small" href="{{ url_for('admin.new_competition', copy=c.id) }}">Duplicate</a>
+  {% if c.status == 'draft' and not c.scheduled %}
+  <form method="post" action="{{ url_for('admin.set_status', cid=c.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+    {% if c.starts_at and c.starts_at > now_iso %}<button class="btn small" name="action" value="schedule">Schedule</button> {% endif %}
+    <button class="btn small {{ 'ghost' if c.starts_at and c.starts_at > now_iso }}" name="action" value="publish">Publish now</button></form>
+  {% endif %}
+  {% if (c.status == 'live' and not sold and not held) or c.scheduled %}
+  <form method="post" action="{{ url_for('admin.set_status', cid=c.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn ghost small" name="action" value="unpublish">{{ 'Unschedule' if c.scheduled else 'Unpublish (back to draft)' }}</button></form>
+  {% endif %}
+  {% if state in ('ended','soldout') and not c.game_type %}
+  <form method="post" action="{{ url_for('admin.draw', cid=c.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn small" onclick="return confirm('Run the draw now? This is final.')">🎲 Run draw</button></form>
+  {% endif %}
+  {% if c.status in ('draft','live') %}
+  <form method="post" action="{{ url_for('admin.set_status', cid=c.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn danger small" name="action" value="cancel" onclick="return confirm('Cancel this competition? You must refund entrants.')">Cancel</button></form>
+  {% endif %}
+</div>
+
+{% if winner %}
+<div class="winner-banner" style="margin-top:20px">Winning ticket <b>#{{ winner.number }}</b><br>{{ winner.name }} · <a href="mailto:{{ winner.email }}">{{ winner.email }}</a>{% if winner.postal %} · postal entry{% endif %}</div>
+<form class="panel" method="post" action="{{ url_for('admin.winner_story', cid=c.id) }}" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <strong>Winner story</strong> <span class="small muted">— only with the winner's permission</span>
+  <div class="two"><div><label>Photo</label><input type="file" name="winner_photo" accept="image/*"></div>
+  <div><label>Their comment</label><input name="winner_quote" value="{{ c.winner_quote or '' }}" maxlength="500"></div></div>
+  <button class="btn small" style="margin-top:12px">Save story</button>
+</form>
+{% endif %}
+
+{% if c.game_type %}
+<div class="statstrip" style="margin-top:20px">
+  <div><b>{{ game_name }}</b><span>Instant-win game · no main draw</span></div>
+  <div><b>{{ gi.pool|gbp }}</b><span>Prize pool · {{ gi.prizes }} winning plays</span></div>
+  <div><b>{{ gi.rtp }}%</b><span>Paid back if it sells out ({{ gi.takings|gbp }} takings)</span></div>
+  <div><b>{% if gi.odds %}1 in {{ gi.odds|round|int }}{% else %}—{% endif %}</b><span>Odds of a win per play</span></div>
+</div>
+{% endif %}
+<h2 id="instant">{{ '🏆 Game prizes' if c.game_type else '⚡ Instant wins' }}</h2>
+<div class="panel">
+  {% if board %}
+  <table><tr><th>Prize</th><th class="num">Value</th><th>Type</th><th class="num">Won</th><th>Numbers (admin only)</th><th></th></tr>
+    {% for g in board %}<tr><td><b>{{ g.title }}</b></td><td class="num">{{ g.value|gbp }}</td><td><span class="kind {{ g.kind }}">{{ {'cash':'Cash','credit':'Credit','physical':'Physical'}[g.kind] }}</span></td>
+      <td class="num">{{ g.won|length }} / {{ g.total }}</td>
+      <td class="tiny muted">{% for w in g.won %}<b>#{{ w.number }}</b> {% endfor %}{% for n in g.hidden %}#{{ n }} {% endfor %}</td>
+      <td>{% if can_edit_instant %}<form method="post" action="{{ url_for('admin.instant', cid=c.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="linkbtn small" name="remove" value="{{ g.title }}">Remove</button></form>{% endif %}</td></tr>{% endfor %}
+  </table>
+  <p class="tiny muted">Sealed hash: {{ c.instant_hash }}</p>
+  {% else %}<p class="muted" style="margin-top:0">No instant wins on this competition.</p>{% endif %}
+  {% if can_edit_instant %}
+  <form method="post" action="{{ url_for('admin.instant', cid=c.id) }}" style="border-top:1px solid var(--line);margin-top:12px;padding-top:4px">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <div class="four">
+      <div><label>Prize name</label><input name="title" placeholder="£10 Site Credit" required></div>
+      <div><label>Value (£)</label><input name="value" type="number" step="0.01" min="0" required></div>
+      <div><label>Type</label><select name="type"><option value="cash">💷 Cash — paid instantly, withdrawable</option><option value="credit">🎟️ Site credit — paid instantly, spend only</option><option value="physical">📦 Physical prize — you send it</option></select></div>
+      <div><label>How many</label><input name="quantity" type="number" min="1" value="1" required></div>
+    </div>
+    <button class="btn small" style="margin-top:12px">Add {{ 'prize' if c.game_type else 'instant prize' }}</button>
+    <p class="tiny muted">Numbers are picked at random and sealed. You can't change them once any ticket exists.</p>
+  </form>
+  <details style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+    <summary style="cursor:pointer;font-weight:700">Add several prizes at once</summary>
+    <form method="post" action="{{ url_for('admin.instant', cid=c.id) }}" style="margin-top:10px">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label for="pt">One per line: <code>how many, name, value in £, type</code> (cash / credit / physical)</label>
+      <textarea id="pt" name="prize_table" rows="6" placeholder="1, £100 Cash, 100, cash&#10;5, £10 Cash, 10, cash&#10;20, £2 Site Credit, 2, credit"></textarea>
+      <button class="btn small" style="margin-top:10px">Add these prizes</button>
+    </form>
+  </details>
+  {% if c.game_type %}
+  <form method="post" action="{{ url_for('admin.instant', cid=c.id) }}" class="actions" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <span class="small muted">Not sure what to offer? Fill it with a balanced prize table (about 40–55% paid back, a win every 8–25 plays):</span>
+    <button class="btn ghost small" name="random_table" value="1">Auto-fill prizes</button>
+  </form>
+  {% endif %}
+  {% else %}<p class="tiny muted">Locked — tickets exist.</p>{% endif %}
+  {% set unsent = prizes|selectattr('ticket_id')|rejectattr('fulfilled')|list %}
+  {% if unsent %}<h3 style="margin-top:16px">To send</h3>
+  <table>{% for p in unsent %}<tr><td>{{ p.title }}</td><td>#{{ p.won_number }}</td><td>{{ p.winner }} · {{ p.email }}</td>
+    <td><form method="post" action="{{ url_for('admin.instant_fulfilled', pid=p.id) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn small good">Mark sent</button></form></td></tr>{% endfor %}</table>{% endif %}
+</div>
+
+{% if c.status == 'live' %}
+<h2>Add postal entry</h2>
+<form class="panel" method="post" action="{{ url_for('admin.postal', cid=c.id) }}">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <div class="two"><div><label>Name</label><input name="name" required></div><div><label>Email</label><input name="email" type="email" required></div></div>
+  <label>Postal address</label><input name="address" required>
+  <label>Their answer to "{{ c.question }}" (correct: {{ c['answer_' + c.correct] }})</label>
+  <select name="answer_correct"><option value="1">Correct</option><option value="0">Wrong — log only, no ticket</option></select>
+  <button class="btn block" style="margin-top:14px">Add entry</button>
+  {% if postal_rejected %}<p class="small muted">{{ postal_rejected }} postal entr{{ 'y' if postal_rejected == 1 else 'ies' }} logged with wrong answers.</p>{% endif %}
+</form>
+{% endif %}
+
+<h2>Latest entries</h2>
+<div class="panel table-scroll"><table>
+  <tr><th>#</th><th>Name</th><th>Email</th><th>Route</th><th>Issued</th></tr>
+  {% for r in rows %}<tr><td>{{ r.number }}</td><td>{{ r.name }}</td><td>{{ r.email }}</td><td>{{ r.route }}</td><td>{{ r.created_at|uktime('%d %b %H:%M') }}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">No entries yet.</td></tr>{% endfor %}
+</table>{% if rows|length == 300 %}<p class="small muted">Showing latest 300 — export CSV for all.</p>{% endif %}</div>
+
+<h2>Draw seed</h2>
+<p class="small muted">Public hash (shown on the site since launch):</p><div class="hash">{{ c.seed_hash }}</div>
+
+<section class="panel" id="delete" style="margin-top:32px;border-color:#7a1622">
+  <h2 style="margin-top:0;font-size:20px">Delete this {{ 'game' if c.game_type else 'competition' }}</h2>
+  {% if c.status in ('draft','live') and revenue %}
+  <p class="small muted">This has paid entries. <b>Cancel</b> it first (button at the top) — that refunds everyone to their cash balance — then you can delete it.</p>
+  {% else %}
+  <p class="small muted">Removes it from the site for good, with all its entries, instant prizes and orders. Money already paid out or refunded to wallets stays in those wallets. This can't be undone.</p>
+  <form method="post" action="{{ url_for('admin.delete_comp', cid=c.id) }}" class="inline-form" style="max-width:420px">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label class="sr-only" for="del-confirm">Type DELETE to confirm</label>
+    <input id="del-confirm" name="confirm" placeholder="Type DELETE" autocomplete="off">
+    <button class="btn danger">Delete</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

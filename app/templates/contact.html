@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Contact us · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}Get in touch with the {{ config.SITE_NAME }} team about entries, payments, withdrawals or prizes. We reply within 1 working day.{% endblock %}
+{% macro err(k) %}{% if errors.get(k) %}<span class="hint" id="{{ k }}-err" style="color:#ff8a95">{{ errors[k] }}</span>{% endif %}{% endmacro %}
+{% block content %}
+<div class="page-head"><h1>Contact us</h1><p>We reply within 1 working day. Many answers are already in the <a href="{{ url_for('public.page', page='faq') }}">FAQs</a>.</p></div>
+<div class="detail" style="grid-template-areas:none">
+  <div>
+  {% if sent %}
+    <div class="panel" role="status"><h2 style="font-size:22px">Thanks — message sent</h2><p class="muted">We've emailed you a copy and will reply within 1 working day.</p><a class="btn" href="{{ url_for('public.home') }}">Back to the home page</a></div>
+  {% else %}
+  <form class="panel" method="post" novalidate>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    {% if errors %}<p class="notice bad" role="alert">Please fix the {{ errors|length }} problem{{ 's' if errors|length != 1 }} below.</p>{% endif %}
+    <div class="two">
+      <div class="field" style="margin-top:0"><label for="c-name">Your name</label><input id="c-name" name="name" autocomplete="name" value="{{ form.get('name') or (user.name if user else '') }}" required {% if errors.name %}aria-invalid="true" aria-describedby="name-err"{% endif %}>{{ err('name') }}</div>
+      <div class="field" style="margin-top:0"><label for="c-email">Email</label><input id="c-email" name="email" type="email" autocomplete="email" value="{{ form.get('email') or (user.email if user else '') }}" required {% if errors.email %}aria-invalid="true" aria-describedby="email-err"{% endif %}>{{ err('email') }}</div>
+    </div>
+    <div class="field"><label for="c-topic">What's it about?</label>
+      <select id="c-topic" name="topic" required {% if errors.topic %}aria-invalid="true" aria-describedby="topic-err"{% endif %}><option value="">Choose a topic</option>{% for t in topics %}<option{{ ' selected' if form.get('topic') == t }}>{{ t }}</option>{% endfor %}</select>{{ err('topic') }}</div>
+    <div class="field"><label for="c-msg">Message</label><textarea id="c-msg" name="message" required {% if errors.message %}aria-invalid="true" aria-describedby="message-err"{% else %}aria-describedby="msg-h"{% endif %}>{{ form.get('message','') }}</textarea>
+      {{ err('message') }}<span class="hint" id="msg-h">If it's about an order, include the order number from your account.</span></div>
+    <div style="position:absolute;left:-9999px" aria-hidden="true"><label for="c-web">Leave this empty</label><input id="c-web" name="website" tabindex="-1" autocomplete="off"></div>
+    <button class="btn" style="margin-top:var(--s4)">Send message</button>
+  </form>
+  {% endif %}
+  </div>
+  <aside class="stack">
+    <div class="panel"><h2 style="font-size:20px">Other ways to reach us</h2>
+      {% if config.SUPPORT_EMAIL %}<p>Email <a href="mailto:{{ config.SUPPORT_EMAIL }}">{{ config.SUPPORT_EMAIL }}</a></p>{% endif %}
+      {% set socials = config.SOCIAL.items()|selectattr(1)|list %}
+      {% if socials %}<p class="small muted">Or message us on {% for k, v in socials %}<a href="{{ v }}" target="_blank" rel="noopener">{{ k|capitalize }}</a>{{ ', ' if not loop.last }}{% endfor %}.</p>{% endif %}
+      {% if config.COMPANY_DETAILS %}<p class="small muted" style="margin:0">{{ config.COMPANY_DETAILS }}</p>{% endif %}
+    </div>
+    <div class="panel"><h2 style="font-size:20px">Quick links</h2>
+      <ul class="checklist">
+        <li><a href="{{ url_for('public.account', tab='entries') }}">Find my ticket numbers</a></li>
+        <li><a href="{{ url_for('public.account', tab='wallet') }}">Withdraw my winnings</a></li>
+        <li><a href="{{ url_for('public.page', page='free-entry') }}">Enter free by post</a></li>
+        <li><a href="{{ url_for('public.page', page='complaints') }}">Make a complaint</a></li>
+      </ul></div>
+  </aside>
+</div>
+{% endblock %}

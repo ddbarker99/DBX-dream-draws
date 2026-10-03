@@ -1,0 +1,4 @@
+Flask==3.1.*
+gunicorn==23.*
+requests==2.32.*
+Pillow==11.*

@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% set st = d.state %}
+{% set unit = 'play' if c.game_type else 'ticket' %}
+{% set live = st == 'live' %}
+{% block title %}{% if c.free_daily %}{{ c.title }} — free daily game{% elif c.game_type %}{{ c.title }} — {{ c.ticket_price|pp }} instant win game{% elif st == 'drawn' %}{{ c.title }} — draw result{% else %}Win {{ c.title }} for {{ c.ticket_price|pp }}{% endif %} · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}{% if c.free_daily %}One free play every day with real cash prizes. No purchase needed.{% elif c.game_type %}{{ d.game.name }} at {{ c.ticket_price|pp }} a play: {{ gi.prizes }} winning plays worth {{ gi.pool|gbp }} in total. Results sealed before launch.{% elif st == 'drawn' %}The {{ c.title }} draw has finished. See the winning ticket and check the draw yourself.{% else %}Win {{ c.title }}{% if c.cash_alternative %} (or {{ c.cash_alternative }} cash){% endif %} for {{ c.ticket_price|pp }} a ticket. Max {{ '{:,}'.format(c.max_tickets) }} entries, draw {{ c.ends_at|uktime('%d %B %Y') }}. Free postal entry available.{% endif %}{% endblock %}
+{% block robots %}{% if st == 'cancelled' or (c.game_type and not live) or user %}<meta name="robots" content="noindex">{% endif %}{% endblock %}
+{% block og %}
+<meta property="og:site_name" content="{{ config.SITE_NAME }}">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{% if c.free_daily %}Free daily game{% else %}Win {{ c.title }} for {{ c.ticket_price|pp }}{% endif %}">
+<meta property="og:description" content="{{ self.desc() }}">
+<meta property="og:image" content="{{ config.SITE_URL }}{% if c.image %}{{ url_for('public.uploads', name=c.image) }}{% else %}{{ url_for('static', filename='brand/banner.jpg') }}{% endif %}">
+<meta property="og:url" content="{{ config.SITE_URL }}{{ url_for('public.competition', slug=c.slug) }}">
+<meta name="twitter:card" content="summary_large_image">
+{% endblock %}
+{% block bodyclass %}{{ 'has-mobile-buy' if live and not c.free_daily }}{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{{ url_for('public.home') }}">Home</a> ›
+  {% if c.game_type %}<a href="{{ url_for('public.instant_wins') }}">Instant Wins</a>{% else %}<a href="{{ url_for('public.competitions') }}">Competitions</a>{% endif %} ›
+  <span aria-current="page">{{ c.title }}</span>
+</nav>
+
+<div class="detail">
+  <div class="d-gallery">
+    <div class="gallery {{ 'g-' ~ c.game_type if c.game_type }}">{% if c.image %}<img src="{{ url_for('public.uploads', name=c.image) }}" alt="{{ c.title }}" width="800" height="600">{% elif d.game %}<div class="gameart" aria-hidden="true"><span class="gicon" style="font-size:110px">{{ d.game.icon }}</span><span class="gname" style="font-size:18px">{{ d.game.name }}</span></div>{% else %}<span aria-hidden="true">🏆</span>{% endif %}</div>
+  </div>
+
+  <div class="d-buy"><div class="stack">
+    <section class="panel buybox" aria-labelledby="comp-title">
+      <div class="actions">
+        <span class="pill {{ st }}">{{ {'live':'Open','soldout':'Sold out','ended':'Closed · draw soon','drawn':'Drawn','cancelled':'Cancelled'}.get(st, st) }}</span>
+        {% for kind, text in d.badges %}<span class="pill {{ kind }}">{{ text }}</span>{% endfor %}
+      </div>
+      <h1 id="comp-title">{{ c.title }}</h1>
+      {% if c.cash_alternative %}<p class="muted" style="margin:0 0 var(--s2)">Cash alternative: <b>{{ c.cash_alternative }}</b></p>{% endif %}
+      <div class="price">{% if c.free_daily %}Free{% else %}{{ c.ticket_price|pp }} <small>per {{ unit }}</small>{% endif %}</div>
+      {% if tiers %}<div class="tiers" aria-label="Multi-buy discounts">{% for q, p in tiers %}<span>{{ q }}+ {{ unit }}s: {{ p }}% off</span>{% endfor %}</div>{% endif %}
+      {% if live %}
+      <div class="countdown" data-ends="{{ c.ends_at|epoch }}" role="timer" aria-label="Closes {{ c.ends_at|uktime }}">
+        <div><b>--</b><span>Days</span></div><div><b>--</b><span>Hours</span></div><div><b>--</b><span>Mins</span></div><div><b>--</b><span>Secs</span></div></div>
+      {% endif %}
+      {% if not c.free_daily %}
+      <div class="bar" role="img" aria-label="{{ d.pct|round|int }}% sold"><i style="width:{{ d.pct }}%"></i></div>
+      <div class="progress-meta"><span>{{ '{:,}'.format(d.sold) }} sold</span><span>{{ '{:,}'.format(c.max_tickets - d.sold) }} of {{ '{:,}'.format(c.max_tickets) }} remaining</span></div>
+      {% endif %}
+      <dl class="facts" style="margin-top:var(--s3)">
+        {% if c.game_type %}
+          <div><dt>Game</dt><dd>{{ d.game.name }}</dd></div>
+          <div><dt>Winning {{ unit }}s</dt><dd>{{ '{:,}'.format(gi.prizes) }}{% if gi.odds %} (1 in {{ gi.odds|round|int }}){% endif %}</dd></div>
+          <div><dt>Prize pool</dt><dd>{{ gi.pool|gbp }}</dd></div>
+          <div><dt>{{ 'Closes' if live else 'Closed' }}</dt><dd>{{ c.ends_at|uktime('%a %d %b, %H:%M') }}</dd></div>
+        {% else %}
+          <div><dt>Draw date</dt><dd>{{ c.ends_at|uktime('%a %d %b %Y, %H:%M') }}</dd></div>
+          <div><dt>Maximum entries</dt><dd>{{ '{:,}'.format(c.max_tickets) }}</dd></div>
+          <div><dt>Odds per ticket</dt><dd>1 in {{ '{:,}'.format(c.max_tickets) }} or better</dd></div>
+          {% if c.prize_value %}<div><dt>Prize value</dt><dd>{{ c.prize_value|gbp }}</dd></div>{% endif %}
+          <div><dt>How it's drawn</dt><dd>{{ 'Automatically at close' if c.auto_draw else 'Live on our socials' }}</dd></div>
+        {% endif %}
+        {% if not c.free_daily %}<div><dt>Limit per person</dt><dd>{{ c.max_per_user }}</dd></div>{% endif %}
+      </dl>
+    </section>
+
+    {% if live and not c.free_daily %}
+    <div class="notice good" id="free-entry-note"><span aria-hidden="true">✉️</span><span><b>Free entry available.</b> You can enter this {{ 'game' if c.game_type else 'competition' }} free by post, with exactly the same chance of winning{{ ' any prize' if c.game_type else ' the main prize and any instant prizes' }}. <a href="{{ url_for('public.page', page='free-entry') }}">How to enter free</a>.</span></div>
+    {% endif %}
+
+    {% if c.status == 'drawn' %}
+      <div class="winner-banner" role="status">Winning ticket <b>#{{ winner_number }}</b><br>Congratulations {{ winner_name }}! <a href="{{ url_for('public.page', page='fair-draws') }}">Check this draw</a></div>
+    {% elif st == 'ended' or st == 'soldout' %}
+      <div class="notice">{% if st == 'soldout' %}All {{ unit }}s have sold. {% endif %}{% if c.game_type %}This game is closed.{% else %}The draw takes place {{ c.ends_at|uktime('%a %d %b at %H:%M') }}. Results appear on this page and on <a href="{{ url_for('public.winners', tab='results') }}">Draw results</a>.{% endif %}</div>
+    {% elif st == 'cancelled' %}
+      <div class="notice warn">This competition was cancelled and every entrant was refunded in full.</div>
+    {% endif %}
+
+    {% if waiting %}
+    <div class="panel accent center">
+      <b>You have {{ waiting|length }} play{{ 's' if waiting|length != 1 }} waiting</b>
+      <a class="btn block" href="{{ url_for('public.play', slug=c.slug) }}" style="margin-top:var(--s3)">Play now</a>
+    </div>
+    {% endif %}
+
+    {% if c.free_daily and live %}
+    <div class="panel center" id="enter">
+      <p style="font-size:44px;margin:0" aria-hidden="true">🎁</p>
+      <h2 style="font-size:20px">One free play every day</h2>
+      <p class="small muted">Win real cash or site credit — no purchase needed. Resets at midnight UK time. Verified accounts only.</p>
+      {% if not user %}<a class="btn green block" href="{{ url_for('public.signup') }}">Join free to play</a>
+      {% elif claimed %}<p class="small">You've had today's free play. Come back tomorrow.</p><a class="btn ghost block" href="{{ url_for('public.play', slug=c.slug) }}">See my result</a>
+      {% else %}<form method="post" action="{{ url_for('public.free_play', slug=c.slug) }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn green block">Play free now</button></form>{% endif %}
+    </div>
+    {% elif live %}
+    <form class="panel" id="enter" method="post" action="{{ url_for('public.basket_add') }}" novalidate>
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="slug" value="{{ c.slug }}">
+      <input type="hidden" name="numbers" id="numbers">
+      <h2 style="font-size:20px">Enter now</h2>
+      <fieldset>
+        <legend><span class="muted small">Step 1 ·</span> {{ c.question }}</legend>
+        <div class="answers">
+          {% for k in ['a','b','c'] %}<label><input type="radio" name="answer" value="{{ k }}" required> {{ c['answer_' + k] }}</label>{% endfor %}
+        </div>
+        <p class="hint" style="color:#ff8a95" id="ans-err" role="alert" hidden>Choose an answer to continue.</p>
+      </fieldset>
+
+      <fieldset style="margin-top:var(--s4)">
+        <legend><span class="muted small">Step 2 ·</span> How many {{ unit }}s?</legend>
+        {% if not c.game_type %}
+        <div class="modeswitch" role="group" aria-label="How to choose numbers">
+          <button type="button" id="m-lucky" aria-pressed="true" onclick="setMode('lucky')">Lucky dip</button>
+          <button type="button" id="m-pick" aria-pressed="false" onclick="setMode('pick')">Pick my numbers</button></div>
+        {% endif %}
+        <div id="lucky" style="margin-top:var(--s3)">
+          <label class="sr-only" for="qty">Number of {{ unit }}s</label>
+          <div class="qty">
+            <button type="button" class="btn ghost" onclick="step(-1)" aria-label="One fewer">−</button>
+            <input id="qty" name="quantity" type="number" inputmode="numeric" min="1" max="{{ c.max_per_user }}" value="1" oninput="upd()">
+            <button type="button" class="btn ghost" onclick="step(1)" aria-label="One more">+</button>
+          </div>
+          <div class="quick">{% for n in [5, 10, 25, 50, 100] if n <= c.max_per_user %}<button type="button" onclick="setQty({{ n }})" aria-label="{{ n }} {{ unit }}s">{{ n }}</button>{% endfor %}</div>
+        </div>
+        <div id="pick" class="picker" hidden style="margin-top:var(--s3)">
+          <div class="pnav">
+            <button type="button" class="btn ghost small" onclick="page(-1)" aria-label="Previous 100 numbers">‹</button>
+            <label class="sr-only" for="range">Number range</label><select id="range" onchange="load(+this.value)"></select>
+            <button type="button" class="btn ghost small" onclick="page(1)" aria-label="Next 100 numbers">›</button>
+          </div>
+          <div class="pgrid" id="pgrid"></div>
+          <div class="picked" id="picked" aria-live="polite"></div>
+          <p class="hint">Tap numbers to pick them (up to {{ [max_picks, c.max_per_user]|min }}). Crossed-out numbers are taken.</p>
+          <p class="hint" style="color:#ff8a95" id="pick-err" role="alert" hidden>Pick at least one number, or switch to Lucky dip.</p>
+        </div>
+      </fieldset>
+
+      <div class="total"><span class="muted">Total</span><span aria-live="polite"><s id="was" hidden></s> <b id="total">{{ c.ticket_price|gbp }}</b></span></div>
+      <p class="hint" id="tiermsg" aria-live="polite"></p>
+      <button class="btn block" name="go" value="checkout" style="margin-top:var(--s3)">{{ 'Buy plays' if c.game_type else 'Enter now' }}</button>
+      <button class="btn ghost block" name="go" value="basket" style="margin-top:var(--s2);font-size:var(--fs-md);min-height:46px">Add to basket and keep browsing</button>
+      <p class="tiny muted" style="margin:var(--s3) 0 0">18+ UK residents. Debit cards only. Or <a href="{{ url_for('public.page', page='free-entry') }}">enter free by post</a>. <a href="{{ url_for('public.page', page='terms') }}">Terms apply</a>.</p>
+    </form>
+    {% endif %}
+
+    {% if mine %}
+    <section class="panel" aria-labelledby="mine-h"><h2 id="mine-h" style="font-size:18px">Your {{ unit }}s ({{ mine|length }})</h2>
+      <div class="tickets">{% for t in mine %}<span class="{{ 'win' if t.number == winner_number else ('iw' if t.win) }}">#{{ t.number }}{% if t.number == winner_number %} · winner{% elif t.win %} · won {{ t.win }}{% endif %}</span>{% endfor %}</div>
+    </section>
+    {% endif %}
+  </div></div>
+
+  <div class="d-info stack">
+    {% if board %}
+    <section id="instant" aria-labelledby="board-h">
+      <h2 id="board-h">{{ 'Prizes in this game' if c.game_type else 'Instant prizes' }}</h2>
+      <p class="small muted">{% if c.game_type %}Every play is either a winner or not. Results are sealed before the game goes live and shown when you play.{% else %}If one of your ticket numbers matches an instant prize, you win it straight away — on top of your chance in the main draw.{% endif %}</p>
+      <div class="iwgrid">
+        {% for g in board %}
+        <div class="iw">
+          <div class="row"><b>{{ g.title }}<span class="kind {{ g.kind }}">{{ {'cash':'Cash','credit':'Credit','physical':'Prize'}[g.kind] }}</span></b>{% if g.value %}<span class="muted small">{{ g.value|gbp }}</span>{% endif %}</div>
+          <div class="left">{{ g.total - g.won|length }} of {{ g.total }} left</div>
+          {% if g.won or g.hidden %}<div class="won">
+            {% for w in g.won %}<span>Won: <b>#{{ w.number }}</b> — {{ w.winner }}</span>{% endfor %}
+            {% if g.hidden %}<span>Unclaimed: {% for n in g.hidden %}#{{ n }}{{ ', ' if not loop.last }}{% endfor %}</span>{% endif %}
+          </div>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if not c.game_type %}
+    <section aria-labelledby="about-h">
+      <h2 id="about-h">About this prize</h2>
+      <div class="prose">{% for para in c.description.split('\n') if para.strip() %}<p>{{ para }}</p>{% endfor %}</div>
+    </section>
+    {% elif c.description and c.description.strip() %}
+    <section aria-labelledby="about-h"><h2 id="about-h">About this game</h2>
+      <div class="prose">{% for para in c.description.split('\n') if para.strip() %}<p>{{ para }}</p>{% endfor %}</div></section>
+    {% endif %}
+
+    <section aria-labelledby="rules-h">
+      <h2 id="rules-h">Rules and fairness</h2>
+      <div class="panel">
+        <ul class="checklist">
+          <li><span aria-hidden="true">✓</span><span>Open to UK residents aged 18 or over. One correct answer needed per entry.</span></li>
+          <li><span aria-hidden="true">✓</span><span>Free entry: <a href="{{ url_for('public.page', page='free-entry') }}">enter by post</a> with the same chance of winning.</span></li>
+          {% if c.game_type %}
+          <li><span aria-hidden="true">✓</span><span>Prizes you don't reveal are paid automatically after 24 hours or when the game closes.</span></li>
+          {% else %}
+          <li><span aria-hidden="true">✓</span><span>The draw goes ahead on the date shown even if not every ticket sells.</span></li>
+          <li><span aria-hidden="true">✓</span><span>Every ticket is listed publicly: <a href="{{ url_for('public.entry_list', slug=c.slug) }}">view the {{ '{:,}'.format(d.sold) }} entries</a>.</span></li>
+          {% if c.live_url %}<li><span aria-hidden="true">✓</span><span>Watch the draw: <a href="{{ c.live_url }}" target="_blank" rel="noopener">live stream</a>.</span></li>{% endif %}
+          {% endif %}
+          <li><span aria-hidden="true">✓</span><span>Refunds: if a competition is cancelled, everyone is refunded in full. See the <a href="{{ url_for('public.page', page='terms') }}">terms</a>.</span></li>
+        </ul>
+        <details class="faq" style="margin:var(--s4) 0 0">
+          <summary>Proof of fairness</summary>
+          <div>
+            {% if not c.game_type %}
+            <p class="small">Draw seed hash, published before sales opened (<a href="{{ url_for('public.page', page='fair-draws') }}">how it works</a>):</p>
+            <div class="hash">{{ c.seed_hash }}</div>
+            {% if c.status == 'drawn' %}<p class="small" style="margin-top:var(--s3)">Seed revealed after the draw:</p><div class="hash">{{ c.seed }}</div>
+            <p class="small" style="margin-top:var(--s3)">Entries hash:</p><div class="hash">{{ c.entries_hash }}</div>{% endif %}
+            {% endif %}
+            {% if c.instant_hash %}<p class="small" style="margin-top:var(--s3)">{{ 'Winning plays' if c.game_type else 'Instant prize numbers' }} sealed before launch:</p><div class="hash">{{ c.instant_hash }}</div>
+            {% if st in ('ended','drawn','cancelled') %}<p class="small" style="margin-top:var(--s3)">Salt revealed:</p><div class="hash">{{ c.instant_salt }}</div>{% endif %}{% endif %}
+          </div>
+        </details>
+      </div>
+    </section>
+
+    {% if not c.free_daily %}
+    <section aria-labelledby="share-h">
+      <h2 id="share-h">Share</h2>
+      <p class="small muted">{% if user %}Your link includes your referral code — you get {{ config.REFERRAL_BONUS|gbp }} credit when a friend joins and makes their first purchase.{% else %}Know someone who'd love this?{% endif %}</p>
+      <div class="share">
+        <a href="https://wa.me/?text={{ ('Win ' ~ c.title ~ ' — ' ~ share)|urlencode }}" target="_blank" rel="noopener">WhatsApp</a>
+        <a href="https://www.facebook.com/sharer/sharer.php?u={{ share|urlencode }}" target="_blank" rel="noopener">Facebook</a>
+        <a href="https://twitter.com/intent/tweet?url={{ share|urlencode }}&text={{ ('Win ' ~ c.title)|urlencode }}" target="_blank" rel="noopener">X</a>
+        <button type="button" onclick="navigator.clipboard.writeText({{ share|tojson|forceescape }});this.textContent='Link copied'">Copy link</button>
+      </div>
+    </section>
+    {% endif %}
+  </div>
+</div>
+
+{% if others %}
+<section class="section" aria-labelledby="more-h">
+  <div class="section-head"><h2 id="more-h">{{ 'You might also like' if live else 'Live competitions' }}</h2><a class="btn ghost small" href="{{ url_for('public.competitions') }}">See all</a></div>
+  <div class="grid">{% for it in others %}{% if it.game %}{% include "_gamecard.html" %}{% else %}{% include "_card.html" %}{% endif %}{% endfor %}</div>
+</section>
+{% endif %}
+
+{% if live and not c.free_daily %}
+<div class="mobile-buy" aria-hidden="false">
+  <div><div class="price">{{ c.ticket_price|pp }}<small> /{{ unit }}</small></div><div class="tiny muted">{{ '{:,}'.format(c.max_tickets - d.sold) }} left</div></div>
+  <a class="btn" href="#enter">{{ 'Buy plays' if c.game_type else 'Enter now' }}</a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}{% if live and not c.free_daily %}
+<script>
+var PRICE={{ c.ticket_price }},TIERS={{ tiers_json }},MAXP={{ [max_picks, c.max_per_user]|min }},MAXT={{ c.max_tickets }},UNIT='{{ unit }}',
+    URL='{{ url_for("public.numbers", slug=c.slug) }}',mode='lucky',sel=new Set(),start=1,
+    q=document.getElementById('qty'),form=document.getElementById('enter');
+function gbp(p){return '£'+(p/100).toFixed(2).replace(/\.00$/,'')}
+function count(){return mode==='pick'?sel.size:Math.max(1,Math.min(+q.max,+q.value||1))}
+function upd(){var n=count(),gross=n*PRICE,pct=0,next=null;TIERS.forEach(function(t){if(n>=t[0])pct=t[1];else if(!next)next=t});
+  var net=gross-Math.floor(gross*pct/100);document.getElementById('total').textContent=gbp(net);
+  var w=document.getElementById('was');w.hidden=!pct;w.textContent=gbp(gross);
+  document.getElementById('tiermsg').textContent=pct?('Multi-buy discount: '+pct+'% off applied.'):(next?('Add '+(next[0]-n)+' more '+UNIT+(next[0]-n>1?'s':'')+' for '+next[1]+'% off.'):'')}
+function step(d){q.value=Math.max(1,Math.min(+q.max,(+q.value||1)+d));upd()}
+function setQty(n){q.value=n;upd()}
+function setMode(m){mode=m;document.getElementById('lucky').hidden=m!=='lucky';document.getElementById('pick').hidden=m!=='pick';
+  ['lucky','pick'].forEach(function(k){var b=document.getElementById('m-'+k);if(b)b.setAttribute('aria-pressed',k===m)});
+  if(m==='pick'&&!document.getElementById('pgrid').children.length){buildRange();load(1)}upd()}
+function buildRange(){var s=document.getElementById('range');for(var i=1;i<=MAXT;i+=100){var o=document.createElement('option');o.value=i;o.textContent=i+'–'+Math.min(MAXT,i+99);s.appendChild(o)}}
+function page(d){var n=start+d*100;if(n>=1&&n<=MAXT)load(n)}
+function load(s){start=s;document.getElementById('range').value=s;
+  fetch(URL+'?start='+s).then(function(r){return r.json()}).then(function(j){var g=document.getElementById('pgrid'),taken=new Set(j.taken);g.innerHTML='';
+    for(var i=j.start;i<=j.end;i++){var b=document.createElement('button');b.type='button';b.textContent=i;b.disabled=taken.has(i);
+      b.setAttribute('aria-pressed',sel.has(i));b.setAttribute('aria-label','Number '+i+(taken.has(i)?' (taken)':''));if(sel.has(i))b.className='sel';
+      b.onclick=(function(n,btn){return function(){if(sel.has(n)){sel.delete(n);btn.className=''}else if(sel.size<MAXP){sel.add(n);btn.className='sel'}
+        btn.setAttribute('aria-pressed',sel.has(n));drawPicked()}})(i,b);g.appendChild(b)}})}
+function drawPicked(){var p=document.getElementById('picked');p.innerHTML='';Array.from(sel).sort(function(a,b){return a-b}).forEach(function(n){
+  var s=document.createElement('button');s.type='button';s.textContent='#'+n+' ×';s.setAttribute('aria-label','Remove number '+n);s.onclick=function(){sel.delete(n);drawPicked();load(start)};p.appendChild(s)});
+  document.getElementById('pick-err').hidden=true;upd()}
+form.addEventListener('change',function(e){if(e.target.name==='answer')document.getElementById('ans-err').hidden=true});
+form.addEventListener('submit',function(e){
+  if(!form.querySelector('input[name=answer]:checked')){e.preventDefault();var a=document.getElementById('ans-err');a.hidden=false;form.querySelector('input[name=answer]').focus();return}
+  if(mode==='pick'){if(!sel.size){e.preventDefault();document.getElementById('pick-err').hidden=false;return}
+    document.getElementById('numbers').value=Array.from(sel).join(',')}else document.getElementById('numbers').value=''});
+upd();
+(function(){var bar=document.querySelector('.mobile-buy');if(!bar||!('IntersectionObserver' in window))return;
+  new IntersectionObserver(function(es){es.forEach(function(e){bar.classList.toggle('away',e.isIntersecting)})}).observe(form)})();
+</script>
+{% endif %}{% endblock %}

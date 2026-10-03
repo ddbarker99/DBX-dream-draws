@@ -1,0 +1,5 @@
+<ol class="progress" aria-label="Checkout progress">
+  {% for n, label in [(1, 'Choose entries'), (2, 'Basket'), (3, 'Payment'), (4, 'Confirmed')] %}
+  <li class="{{ 'done' if n < step else ('now' if n == step) }}"{% if n == step %} aria-current="step"{% endif %}><b>{{ '✓' if n < step else n }}</b><span class="hide-sm-label">{{ label }}</span></li>
+  {% endfor %}
+</ol>

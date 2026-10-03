@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Start fresh · Admin{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Start fresh</h1>
+<p class="muted" style="max-width:720px">Clear out test data before you launch. Your admin account, site settings and logo are always kept. A full backup of the database is saved automatically before anything is deleted.</p>
+{% if n.unrefunded or n.withdrawals %}
+<div class="notice warn" style="max-width:720px;margin-bottom:16px"><span>
+  {% if n.unrefunded %}<b>{{ n.unrefunded }} paid order{{ 's' if n.unrefunded != 1 }}</b> haven't been refunded. {% endif %}
+  {% if n.withdrawals %}<b>{{ n.withdrawals }} withdrawal{{ 's' if n.withdrawals != 1 }}</b> still waiting to be paid. {% endif %}
+  If any of these are real customers' money, sort them out first. Deleting here does <b>not</b> refund anything in Stripe — refund real card payments ({{ n.card|gbp }} taken by card so far) in your Stripe dashboard.</span></div>
+{% endif %}
+<form class="panel" method="post" style="max-width:720px" onsubmit="return confirm('Delete the selected data for good? A backup is saved first.')">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <fieldset>
+    <legend>Competitions and games</legend>
+    <label class="check"><input type="radio" name="competitions" value="" checked> <span>Keep them</span></label>
+    <label class="check"><input type="radio" name="competitions" value="games"> <span>Delete all instant win games ({{ n.games }}) — keep prize draws</span></label>
+    <label class="check"><input type="radio" name="competitions" value="draws"> <span>Delete all prize draws ({{ n.draws }}) — keep games</span></label>
+    <label class="check"><input type="radio" name="competitions" value="all"> <span>Delete everything ({{ n.draws + n.games }}), with all entries, orders and instant prizes</span></label>
+  </fieldset>
+  <fieldset style="margin-top:20px">
+    <legend>Other data</legend>
+    <label class="check"><input type="checkbox" name="wallets" value="1"> <span>Reset every wallet to £0 — deletes {{ n.ledger }} transaction{{ 's' if n.ledger != 1 }}, deposits, withdrawals and DBX Points (refund any real deposits in Stripe first)</span></label>
+    <label class="check"><input type="checkbox" name="promos" value="1"> <span>Delete all promo codes ({{ n.promos }})</span></label>
+    <label class="check"><input type="checkbox" name="accounts" value="1"> <span>Delete all player accounts ({{ n.players }}) — admins are kept. This also deletes every competition, order and wallet.</span></label>
+  </fieldset>
+  <div class="field" style="margin-top:20px"><label for="confirm">Type RESET to confirm</label>
+    <input id="confirm" name="confirm" autocomplete="off" style="max-width:240px"></div>
+  <button class="btn danger block" style="margin-top:16px">Delete selected data</button>
+</form>
+<p class="small muted" style="margin-top:12px">Backups are saved in <code>/opt/prizecomp/data/backups/</code> on your server.</p>
+{% endblock %}

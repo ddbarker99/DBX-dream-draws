@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Fair draws — check any result yourself · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}How our provably fair draws and instant wins work, with code to check any result yourself.{% endblock %}
+{% block content %}
+<div class="prose">
+<h1>Fair draws</h1>
+<p>We use a <strong>commit-and-reveal</strong> system. That means we lock in the randomness <em>before</em> anyone buys a ticket, publish proof of it, and reveal it afterwards so anyone can check we didn't change anything.</p>
+<h2>Main draws</h2>
+<ol>
+  <li><strong>Before launch</strong> we generate a random secret seed and publish its SHA-256 hash on the competition page.</li>
+  <li><strong>At the draw</strong> we take every confirmed ticket number, sort them, join them with commas and hash the list (the <em>entries hash</em>).</li>
+  <li>The winning position is <code>HMAC-SHA256(seed, entries hash)</code> read as a number, modulo the number of tickets. The ticket at that position in the sorted list wins.</li>
+  <li><strong>After the draw</strong> we reveal the seed. Check its hash matches the one published at launch, open the competition's entry list from <a href="{{ url_for('public.winners', tab='results') }}">Draw results</a>, and recompute the winner yourself.</li>
+</ol>
+<h2>Instant wins</h2>
+<p>Instant-win numbers are chosen at random and sealed before a competition goes live. We publish a hash of every number and prize plus a secret salt. When the competition closes, we reveal the salt and any unclaimed numbers so you can confirm the list never changed.</p>
+<h2>Check a main draw yourself (Python)</h2>
+<pre class="hash" style="white-space:pre-wrap">import hashlib, hmac
+seed = "REVEALED_SEED"
+tickets = sorted([...])  # every ticket number from the entry list
+print(hashlib.sha256(seed.encode()).hexdigest())  # matches the published hash
+digest = hashlib.sha256(",".join(map(str, tickets)).encode()).hexdigest()
+i = int(hmac.new(seed.encode(), digest.encode(), hashlib.sha256).hexdigest(), 16) % len(tickets)
+print("winning ticket:", tickets[i])</pre>
+<h2>Check instant wins</h2>
+<pre class="hash" style="white-space:pre-wrap">import hashlib
+salt = "REVEALED_SALT"
+prizes = [(17, "£10 Credit"), (342, "£50 Credit")]   # every number:prize, sorted by number
+body = ",".join(f"{n}:{t}" for n, t in sorted(prizes))
+print(hashlib.sha256(f"{salt}|{body}".encode()).hexdigest())  # matches the sealed hash</pre>
+</div>
+{% endblock %}

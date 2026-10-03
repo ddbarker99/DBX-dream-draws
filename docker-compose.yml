@@ -1,0 +1,11 @@
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SECURE_COOKIES: "1"
+    ports:
+      - "127.0.0.1:8000:8000"   # only nginx on this server can reach it
+    volumes:
+      - ./data:/data

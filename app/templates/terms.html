@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Terms and conditions · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}The rules for entering {{ config.SITE_NAME }} prize draws and instant win promotions: eligibility, free entry, draws, prizes, payments, withdrawals and refunds.{% endblock %}
+{% set S = config.SITE_NAME %}
+{% set email %}{% if config.SUPPORT_EMAIL %}<a href="mailto:{{ config.SUPPORT_EMAIL }}">{{ config.SUPPORT_EMAIL }}</a>{% else %}our <a href="{{ url_for('public.contact') }}">contact page</a>{% endif %}{% endset %}
+{% block content %}
+<div class="prose legal-doc">
+<h1>Terms and conditions</h1>
+<p class="dim">Last updated: 3 October 2026</p>
+{% include "_draft_notice.html" %}
+<p>These Terms and Conditions apply to competitions, prize draws, instant-win promotions and other promotional prize activities operated through {{ S }}.</p>
+<p>Please read these Terms carefully before entering. By submitting an entry, you confirm that you have read and agree to these Terms together with any competition-specific terms displayed on the relevant competition page.</p>
+
+<nav class="panel tight" aria-label="Contents" style="margin:var(--s5) 0"><b>Contents</b>
+<ol class="small toc">
+{% for id, t in [('promoter','The promoter'),('eligibility','Eligibility'),('how-to-enter','How to enter'),('free-entry','Free entry route'),('limits','Entry limits'),('reservations','Entry numbers and reservations'),('dates','Opening and closing dates'),('draws','Draws and winner selection'),('automatic-draws','Automatic draws'),('instant-prizes','Instant-win promotions'),('instant-games','Instant-win games'),('payments','Payments'),('withdrawals','Wallet: deposits, cash and withdrawals'),('credit','Site credit'),('daily-free','Daily free game'),('points','DBX Points'),('promotions','Promotions, discounts and codes'),('prizes','Prizes'),('notification','Winner notification and verification'),('publicity','Winner information and publicity'),('refunds','Cancellations and refunds'),('errors','Errors and technical problems'),('fraud','Fraud, abuse and unfair participation'),('responsible','Responsible participation'),('changes','Changes to these terms'),('liability','Liability'),('privacy','Privacy'),('complaints','Complaints'),('law','Governing law'),('contact','Contact')] %}<li><a href="#{{ id }}">{{ t }}</a></li>{% endfor %}
+</ol></nav>
+
+<h2 id="promoter">1. The promoter</h2>
+<p>The promoter is {{ S }}{% if config.COMPANY_DETAILS %}, {{ config.COMPANY_DETAILS.split('·')[-1].strip() }}{% endif %} ("{{ S }}", "we", "us" or "our"). Email: {{ email }}.</p>
+<p>Where a competition page contains additional or competition-specific conditions, those conditions form part of these Terms. If there is a conflict, the competition-specific conditions apply to that competition to the extent of the conflict.</p>
+
+<h2 id="eligibility">2. Eligibility</h2>
+<p>Unless a competition page states otherwise, entry is open only to individuals who:</p>
+<ul><li>are aged 18 or over at the time of entry;</li><li>are resident in the United Kingdom;</li><li>provide accurate registration and contact information; and</li><li>comply with these Terms and any competition-specific conditions.</li></ul>
+<p>Employees of {{ S }}, anyone directly involved in administering or operating a competition, and members of their immediate household are not eligible to enter.</p>
+<p>We may require reasonable evidence of identity, age, residency, account ownership or eligibility before accepting an entry or releasing a prize.</p>
+<p>An entrant must use their own account. Accounts and entries must not be transferred, sold or otherwise assigned to another person.</p>
+
+<h2 id="how-to-enter">3. How to enter</h2>
+<p>The available entry methods are stated on each competition page. Eligible entrants may participate either by purchasing entries through the website or by following the instructions on our <a href="{{ url_for('public.page', page='free-entry') }}">Free Entry page</a>.</p>
+<p>Free entries that comply fully with the published instructions and arrive before the applicable deadline are entered into the same draw and treated equally for prize allocation purposes. No entry receives a better chance of winning because it was purchased rather than submitted through a valid free-entry route.</p>
+<p>Where an entry question is used, entrants must provide the required answer in accordance with the instructions shown before the entry is accepted.</p>
+<p>Incomplete, illegible, late, incorrectly addressed, insufficiently paid, duplicated or otherwise non-compliant free entries may be rejected. Proof of posting is not proof that an entry was received.</p>
+
+<h2 id="free-entry">4. Free entry route</h2>
+<p>The complete free postal entry instructions are maintained at <a href="{{ url_for('public.page', page='free-entry') }}">{{ config.SITE_URL.split('://')[-1] }}/free-entry</a> and are signposted on every competition page.</p>
+<p>Entrants are responsible for following those instructions exactly and for allowing enough time for their entry to arrive. Only ordinary first- or second-class post is required; we do not require recorded, tracked or special-delivery services.</p>
+<p>A valid free entry participates on the same basis as a corresponding paid entry for the allocation of prizes, including instant prizes. The free-entry route is subject to the same eligibility requirements and per-person entry limits as paid entries.</p>
+
+<h2 id="limits">5. Entry limits</h2>
+<p>Each competition may have a maximum total number of entries, a maximum number of entries per person, and/or other entry restrictions displayed before entry.</p>
+<p>Any per-person limit applies across an entrant's valid paid and free entries combined unless expressly stated otherwise. Entrants must not create or use multiple accounts, alternative identities or another person's details to get around an entry limit.</p>
+<p>Where we reasonably determine that an entrant has tried to get around a published limit, manipulate a promotion or obtain an unfair advantage, we may reject affected entries and take appropriate action on the account, subject to applicable law.</p>
+
+<h2 id="reservations">6. Entry numbers and reservations</h2>
+<p>Where numbered entries are used, entrants may select available numbers or have numbers allocated automatically ("lucky dip").</p>
+<p>During online checkout, numbers are reserved temporarily for up to 30 minutes. A reservation is not a confirmed entry: if checkout is not completed within the reservation period, the numbers are released and made available to other entrants.</p>
+<p>An online entry is confirmed only once the website records successful completion of payment and issues confirmation, which is shown on screen and sent by email.</p>
+
+<h2 id="dates">7. Opening and closing dates</h2>
+<p>Each competition displays its closing date and time. Entries must be received before that deadline.</p>
+<p>Where a draw date is advertised, we will not bring it forward or postpone it because fewer entries than expected have been sold, except where a change is reasonably necessary because of circumstances beyond our control and is permitted by applicable law and advertising rules.</p>
+<p>Unless a competition clearly states otherwise before entry, failing to sell every available entry does not by itself stop the advertised draw from taking place.</p>
+
+<h2 id="draws">8. Draws and winner selection</h2>
+<p>Winners of chance-based draws are selected fairly from all eligible entries using the verifiable method described on our <a href="{{ url_for('public.page', page='fair-draws') }}">Fair Draws page</a>. Where a different selection process applies, it will be explained in the competition-specific terms.</p>
+<p>Paid and valid free entries are not distinguished from one another when the winner is selected. We keep records of completed draws so that each result can be verified.</p>
+
+<h2 id="automatic-draws">9. Automatic draws</h2>
+<p>Unless a competition is advertised as being drawn live or by another stated method, the winner-selection process runs automatically when the draw time is reached, using the method described on the Fair Draws page. An automated draw does not change the eligibility requirements or the treatment of valid paid and free entries.</p>
+
+<h2 id="instant-prizes">10. Instant-win promotions</h2>
+<p>Where a promotion contains instant-win prizes, the winning entry numbers are allocated at random and sealed before the promotion opens. Any visual animation shown to an entrant is for presentation only and does not determine whether that entrant has won.</p>
+<p>The competition page shows the nature and number of available instant prizes and any material conditions relating to them.</p>
+<p>Cash and site-credit prizes are credited to the winner's account automatically. Where a prize requires physical delivery or contact with the winner, we will give reasonable instructions for receiving it.</p>
+
+<h2 id="instant-games">11. Instant-win games</h2>
+<p>Where we offer scratch-card, wheel, mystery-box or similar games, the game page explains the entry mechanism, the available prizes, the total number of plays and how winning outcomes are allocated.</p>
+<p>Animations and visual effects only reveal the result already allocated; they do not change it. If a winning result is not revealed by the entrant, the prize is credited to the entrant's account automatically after 24 hours, or when the game closes if that is sooner.</p>
+<p>The free entry route applies to instant-win games on the same terms as set out in section 4.</p>
+
+<h2 id="payments">12. Payments</h2>
+<p>Available payment methods are displayed at checkout and may change from time to time. Payments are processed by our payment provider, Stripe; we do not store full payment-card details.</p>
+<p>We accept debit cards, Pay by Bank, and wallets (such as Apple Pay or Google Pay) funded by a debit card. <strong>Credit cards are not accepted.</strong> If a credit-card payment is identified after a transaction, it is refunded in full and no entries are issued.</p>
+
+<h2 id="withdrawals">13. Wallet: deposits, cash balance and withdrawals</h2>
+<p><strong>Deposits.</strong> Verified members may add funds to their wallet by debit card (minimum £5, maximum £250 per deposit). Deposits count towards your spending limits at the time you make them, and cannot be made while your account is on a break. Deposited funds can be spent on entries and are not withdrawable to a bank account; instead, you can ask at any time for unspent deposited funds to be refunded to the card they came from, from your wallet page. Deposited funds do not earn interest and are not a savings or banking product.</p>
+<p><strong>Cash balance.</strong>
+Cash prizes and refunds are credited to your cash balance. Subject to verification, fraud-prevention and security checks, cash balances may be withdrawn to a UK bank account or PayPal account in the account holder's own name once your email address is verified.</p>
+<p>The minimum withdrawal is £5 unless otherwise stated before withdrawal.</p>
+<p>We aim to process valid withdrawal requests within 24 hours. This is an aim rather than a guarantee where identity checks, payment-provider processing, banking delays, technical issues or fraud and security reviews reasonably require more time. We may request reasonable identity, age, address, bank-account or payment-account verification before releasing funds.</p>
+
+<h2 id="credit">14. Site credit</h2>
+<p>Promotional credit, referral credit, DBX Points converted into credit and other non-cash site credit may be used only in accordance with the conditions under which it was issued. Unless expressly stated otherwise, site credit:</p>
+<ul><li>has no cash value;</li><li>cannot be withdrawn or transferred;</li><li>may be used only on eligible {{ S }} entries; and</li><li>may expire only where an expiry date was clearly disclosed when the credit was awarded.</li></ul>
+<p>At checkout, your balance is used in this order: site credit, then deposited funds, then cash balance. You can choose not to use your balance and pay the full amount by card.</p>
+
+<h2 id="daily-free">15. Daily free game</h2>
+<p>Where available, verified members may claim one free play per UK calendar day on the daily free game. Only one account may be used by each person.</p>
+<p>We may investigate suspected duplicate, automated, fraudulent or manipulated accounts. Where we have reasonable grounds to conclude that an account was created or used to abuse the promotion, we may take proportionate action, including rejecting affected entries or prizes, subject to applicable law.</p>
+
+<h2 id="points">16. DBX Points</h2>
+<p>The current earning and redemption rules for DBX Points are shown in your account. Points are promotional loyalty benefits, not money: they cannot be withdrawn, sold, transferred or exchanged for cash, except by redeeming them for site credit as described in your account. Any material restriction, expiry rule or change affecting points already earned will be communicated appropriately.</p>
+
+<h2 id="promotions">17. Promotions, discounts and promotional codes</h2>
+<p>Promotional codes, multi-buy discounts and special offers are subject to the conditions displayed with them, which may include eligibility requirements, expiry dates, usage limits, minimum spends or restrictions on combining offers. Unless expressly stated otherwise, promotional benefits cannot be exchanged for cash.</p>
+<p>We will not retrospectively remove or materially alter a promotional benefit from an eligible entrant who entered in reliance on the published terms, except where reasonably necessary to correct an obvious error, address fraud or comply with law.</p>
+
+<h2 id="prizes">18. Prizes</h2>
+<p>The prize or prizes for each promotion are described on the relevant page. Where a cash alternative is expressly advertised, the winner may choose it in accordance with the stated conditions. Where no cash alternative is advertised, there is no automatic entitlement to one.</p>
+<p>Prizes are non-transferable unless we agree otherwise. We will take reasonable steps to provide the advertised prize. If circumstances genuinely outside our reasonable control make it unavailable, any substitute will be handled in accordance with applicable law and promotional rules and, where appropriate, will be a reasonable equivalent of equal or greater value.</p>
+<p>Any material costs or obligations the winner must bear to receive or use a prize will be disclosed before entry. Physical prizes are delivered free within the UK.</p>
+
+<h2 id="notification">19. Winner notification and verification</h2>
+<p>We contact winners using the contact details registered to their account or supplied with their valid entry. Winners are responsible for keeping their contact details up to date.</p>
+<p>Before releasing a prize, we may require reasonable evidence of identity, age, residency, account ownership, payment ownership or other eligibility criteria. We will never ask a winner to make a payment to claim a prize.</p>
+<p>If a winner does not respond, cannot be verified or cannot accept a prize, we will follow the process disclosed for the relevant promotion and applicable promotional rules rather than automatically withholding the prize.</p>
+
+<h2 id="publicity">20. Winner information and publicity</h2>
+<p>To show that prizes have been awarded, we publish limited winner information: normally the winner's first name and surname initial, with the prize or promotion and the winning entry number. Photographs, testimonials, videos or more extensive publicity are used only with an appropriate lawful basis and, where required, the winner's permission.</p>
+
+<h2 id="refunds">21. Cancellations and refunds</h2>
+<p>Because entries relate to promotions with defined entry periods and allocated entry numbers, please check your selections before completing payment. Except where required by law or expressly permitted by these Terms, a confirmed entry cannot be cancelled because the entrant has changed their mind. This does not affect any statutory rights that cannot lawfully be excluded.</p>
+<p>If we cancel a promotion without awarding the advertised prize, every affected entrant receives a full refund of the price paid. Refunds are credited to the entrant's withdrawable cash balance, from which they can be withdrawn at any time (the £5 minimum withdrawal does not apply to refunds — contact us and we will pay a smaller refund out). Where a refund is due for a payment that did not result in an entry, it is returned to the original payment method.</p>
+
+<h2 id="errors">22. Errors, technical problems and service interruptions</h2>
+<p>We take reasonable steps to keep the website and promotion systems accurate and available, but temporary technical failures can occur. If an obvious pricing, prize, entry-number, display or technical error occurs, we may take reasonable and proportionate steps to correct it. We will not use this clause to avoid honouring a valid promotion because an outcome is commercially inconvenient.</p>
+<p>Where a technical issue materially affects the fairness or integrity of a promotion, we will take reasonable steps to restore entrants to the position they should have been in, or provide another appropriate remedy.</p>
+
+<h2 id="fraud">23. Fraud, abuse and unfair participation</h2>
+<p>Entrants must not:</p>
+<ul><li>manipulate or interfere with the website or draw systems;</li><li>use bots, scripts or automated entry methods;</li><li>create multiple accounts to get around restrictions;</li><li>provide false identity or payment information;</li><li>interfere with another entrant's participation;</li><li>exploit an obvious technical error; or</li><li>otherwise participate fraudulently or dishonestly.</li></ul>
+<p>Where we reasonably suspect abuse, we may investigate and temporarily restrict affected transactions or withdrawals while we do so. Any decision to reject an entry, withhold a prize or close an account will be based on reasonable grounds and exercised proportionately.</p>
+
+<h2 id="responsible">24. Responsible participation</h2>
+<p>Prize promotions should stay enjoyable and affordable, and you should never spend money needed for essential living costs. Every account has daily, weekly and monthly spending limits, a take-a-break option and full transaction history. Paid entries are capped at {{ config.MAX_MONTHLY_LIMIT|gbp }} per calendar month for every customer, as set out on our <a href="{{ url_for('public.page', page='responsible-play') }}">Responsible Play page</a>.</p>
+
+<h2 id="changes">25. Changes to these terms</h2>
+<p>We may update these Terms where reasonably necessary, including to reflect changes to our services, technology, payment methods or the law. Changes will not be applied retrospectively in a way that unfairly disadvantages an entrant in a promotion they have already validly entered. The terms that apply to an entry are those in force when the entry was made, together with the competition-specific conditions at that time.</p>
+
+<h2 id="liability">26. Liability</h2>
+<p>Nothing in these Terms excludes or limits liability where doing so would be unlawful, including liability for fraud or fraudulent misrepresentation, or for death or personal injury caused by negligence. Subject to applicable law, we are not responsible for losses caused solely by circumstances outside our reasonable control where we took reasonable steps to avoid or reduce them. Nothing in these Terms affects your statutory rights as a consumer.</p>
+
+<h2 id="privacy">27. Privacy</h2>
+<p>Personal information is processed in accordance with our <a href="{{ url_for('public.page', page='privacy') }}">Privacy Policy</a>. Please read it before creating an account or entering a promotion.</p>
+
+<h2 id="complaints">28. Complaints</h2>
+<p>If you believe a promotion or account issue has not been handled correctly, please follow our <a href="{{ url_for('public.page', page='complaints') }}">Complaints Procedure</a> or email {{ email }}. We aim to acknowledge complaints within 2 working days and give a full response within 14 days. If more investigation is reasonably required, we will explain the delay and give an updated timeframe.</p>
+
+<h2 id="law">29. Governing law</h2>
+<p>These Terms and any dispute or claim arising from them are governed by the laws of England and Wales, subject to any mandatory consumer protections that apply to you. If you live elsewhere in the United Kingdom, you may also bring proceedings in the courts of the part of the UK where you live.</p>
+
+<h2 id="contact">30. Contact</h2>
+<p>Questions about these Terms can be sent to:</p>
+{% include "_legal_contact.html" %}
+</div>
+{% endblock %}

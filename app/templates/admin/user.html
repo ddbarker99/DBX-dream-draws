@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ u.name }} · Admin{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>{{ u.name }}</h1>
+<p class="muted">{{ u.email }} {% if u.email_verified %}✓ verified{% else %}(not verified){% endif %} · {{ u.phone or 'no phone' }} · {{ u.points }} pts · born {{ u.dob }} · joined {{ u.created_at|uktime('%d %b %Y') }}{% if u.excluded_until %} · on a break until {{ u.excluded_until|uktime }}{% endif %}</p>
+<div class="two">
+  <form class="panel" method="post" style="margin:0">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="credit">
+    <strong>Cash {{ bal.cash|gbp }} · Deposited {{ bal.deposit|gbp }} · Credit {{ bal.credit|gbp }}</strong>
+    <div class="two"><div><label>Amount (£, negative to remove)</label><input name="amount" type="number" step="0.01" required></div>
+    <div><label>Balance</label><select name="kind"><option value="credit">Site credit (spend only)</option><option value="cash">Cash (withdrawable)</option></select></div></div>
+    <div class="two">
+    <div><label>Reason (they'll see this)</label><input name="reason" placeholder="Goodwill credit"></div></div>
+    <button class="btn small" style="margin-top:12px">Adjust wallet</button>
+  </form>
+  <div class="panel" style="margin:0"><strong>Access</strong>
+    <p class="small muted">Admins can see all entries, run draws and change wallets.</p>
+    {% if not u.email_verified %}<form method="post" style="margin-bottom:10px"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="verify"><button class="btn ghost small">Mark email verified</button></form>{% endif %}
+    {% if u.id != user.id %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="admin"><button class="btn ghost small">{{ 'Remove admin' if u.is_admin else 'Make admin' }}</button></form>{% else %}<p class="small">This is you.</p>{% endif %}
+  </div>
+</div>
+<h2>Tickets</h2>
+<div class="panel table-scroll"><table><tr><th>Competition</th><th class="num">Tickets</th></tr>
+  {% for t in tickets %}<tr><td>{{ t.title }}</td><td class="num">{{ t.n }}</td></tr>{% else %}<tr><td colspan="2" class="muted">None.</td></tr>{% endfor %}</table></div>
+<h2>Checkouts</h2>
+<div class="panel table-scroll"><table><tr><th>#</th><th>Date</th><th>Status</th><th class="num">Card</th><th class="num">Credit</th><th class="num">Promo</th></tr>
+  {% for p in pays %}<tr><td>{{ p.id }}</td><td>{{ p.created_at|uktime('%d %b %Y %H:%M') }}</td><td><span class="pill {{ p.status }}">{{ p.status }}</span></td><td class="num">{{ p.cash_due|gbp }}</td><td class="num">{{ p.credit_used|gbp }}</td><td class="num">{{ p.promo_discount|gbp }}</td></tr>{% else %}<tr><td colspan="6" class="muted">None.</td></tr>{% endfor %}</table></div>
+<h2>Wallet history</h2>
+<div class="panel table-scroll"><table><tr><th>Date</th><th>Reason</th><th class="num">Amount</th></tr>
+  {% for l in ledger %}<tr><td>{{ l.created_at|uktime('%d %b %Y %H:%M') }}</td><td>{{ l.reason }}</td><td class="num {{ 'pos' if l.amount > 0 else 'neg' }}">{{ l.amount|gbp }}</td></tr>{% else %}<tr><td colspan="3" class="muted">None.</td></tr>{% endfor %}</table></div>
+{% endblock %}

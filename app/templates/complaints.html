@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Complaints procedure · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}How to make a complaint to {{ config.SITE_NAME }}, what to include and how quickly we respond.{% endblock %}
+{% set S = config.SITE_NAME %}
+{% block content %}
+<div class="prose legal-doc">
+<h1>Complaints procedure</h1>
+<p>We aim to run our promotions fairly and transparently. If you believe something has gone wrong, please tell us so we can investigate.</p>
+
+<h2>How to complain</h2>
+<p>Use our <a href="{{ url_for('public.contact') }}">contact form</a>{% if config.SUPPORT_EMAIL %} or email <a href="mailto:{{ config.SUPPORT_EMAIL }}">{{ config.SUPPORT_EMAIL }}</a>{% endif %}. Please include:</p>
+<ul>
+  <li>your full name and the email address on your account;</li>
+  <li>the competition or promotion concerned;</li>
+  <li>your order or transaction number, if you have one (it's under <b>My account → Orders</b>);</li>
+  <li>a clear explanation of the problem; and</li>
+  <li>any screenshots or other information that may help.</li>
+</ul>
+
+<h2>What happens next</h2>
+<ol>
+  <li>We acknowledge your complaint within <strong>2 working days</strong>.</li>
+  <li>We send a full response within <strong>14 days</strong>. If a matter needs more investigation, we'll explain why and give you an updated date.</li>
+  <li>If you're not happy with our response, you can ask for an internal review by a senior member of the {{ S }} team who wasn't involved in the original response, where reasonably practicable.</li>
+</ol>
+
+<h2>Your rights</h2>
+<p>Making a complaint does not affect your statutory consumer or data protection rights. Complaints about how we use personal information can also be raised with the <a href="https://ico.org.uk/make-a-complaint/" target="_blank" rel="noopener">Information Commissioner's Office</a>.</p>
+</div>
+{% endblock %}

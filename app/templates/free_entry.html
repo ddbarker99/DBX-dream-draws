@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Free postal entry · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}Enter any {{ config.SITE_NAME }} competition free by post, with exactly the same chance of winning as a paid entry.{% endblock %}
+{% block content %}
+<div class="prose">
+<h1>Free postal entry</h1>
+<p>You can enter any of our competitions for free. Postal entries go into the draw — and can win instant prizes — on exactly the same basis as paid entries.</p>
+<h2>How to enter</h2>
+<ol>
+  <li>On a postcard or in a letter, write: the <strong>competition name</strong>, your <strong>answer</strong> to the question, your <strong>full name</strong>, <strong>address</strong>, <strong>email</strong>, <strong>phone number</strong> and <strong>date of birth</strong>.</li>
+  <li>Post it, first or second class, to:<br>
+    {% if config.POSTAL_ADDRESS %}<strong>{{ config.POSTAL_ADDRESS }}</strong>
+    {% else %}<strong>our postal entry address</strong> — {% if config.SUPPORT_EMAIL %}email <a href="mailto:{{ config.SUPPORT_EMAIL }}">{{ config.SUPPORT_EMAIL }}</a>{% else %}<a href="{{ url_for('public.contact') }}">contact us</a>{% endif %} and we'll send it to you straight away.{% endif %}</li>
+  <li>One entry per envelope. It must arrive before the competition closes.</li>
+</ol>
+<p>We'll email you your ticket number once your entry has been added. Postal and online entries count together towards the per-person limit, and the same eligibility rules apply: UK residents aged 18 or over.</p>
+<h2>Things to know</h2>
+<ul>
+  <li>Ordinary first- or second-class post is all you need — you don't need recorded or tracked delivery.</li>
+  <li>Each competition's question is shown on its page. Answer it on your entry.</li>
+  <li>Incomplete, illegible, late or duplicated entries can't be accepted. Proof of posting isn't proof of receipt.</li>
+  <li>Free entries go into the same draw as paid entries and can win instant prizes on exactly the same basis.</li>
+</ul>
+<p>Full details are in section 4 of our <a href="{{ url_for('public.page', page='terms') }}#free-entry">terms and conditions</a>.</p>
+{% if user and user.is_admin and not config.POSTAL_ADDRESS %}<p class="notice warn"><span><b>Admin only:</b> set POSTAL_ADDRESS in your .env so the address shows here.</span></p>{% endif %}
+</div>
+{% endblock %}

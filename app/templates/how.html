@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}How it works — entering, winning and getting paid · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}How {{ config.SITE_NAME }} prize draws and instant win games work: who can enter, how winners are chosen, free entry, prizes, withdrawals and refunds.{% endblock %}
+{% block content %}
+<div class="page-head"><h1>How it works</h1>
+<p>Everything you need to know before you enter, in plain English. The full rules are in our <a href="{{ url_for('public.page', page='terms') }}">terms and conditions</a>.</p></div>
+
+<ol class="steps" style="margin-bottom:var(--s7)">
+  <li><h3>Choose a prize</h3><p>Pick a <a href="{{ url_for('public.competitions') }}">prize draw</a> or an <a href="{{ url_for('public.instant_wins') }}">instant win game</a>.</p></li>
+  <li><h3>Answer the question</h3><p>Answer correctly and choose how many tickets or plays you want.</p></li>
+  <li><h3>Check out</h3><p>Pay by debit card, Apple Pay or Google Pay. Your numbers arrive straight away.</p></li>
+  <li><h3>Win</h3><p>Instant prizes pay at once. Main draws are run at the closing time.</p></li>
+</ol>
+
+<div class="prose">
+<h2 id="draws">Prize draws</h2>
+<p>Each draw has a fixed maximum number of tickets, shown on the competition page with the price, closing date and per-person limit. Your odds per ticket are never worse than 1 in the maximum number of tickets. The draw goes ahead at the closing time even if not every ticket sells.</p>
+<p>Some draws also have <strong>instant prizes</strong>: specific ticket numbers that win a prize the moment they're issued, on top of their chance in the main draw.</p>
+
+<h2 id="instant-wins">Instant Wins</h2>
+<p>Instant win games — scratchcards, wheels and mystery boxes — have a fixed number of plays and prizes. Which plays win is decided at random and sealed before the game goes live; the animation only reveals it. Prizes are paid when you reveal them, and anything you don't reveal is paid automatically after 24 hours or when the game closes.</p>
+<p>Verified members also get one <strong>free play every day</strong> on the daily free game.</p>
+
+<h2 id="eligibility">Who can enter</h2>
+<ul><li>UK residents aged 18 or over.</li><li>One account per person.</li><li>Staff of the promoter and their households can't enter.</li></ul>
+
+<h2 id="free-entry">Free entry</h2>
+<p>You can enter any competition free by post with exactly the same chance of winning. <a href="{{ url_for('public.page', page='free-entry') }}">How to enter by post</a>.</p>
+
+<h2 id="winners">How winners are chosen</h2>
+<p>Before tickets go on sale we lock in a secret random seed and publish its fingerprint (a hash) on the competition page. At the draw, that seed and the list of every ticket decide the winner. Afterwards we reveal the seed so anyone can repeat the calculation and get the same winner. <a href="{{ url_for('public.page', page='fair-draws') }}">See the full method and check a draw</a>.</p>
+<p>Winners are published on <a href="{{ url_for('public.winners') }}">Winners &amp; results</a> with their first name and surname initial.</p>
+
+<h2 id="prizes">Getting your prize</h2>
+<ul>
+  <li><strong>Cash prizes</strong> go to your cash balance. Withdraw from {{ 500|gbp }} to a UK bank account or PayPal — we aim to pay within 24 hours.</li>
+  <li><strong>Site credit</strong> (from referrals, points and promotions) can be spent on entries but not withdrawn.</li>
+  <li><strong>Deposited funds</strong> — money you add to your wallet by debit card — can be spent on entries, and anything unspent can be refunded to your card at any time.</li>
+  <li><strong>Physical prizes</strong> are delivered free in the UK. We contact winners by email and phone. Where a cash alternative is listed, you can choose it instead.</li>
+</ul>
+
+<h2 id="payments">Payments</h2>
+<p>We take debit cards, Apple Pay and Google Pay linked to a debit card, and Pay by Bank. Credit cards aren't accepted for competition entries — a credit card payment is refunded automatically and no tickets are issued.</p>
+
+<h2 id="refunds">Refunds</h2>
+<p>Entries can't be cancelled once your numbers are issued, because they're already in the draw. If we cancel a competition, everyone is refunded in full to their cash balance, which can be withdrawn. If something has gone wrong with an order, <a href="{{ url_for('public.contact') }}">contact us</a>.</p>
+
+<h2 id="safer-play">Playing safely</h2>
+<p>Set daily, weekly and monthly spending limits or take a break from your account at any time. <a href="{{ url_for('public.page', page='responsible-play') }}">Responsible play and free support</a>.</p>
+
+<p style="margin-top:var(--s6)">Still have a question? Read the <a href="{{ url_for('public.page', page='faq') }}">FAQs</a> or <a href="{{ url_for('public.contact') }}">contact us</a>.</p>
+</div>
+{% endblock %}

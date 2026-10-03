@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Stats · Admin{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Stats</h1>
+<div class="statstrip">
+  <div><b>{{ totals.revenue|gbp }}</b><span>Card revenue (all time)</span></div>
+  <div><b>{{ totals.players }}</b><span>Paying players of {{ totals.users }}</span></div>
+  <div><b>{{ totals.arpu|gbp }}</b><span>Average spend per player</span></div>
+  <div><b>{{ totals.cash_won|gbp }}</b><span>Instant cash won</span></div>
+</div>
+<div class="statstrip">
+  <div><b>{{ totals.cash_owed|gbp }}</b><span>Cash balances owed to players</span></div>
+  <div><b>{{ totals.credit_owed|gbp }}</b><span>Site credit outstanding</span></div>
+  <div><b>{{ totals.paid_out|gbp }}</b><span>Withdrawals paid</span></div>
+  <div><b>{{ (totals.revenue - totals.paid_out - totals.cash_owed)|gbp }}</b><span>Card revenue minus cash paid &amp; owed</span></div>
+</div>
+<h2>Card revenue — last 30 days</h2>
+<div class="panel">
+  <div class="bars">{% for d in days %}<div style="height:{{ (100 * d.rev / peak)|round(1) }}%" data-t="{{ d.label }}: {{ d.rev|gbp }} · {{ d.signups }} sign-ups"></div>{% endfor %}</div>
+  <div class="row tiny muted" style="margin-top:6px"><span>{{ days[0].label }}</span><span>Hover a bar for details</span><span>{{ days[-1].label }}</span></div>
+</div>
+<h2>Top competitions</h2>
+<div class="panel table-scroll"><table><tr><th>Competition</th><th class="num">Sold</th><th class="num">Revenue</th></tr>
+  {% for t in top %}<tr><td><a href="{{ url_for('admin.entries', cid=t.id) }}">{{ t.title }}</a>{% if t.game_type %} <span class="pill instant">game</span>{% endif %}</td><td class="num">{{ t.sold }}</td><td class="num">{{ t.revenue|gbp }}</td></tr>{% endfor %}</table></div>
+<h2>Games — actual payout so far</h2>
+<div class="panel table-scroll"><table><tr><th>Game</th><th class="num">Plays sold</th><th class="num">Sales</th><th class="num">Prizes won</th><th class="num">Paid back</th></tr>
+  {% for g in games %}<tr><td><a href="{{ url_for('admin.entries', cid=g.c.id) }}">{{ g.c.title }}</a></td><td class="num">{{ g.plays }}</td><td class="num">{{ g.sales|gbp }}</td><td class="num">{{ g.paid|gbp }}</td>
+    <td class="num">{% if g.rtp is not none %}<b class="{{ 'neg' if g.rtp > 100 else '' }}">{{ g.rtp }}%</b>{% else %}—{% endif %}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">No games yet.</td></tr>{% endfor %}</table>
+  <p class="tiny muted" style="margin-bottom:0">Early on a game can pay back more than 100% if a big prize lands first — it evens out as it sells. Free daily games show no sales.</p></div>
+{% endblock %}

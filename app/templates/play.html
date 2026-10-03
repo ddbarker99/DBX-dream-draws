@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Play {{ c.title }} · {{ config.SITE_NAME }}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{ url_for('public.instant_wins') }}">Instant Wins</a> › <a href="{{ url_for('public.competition', slug=c.slug) }}">{{ c.title }}</a> › <span aria-current="page">Play</span></nav>
+<div class="playwrap">
+  <div>
+    <div class="row" style="flex-wrap:wrap">
+      <h1 style="margin:0">{{ c.title }}</h1>
+      <span class="pill instant"><span aria-hidden="true">{{ d.game.icon }}</span> {{ game_name }} · {{ c.ticket_price|pp }}</span>
+    </div>
+    <p class="muted" id="counter" style="margin:6px 0 16px" aria-live="polite"></p>
+
+    <div class="stage panel" id="stage">
+      {% if c.game_type == 'scratch' %}
+      <div class="scratch" id="scratch">
+        <div class="under" id="under"><div class="res"><span class="big">?</span></div></div>
+        <canvas id="cv" width="560" height="340"></canvas>
+      </div>
+      <p class="tiny muted center" id="hint">Scratch the silver panel with your mouse or finger</p>
+
+      {% elif c.game_type == 'spin' %}
+      <div class="wheelbox">
+        <div class="pointer"></div>
+        <svg id="wheel" viewBox="-160 -160 320 320"></svg>
+        <button class="btn spinbtn" id="spinbtn" type="button">SPIN</button>
+      </div>
+
+      {% else %}
+      <div class="boxzone">
+        <button class="mbox" id="mbox" type="button" aria-label="Open the box">
+          <span class="lid"></span><span class="body"><span class="q">?</span></span>
+        </button>
+        <p class="tiny muted center">Tap the box to open it</p>
+      </div>
+      {% endif %}
+
+      <div class="result" id="result" hidden role="status" aria-live="polite">
+        <div class="rtitle" id="rtitle"></div>
+        <div class="rsub muted" id="rsub"></div>
+        <div class="actions" style="justify-content:center;margin-top:14px">
+          <button class="btn" id="nextbtn" type="button">Next play ▶</button>
+          {% if c.free_daily %}<a class="btn ghost" href="{{ url_for('public.instant_wins') }}">More games</a>{% else %}<a class="btn ghost" href="{{ url_for('public.competition', slug=c.slug) }}#enter">Buy more plays</a>{% endif %}
+        </div>
+      </div>
+
+      <div class="empty center" id="empty" {{ 'hidden' if waiting }}>
+        <p style="font-size:42px;margin:0" aria-hidden="true">🎮</p>
+        {% if c.free_daily %}
+        <h3>That's today's free play done</h3>
+        <p class="muted">Come back after midnight for another free go — or try a paid game.</p>
+        <a class="btn" href="{{ url_for('public.instant_wins') }}">Play instant win games</a>
+        {% else %}
+        <h3>No plays waiting</h3>
+        <p class="muted">Buy plays to reveal more prizes.</p>
+        {% if d.state == 'live' %}<a class="btn" href="{{ url_for('public.competition', slug=c.slug) }}#enter">Buy plays — {{ c.ticket_price|pp }} each</a>{% endif %}
+        {% endif %}
+      </div>
+    </div>
+
+    {% if waiting|length > 1 %}
+    <form method="post" action="{{ url_for('public.play_reveal_all', slug=c.slug) }}" style="margin-top:10px" id="allform">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="linkbtn small">Skip the animations — reveal all {{ waiting|length }} plays at once</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="stack">
+    <div class="panel">
+      <h2 style="font-size:18px">Prizes in this game</h2>
+      <table style="margin-top:8px">{% for p in prizes %}<tr><td>{{ p.title }}</td><td class="num muted">{{ p.value|gbp }}</td></tr>{% endfor %}</table>
+      <p class="tiny muted" style="margin-bottom:0">{{ d.game.left }} prizes left · {% if d.game.odds %}overall 1 in {{ d.game.odds|round|int }} plays wins{% endif %}. Cash prizes go straight to your cash balance — withdraw any time.</p>
+    </div>
+    <div class="panel">
+      <h2 style="font-size:18px">Your results</h2>
+      <div class="tickets" id="history" style="margin-top:10px">
+        {% for h in history %}<span class="{{ 'iw' if h.win }}" title="{{ h.win or 'No win' }}">#{{ h.number }}{% if h.win %} · {{ h.win }}{% endif %}</span>{% else %}<span class="muted" style="border:0;background:none" id="nohist">None yet</span>{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if more %}
+<h2 style="margin-top:var(--s7)">More games</h2>
+<div class="grid">{% for it in more %}{% include "_gamecard.html" %}{% endfor %}</div>
+{% endif %}
+<canvas id="confetti"></canvas>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+var QUEUE={{ waiting|map(attribute='id')|list|tojson }}, NUMS={{ waiting|map(attribute='number')|list|tojson }},
+    CSRF={{ csrf_token|tojson }}, URL={{ url_for('public.play_reveal', tid=0)|tojson }}.replace(/0$/,''),
+    TYPE={{ c.game_type|tojson }}, PRIZES={{ prizes|map(attribute='title')|list|tojson }}, i=0, busy=false;
+var $=function(id){return document.getElementById(id)};
+
+function counter(){var left=QUEUE.length-i;$('counter').textContent=left>0?('Play #'+NUMS[i]+' · '+left+' play'+(left==1?'':'s')+' left to reveal'):'All plays revealed';}
+function reveal(){return fetch(URL+QUEUE[i],{method:'POST',body:new URLSearchParams({csrf:CSRF}),headers:{'Accept':'application/json'}}).then(function(r){return r.json()});}
+function gbp(p){return '£'+(p/100).toFixed(2).replace(/\.00$/,'')}
+function addHistory(r){var h=$('history'),n=$('nohist');if(n)n.remove();var s=document.createElement('span');
+  if(r.win){s.className='iw';s.textContent='#'+r.number+' · '+r.title}else s.textContent='#'+r.number;s.title=r.win?r.title:'No win';h.prepend(s);}
+function showResult(r){
+  var left=QUEUE.length-i-1;$('counter').textContent=left>0?(left+' play'+(left==1?'':'s')+' left to reveal'):'That was your last play';
+  addHistory(r);$('result').hidden=false;
+  $('rtitle').textContent=r.win?('🎉 You won '+r.title+'!'):'No win this time';
+  $('rtitle').className='rtitle '+(r.win?'won':'lost');
+  $('rsub').textContent=r.win?(r.kind==='cash'?'Real cash — added to your cash balance. Withdraw it any time.':r.kind==='credit'?'Added to your site credit straight away.':'We\'ll be in touch to arrange your prize.'):'Better luck on the next one.';
+  $('nextbtn').hidden=(i+1>=QUEUE.length);
+  if(r.win)confetti();
+}
+function next(){i++;$('result').hidden=true;if(i>=QUEUE.length){done();return}counter();setup();}
+function done(){counter();document.querySelectorAll('.scratch,#hint,.wheelbox,.boxzone').forEach(function(e){e.hidden=true});
+  $('empty').hidden=false;var f=$('allform');if(f)f.hidden=true;}
+$('nextbtn').onclick=next;
+
+/* ---------- scratch card ---------- */
+var cv,ctx,scratched=false,pending=null;
+function setupScratch(){
+  cv=$('cv');ctx=cv.getContext('2d');scratched=false;pending=null;
+  $('under').innerHTML='<div class="res"><span class="big">?</span></div>';
+  ctx.globalCompositeOperation='source-over';
+  var g=ctx.createLinearGradient(0,0,560,340);g.addColorStop(0,'#d9dce1');g.addColorStop(.5,'#9aa0a8');g.addColorStop(1,'#e8eaee');
+  ctx.fillStyle=g;ctx.fillRect(0,0,560,340);
+  ctx.fillStyle='rgba(0,0,0,.08)';for(var k=0;k<400;k++)ctx.fillRect(Math.random()*560,Math.random()*340,2,2);
+  ctx.fillStyle='#3a3f47';ctx.font='900 34px "Russo One",Arial Black,sans-serif';ctx.textAlign='center';ctx.fillText('SCRATCH HERE',280,165);
+  ctx.font='700 18px sans-serif';ctx.fillText('Play #'+NUMS[i],280,200);
+  ctx.globalCompositeOperation='destination-out';
+}
+function scratchAt(e){
+  var r=cv.getBoundingClientRect(),p=e.touches?e.touches[0]:e,x=(p.clientX-r.left)*cv.width/r.width,y=(p.clientY-r.top)*cv.height/r.height;
+  ctx.beginPath();ctx.arc(x,y,26,0,Math.PI*2);ctx.fill();
+}
+function cleared(){var d=ctx.getImageData(0,0,560,340).data,c=0,t=0;for(var k=3;k<d.length;k+=64){t++;if(d[k]===0)c++}return c/t;}
+function startScratch(){
+  if(pending||scratched)return;
+  pending=reveal().then(function(r){
+    var u=$('under');u.innerHTML='';var d=document.createElement('div');d.className='res'+(r.win?' win':'');
+    var b=document.createElement('span');b.className='big';b.textContent=r.win?r.title:'No win';var t=document.createElement('span');
+    t.textContent=r.win?'WINNER':'Try again';d.appendChild(b);d.appendChild(t);u.appendChild(d);
+    return r;});
+}
+function finishScratch(){if(scratched||!pending)return;if(cleared()<0.5)return;scratched=true;
+  pending.then(function(r){ctx.clearRect(0,0,560,340);showResult(r);});}
+if(TYPE==='scratch'){
+  var down=false,c0=$('cv');
+  ['mousedown','touchstart'].forEach(function(ev){c0.addEventListener(ev,function(e){if(i>=QUEUE.length)return;down=true;startScratch();scratchAt(e);e.preventDefault()},{passive:false})});
+  ['mousemove','touchmove'].forEach(function(ev){c0.addEventListener(ev,function(e){if(!down||scratched)return;scratchAt(e);e.preventDefault()},{passive:false})});
+  ['mouseup','mouseleave','touchend'].forEach(function(ev){c0.addEventListener(ev,function(){if(down){down=false;finishScratch()}})});
+}
+
+/* ---------- wheel ---------- */
+var SEG=[],rot=0;
+function buildWheel(){
+  var w=$('wheel');if(!w)return;var labels=[];PRIZES.slice(0,6).forEach(function(p){labels.push({t:p,win:true});labels.push({t:'Try again',win:false})});
+  if(labels.length<8)while(labels.length<8){labels.push({t:'Try again',win:false})}
+  SEG=labels;var n=labels.length,a=2*Math.PI/n,html='';
+  labels.forEach(function(s,k){var a0=k*a-Math.PI/2-a/2,a1=a0+a,x0=150*Math.cos(a0),y0=150*Math.sin(a0),x1=150*Math.cos(a1),y1=150*Math.sin(a1);
+    var fill=s.win?(k%4==0?'#ff2436':'#c4001a'):(k%4==1?'#1a1013':'#241418');
+    html+='<path d="M0 0 L'+x0+' '+y0+' A150 150 0 0 1 '+x1+' '+y1+' Z" fill="'+fill+'" stroke="#e6e8ec" stroke-width="2"/>';
+    var mid=(a0+a1)/2,tx=95*Math.cos(mid),ty=95*Math.sin(mid),deg=mid*180/Math.PI;
+    var t=s.t.length>14?s.t.slice(0,13)+'…':s.t;
+    html+='<text x="'+tx+'" y="'+ty+'" transform="rotate('+deg+' '+tx+' '+ty+')" text-anchor="middle" dominant-baseline="middle" font-size="'+(s.win?13:11)+'" font-weight="800" fill="#fff">'+t.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</text>';});
+  html+='<circle r="150" fill="none" stroke="#ff2436" stroke-width="6"/><circle r="26" fill="#0b0709" stroke="#e6e8ec" stroke-width="4"/>';
+  w.innerHTML=html;
+}
+function spin(){
+  if(busy||i>=QUEUE.length)return;busy=true;$('spinbtn').disabled=true;
+  reveal().then(function(r){
+    var idx=[];SEG.forEach(function(s,k){if(r.win?s.t===r.title:!s.win)idx.push(k)});
+    if(!idx.length)SEG.forEach(function(s,k){if(r.win?s.win:!s.win)idx.push(k)});
+    var k=idx[Math.floor(Math.random()*idx.length)],n=SEG.length,seg=360/n;
+    var target=360-k*seg+(Math.random()-.5)*seg*.6;
+    rot=rot-(rot%360)+360*6+target;
+    var w=$('wheel');w.style.transition='transform 4.2s cubic-bezier(.12,.75,.15,1)';w.style.transform='rotate('+rot+'deg)';
+    setTimeout(function(){busy=false;$('spinbtn').disabled=false;showResult(r)},4400);
+  });
+}
+if(TYPE==='spin'){buildWheel();$('spinbtn').onclick=spin;}
+
+/* ---------- mystery box ---------- */
+function openBox(){
+  if(busy||i>=QUEUE.length)return;busy=true;var b=$('mbox');b.classList.add('shake');
+  reveal().then(function(r){setTimeout(function(){b.classList.remove('shake');b.classList.add('open',r.win?'won':'lost');
+    b.querySelector('.q').textContent=r.win?'🏆':'✖';setTimeout(function(){busy=false;showResult(r)},700)},1100)});
+}
+function setupBox(){var b=$('mbox');if(!b)return;b.className='mbox';b.querySelector('.q').textContent='?';}
+if(TYPE==='box'){$('mbox').onclick=openBox;}
+
+function setup(){if(TYPE==='scratch')setupScratch();else if(TYPE==='box')setupBox();}
+
+/* ---------- confetti ---------- */
+function confetti(){
+  var c=$('confetti'),x=c.getContext('2d');c.width=innerWidth;c.height=innerHeight;c.style.display='block';
+  var P=[];for(var k=0;k<160;k++)P.push({x:Math.random()*c.width,y:-20-Math.random()*c.height*.5,v:2+Math.random()*4,s:4+Math.random()*6,
+    c:['#ff2436','#ffffff','#c9ccd2','#ff7b86'][k%4],r:Math.random()*6,w:Math.random()*.2-.1});
+  var t=0;(function f(){x.clearRect(0,0,c.width,c.height);P.forEach(function(p){p.y+=p.v;p.x+=Math.sin(t/20+p.r)*1.5;p.r+=p.w;
+    x.save();x.translate(p.x,p.y);x.rotate(p.r);x.fillStyle=p.c;x.fillRect(-p.s/2,-p.s/2,p.s,p.s*.6);x.restore()});
+    if(++t<200)requestAnimationFrame(f);else c.style.display='none'})();
+}
+
+if(QUEUE.length){counter();setup();}else done();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}{{ {'winners':'Winners','results':'Draw results','live':'Live draws'}[tab] }} · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}{% if tab == 'results' %}Every finished draw with its winning ticket, entry list and the data to check it yourself.{% elif tab == 'live' %}Watch our draws live and see which competitions are drawn next.{% else %}Real winners and real prizes: main draw winners and the latest instant wins at {{ config.SITE_NAME }}.{% endif %}{% endblock %}
+{% block canonical %}{{ config.SITE_URL }}{{ url_for('public.winners', tab=tab if tab != 'winners' else None) }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Winners &amp; results</h1>
+  <p>Every draw is published in full and can be <a href="{{ url_for('public.page', page='fair-draws') }}">checked by anyone</a>.</p>
+</div>
+{% if stats.winners %}
+<div class="statstrip" style="margin-bottom:var(--s5)">
+  <div><b>{{ stats.won_value|gbp }}</b><span>Prizes won</span></div>
+  <div><b>{{ '{:,}'.format(stats.winners) }}</b><span>Winners</span></div>
+  <div><b>{{ '{:,}'.format(stats.draws) }}</b><span>Main draws</span></div>
+  <div><b>{{ '{:,}'.format(stats.instant_wins) }}</b><span>Instant wins</span></div>
+</div>
+{% endif %}
+<nav class="tabs" aria-label="Winners sections">
+  {% for k, label in [('winners','Winners'),('results','Draw results'),('live','Live draws')] %}
+  <a href="{{ url_for('public.winners', tab=k if k != 'winners' else None) }}"{% if tab == k %} aria-current="page"{% endif %}>{{ label }}{% if k == 'live' and live_now %} <span class="pill live">Live now</span>{% endif %}</a>{% endfor %}
+</nav>
+
+{% if tab == 'winners' %}
+<section aria-labelledby="mw-h">
+  <h2 id="mw-h">Main draw winners</h2>
+  {% if items %}
+  <div class="grid">
+  {% for it in items %}
+    <a class="card" href="{{ url_for('public.competition', slug=it.c.slug) }}">
+      <div class="thumb">{% if it.c.winner_photo %}<img src="{{ url_for('public.uploads', name=it.c.winner_photo) }}" alt="{{ it.name }} with their prize" loading="lazy">{% elif it.c.image %}<img src="{{ url_for('public.uploads', name=it.c.image) }}" alt="" loading="lazy">{% else %}<span aria-hidden="true">🏆</span>{% endif %}
+        <div class="badges"><span class="pill drawn">Drawn {{ it.c.drawn_at|uktime('%d %b %Y') }}</span></div></div>
+      <div class="body">
+        <h3>{{ it.c.title }}</h3>
+        <div class="meta-line"><b style="color:#fff">{{ it.name }}</b><span>Ticket #{{ it.number }}</span></div>
+        {% if it.c.winner_quote %}<p class="small muted" style="margin:0">“{{ it.c.winner_quote }}”</p>{% endif %}
+      </div>
+    </a>
+  {% endfor %}
+  </div>
+  {% else %}<div class="empty"><p>No main draws have finished yet — yours could be the first.</p><a class="btn" href="{{ url_for('public.competitions') }}">See live competitions</a></div>{% endif %}
+</section>
+
+<section class="section" aria-labelledby="iw-h">
+  <h2 id="iw-h">Latest instant wins</h2>
+  <div class="panel table-scroll"><table>
+    <caption class="sr-only">Latest instant wins</caption>
+    <thead><tr><th scope="col">Winner</th><th scope="col">Prize</th><th scope="col">Competition or game</th><th scope="col">Ticket</th><th scope="col">When</th></tr></thead>
+    <tbody>
+    {% for r in instant %}<tr><td><b>{{ public_name(r.name) }}</b></td><td>{{ r.title }}</td><td><a href="{{ url_for('public.competition', slug=r.slug) }}">{{ r.comp }}</a></td><td>#{{ r.number }}</td><td class="muted">{{ r.won_at|ago }}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">No instant wins yet.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+{% elif tab == 'results' %}
+<section aria-labelledby="res-h">
+  <h2 id="res-h" class="sr-only">Draw results</h2>
+  <p class="muted">Finished and closing draws, newest first. Open a competition to see the revealed seed and check the result.</p>
+  <div class="panel table-scroll"><table>
+    <thead><tr><th scope="col">Competition</th><th scope="col">Status</th><th scope="col" class="num">Entries</th><th scope="col">Winning ticket</th><th scope="col">Winner</th><th scope="col"><span class="sr-only">Links</span></th></tr></thead>
+    <tbody>
+    {% for it in items %}<tr>
+      <td><a href="{{ url_for('public.competition', slug=it.d.c.slug) }}">{{ it.d.c.title }}</a><div class="tiny muted">{{ it.d.c.ends_at|uktime('%d %b %Y') }}</div></td>
+      <td><span class="pill {{ it.d.state }}">{{ {'drawn':'Drawn','ended':'Awaiting draw','soldout':'Sold out'}.get(it.d.state) }}</span></td>
+      <td class="num">{{ '{:,}'.format(it.d.sold) }}</td>
+      <td>{% if it.number %}<b>#{{ it.number }}</b>{% else %}—{% endif %}</td>
+      <td>{{ it.name or '—' }}</td>
+      <td><a class="small" href="{{ url_for('public.entry_list', slug=it.d.c.slug) }}">Entry list</a>{% if it.d.c.live_url %} · <a class="small" href="{{ it.d.c.live_url }}" target="_blank" rel="noopener">Video</a>{% endif %}</td>
+    </tr>{% else %}<tr><td colspan="6" class="muted">No finished draws yet.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+{% else %}
+<section aria-labelledby="live-h">
+  {% if live_now %}
+  <div class="panel accent">
+    <span class="pill live"><span class="dot" aria-hidden="true"></span>Live now</span>
+    <h2 id="live-h" style="margin:var(--s3) 0">{{ live_title }}</h2>
+    <a class="btn" href="{{ live_now }}" target="_blank" rel="noopener">Watch the draw<span class="sr-only"> (opens in a new tab)</span></a></div>
+  {% else %}
+  <h2 id="live-h" class="sr-only">Live draws</h2>
+  {% set streams = [] %}{% for k in ['youtube','facebook','twitch','tiktok'] if config.SOCIAL[k] %}{% set _ = streams.append(k) %}{% endfor %}
+  <p class="muted">Big draws are streamed live{% if streams %} on {% for k in streams %}<a href="{{ config.SOCIAL[k] }}" target="_blank" rel="noopener">{{ k|capitalize }}</a>{{ ', ' if not loop.last }}{% endfor %}{% endif %}. Nothing is live right now — here's what's drawn next. Other draws run automatically at the closing time.</p>
+  {% endif %}
+  <h2 style="margin-top:var(--s5)">Next draws</h2>
+  {% if upcoming %}<div class="grid">{% for it in upcoming %}{% include "_card.html" %}{% endfor %}</div>
+  {% else %}<div class="empty"><p>No draws scheduled right now.</p><a class="btn" href="{{ url_for('public.instant_wins') }}">Play Instant Wins</a></div>{% endif %}
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Add funds · {{ config.SITE_NAME }}{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block head %}{% if d.status == 'pending' %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
+{% block content %}
+<div class="panel center" style="max-width:560px;margin:var(--s6) auto">
+{% if d.status == 'paid' %}
+  <p style="font-size:44px;margin:0" aria-hidden="true">💷</p>
+  <h1>{{ d.amount|gbp }} added</h1>
+  <p class="muted">Your wallet now has {{ bal.deposit|gbp }} in deposited funds. It's used automatically at checkout.</p>
+  <div class="actions" style="justify-content:center"><a class="btn" href="{{ url_for('public.competitions') }}">Find a competition</a><a class="btn ghost" href="{{ url_for('public.instant_wins') }}">Play Instant Wins</a></div>
+{% elif d.status == 'pending' %}
+  <h1>Confirming your payment…</h1><p class="muted" role="status">This usually takes a few seconds and the page refreshes by itself.</p>
+{% elif d.status in ('credit_refused', 'needs_refund') %}
+  <h1>Credit cards aren't accepted</h1>
+  <p class="muted">{% if d.status == 'credit_refused' %}Your payment has been refunded in full — it can take 5–10 working days to appear.{% else %}We'll refund your payment in full shortly.{% endif %} Please try again with a debit card.</p>
+  <a class="btn" href="{{ url_for('public.account', tab='wallet') }}#deposit">Back to my wallet</a>
+{% else %}
+  <h1>Deposit not completed</h1><p class="muted">You haven't been charged.</p><a class="btn" href="{{ url_for('public.account', tab='wallet') }}#deposit">Back to my wallet</a>
+{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Privacy policy · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}How {{ config.SITE_NAME }} collects, uses, stores and shares personal information, and your data protection rights.{% endblock %}
+{% set S = config.SITE_NAME %}
+{% set email %}{% if config.SUPPORT_EMAIL %}<a href="mailto:{{ config.SUPPORT_EMAIL }}">{{ config.SUPPORT_EMAIL }}</a>{% else %}our <a href="{{ url_for('public.contact') }}">contact page</a>{% endif %}{% endset %}
+{% block content %}
+<div class="prose legal-doc">
+<h1>Privacy policy</h1>
+<p class="dim">Last updated: 3 October 2026</p>
+{% include "_draft_notice.html" %}
+<p>This Privacy Policy explains how {{ S }} collects, uses, stores and shares personal information when you visit our website, create an account, enter a promotion, make a payment, receive or withdraw a prize, contact us or otherwise use our services.</p>
+
+<h2 id="who">1. Who we are</h2>
+<p>For the purposes of UK data protection law, the controller responsible for the personal information described in this policy is:</p>
+{% include "_legal_contact.html" %}
+
+<h2 id="collect">2. Information we collect</h2>
+<p>Depending on how you use {{ S }}, we may collect:</p>
+<ul>
+<li><strong>Account and identity information</strong> — your name, email address, date of birth, account identifiers and other information you give us when creating or maintaining an account. Passwords are never stored in readable form; we keep only a secure cryptographic hash.</li>
+<li><strong>Contact information</strong> — your email address, mobile number where provided, postal address where needed, and the content of your communications with us.</li>
+<li><strong>Competition and entry information</strong> — the promotions you enter, entry numbers, answers to entry questions, entry method, dates and times of entry, prizes and winner information.</li>
+<li><strong>Payment and transaction information</strong> — purchases, wallet deposits, refunds, cash balances, site credit, DBX Points and transaction history. Card details are entered directly into our payment provider's secure systems; we do not receive or store full card numbers or security codes.</li>
+<li><strong>Withdrawal information</strong> — the bank or PayPal details needed to make a payment to you, with related transaction and verification records. Bank account details are masked once a withdrawal has been paid; we keep limited records where needed for accounting, fraud prevention, disputes or legal obligations.</li>
+<li><strong>Free postal entry information</strong> — the details included with a postal entry, such as your name, contact details and the promotion you want to enter.</li>
+<li><strong>Verification information</strong> — where reasonably necessary, information or documents to verify your identity, age, address, eligibility, payment ownership or withdrawal details.</li>
+<li><strong>Technical and security information</strong> — information generated when you use the service, such as IP address, login and security records, browser information and timestamps, used to keep accounts secure and prevent fraud and misuse.</li>
+<li><strong>Communications</strong> — correspondence, contact-form messages, support enquiries and complaints you send us.</li>
+</ul>
+
+<h2 id="use">3. How and why we use your information</h2>
+<p>We process personal information only where we have an appropriate lawful basis. Depending on the activity, we use your information to:</p>
+<ul>
+<li>create and run your account;</li><li>accept and record entries;</li><li>run draws and instant-win promotions;</li><li>process payments;</li>
+<li>manage cash balances, site credit and DBX Points;</li><li>contact and verify winners and deliver or pay prizes;</li><li>process withdrawals and refunds;</li>
+<li>provide customer support and investigate complaints;</li><li>keep our systems secure and prevent fraud, duplicate accounts and misuse;</li>
+<li>apply age checks, spending limits and breaks;</li><li>meet legal, tax, accounting and regulatory obligations;</li>
+<li>establish, exercise or defend legal claims;</li><li>keep records showing that promotions were run fairly; and</li><li>send marketing where you have agreed to it.</li>
+</ul>
+<p>Our lawful basis may be that the processing is necessary to perform our contract with you (or to take steps at your request before entering one), necessary to comply with a legal obligation, necessary for our legitimate interests, or based on your consent.</p>
+<p>Where we rely on legitimate interests, those include protecting the security and integrity of our service, preventing fraud, running our business, handling disputes and improving our services. We weigh those interests against your rights and interests.</p>
+
+<h2 id="age">4. Age and eligibility</h2>
+<p>{{ S }} is only for adults aged 18 or over. We use your date of birth and, where reasonably necessary, verification information to enforce our age requirement and protect the integrity of our promotions. If we become aware that an account was created by someone who is not eligible, we may restrict or close it and handle the related information in line with the law.</p>
+
+<h2 id="payments">5. Payments</h2>
+<p>Payments are processed by Stripe. Stripe processes information under its own terms and <a href="https://stripe.com/gb/privacy" target="_blank" rel="noopener">privacy policy</a> and may carry out fraud-prevention and security checks, including checking the card type so that we can refuse credit cards.</p>
+
+<h2 id="sharing">6. Who we share information with</h2>
+<p>Where reasonably necessary, we share personal information with organisations that help us run {{ S }}, such as:</p>
+<ul>
+<li>payment and banking providers (Stripe, PayPal and our bank);</li><li>website hosting and infrastructure providers;</li><li>email providers that deliver our messages;</li>
+<li>identity, security and fraud-prevention providers;</li><li>professional advisers such as accountants, insurers and lawyers;</li>
+<li>delivery or fulfilment providers where needed to supply a prize; and</li>
+<li>public authorities, courts, law-enforcement bodies or other organisations where disclosure is legally required or reasonably necessary to protect legal rights.</li>
+</ul>
+<p>Service providers acting for us may use personal information only for the purposes we authorise and under appropriate contractual protections. We do not sell your personal information.</p>
+
+<h2 id="transfers">7. International transfers</h2>
+<p>Some service providers may process personal information outside the United Kingdom. Where UK data protection law requires safeguards for such a transfer, we use an appropriate lawful mechanism, such as UK adequacy regulations or approved contractual safeguards. Contact us for more information about the safeguards relevant to you.</p>
+
+<h2 id="retention">8. How long we keep information</h2>
+<p>We keep personal information only for as long as reasonably necessary for the purpose it was collected for, and for any legal, accounting, tax, fraud-prevention, dispute or record-keeping requirements. Different categories of information may therefore be kept for different periods. We consider the nature and sensitivity of the information, why we need it, legal requirements, the risk of fraud or disputes, and whether we could achieve the same purpose with less information. Information we no longer need is securely deleted or anonymised.</p>
+
+<h2 id="winners">9. Winner information</h2>
+<p>To show that prizes are genuinely awarded, we publish limited winner information: normally the winner's first name and surname initial, with the prize or promotion. Entry lists show entry numbers with the same shortened names. We never publish a winner's home address. Photographs, testimonials, videos or other publicity are only used where we have an appropriate lawful basis and, where required, your permission.</p>
+
+<h2 id="marketing">10. Marketing</h2>
+<p>We send marketing emails only where you have opted in (for example, by ticking the box when you sign up), and you can withdraw consent at any time in your account settings or using the unsubscribe option in any marketing email. Unsubscribing does not stop essential service messages such as entry confirmations, security notices, withdrawal updates or winner notifications.</p>
+
+<h2 id="cookies">11. Cookies</h2>
+<p>We use one strictly necessary cookie and no advertising or tracking cookies. See our <a href="{{ url_for('public.page', page='cookies') }}">Cookie Policy</a> for details. If we ever introduce cookies that need consent, we will ask for it first.</p>
+
+<h2 id="security">12. Security</h2>
+<p>We use appropriate technical and organisational measures to protect personal information against accidental or unlawful loss, alteration, disclosure, destruction or unauthorised access, including encrypted connections (HTTPS), hashed passwords and restricted administrative access. No online service can guarantee absolute security. Please keep your login details confidential and contact us promptly if you think your account has been compromised.</p>
+
+<h2 id="rights">13. Your data protection rights</h2>
+<p>Depending on the circumstances and the lawful basis for processing, you may have the right to:</p>
+<ul>
+<li>be informed about how your information is used;</li><li>access your personal information;</li><li>have inaccurate or incomplete information corrected;</li>
+<li>have information erased in certain circumstances;</li><li>restrict processing in certain circumstances;</li><li>object to certain processing;</li>
+<li>data portability in certain circumstances; and</li><li>rights relating to certain automated decision-making, where applicable.</li>
+</ul>
+<p>These rights are not absolute and may not apply in every situation. To exercise a right, email {{ email }} or use our <a href="{{ url_for('public.contact') }}">contact form</a>. We may need to verify your identity before completing a request.</p>
+
+<h2 id="object">14. Right to object</h2>
+<p>Where we process your information on the basis of legitimate interests, you may have the right to object. You always have the right to object to the use of your information for direct marketing; if you do, we will stop using it for that purpose.</p>
+
+<h2 id="complaints">15. Complaints about personal information</h2>
+<p>If you have concerns about how we use your personal information, please contact us first so we can investigate. You also have the right to complain to the <a href="https://ico.org.uk/make-a-complaint/" target="_blank" rel="noopener">Information Commissioner's Office (ICO)</a>, the UK's data protection regulator.</p>
+
+<h2 id="changes">16. Changes to this policy</h2>
+<p>We may update this policy to reflect changes to our services, suppliers, practices or legal obligations. Where a change is significant, we will take reasonable steps to bring it to your attention. The current version and its last-updated date are always available on this page.</p>
+
+<h2 id="contact">17. Contact us</h2>
+<p>For questions, privacy requests or complaints:</p>
+{% include "_legal_contact.html" %}
+</div>
+{% endblock %}

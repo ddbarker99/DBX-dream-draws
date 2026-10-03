@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Site settings · Admin{% endblock %}
+{% block content %}
+{% include "admin/_bar.html" %}
+<h1>Site settings</h1>
+<form class="panel" method="post" style="max-width:720px">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <label>Announcement bar <span class="muted">(shown at the top of every page — leave blank to hide)</span></label>
+  <input name="announcement" value="{{ s.announcement }}" placeholder="🔥 20% off everything this weekend with code WEEKEND20">
+  <h3 style="margin-top:24px">Going live</h3>
+  <p class="small muted">Paste your stream link to show a red "We're LIVE" bar across the site. Clear it when you finish.</p>
+  <label>Live stream link</label><input name="live_now_url" value="{{ s.live_now_url }}" placeholder="https://youtube.com/live/...">
+  <label>Live title</label><input name="live_now_title" value="{{ s.live_now_title }}" placeholder="Live draw: PS5 Pro Bundle">
+  <label class="check" style="margin-top:12px"><input type="checkbox" name="announce" value="1"> Also post to Discord</label>
+  <button class="btn block" style="margin-top:16px">Save</button>
+</form>
+<div class="panel" style="max-width:720px;margin-top:20px;border-color:#7a1622">
+  <h2 style="margin-top:0;font-size:20px">Start fresh</h2>
+  <p class="small muted">Delete test competitions, games, orders, wallets or player accounts before launch.</p>
+  <a class="btn danger small" href="{{ url_for('admin.reset') }}">Open start fresh</a>
+</div>
+{% endblock %}

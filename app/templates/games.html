@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{% if price %}{{ price|pp }} instant win games{% else %}Instant win games — scratchcards, spins and mystery boxes{% endif %} · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}Instant win games from 10p with real cash prizes. Scratch, spin or open a box — every result is sealed before the game goes live.{% endblock %}
+{% block canonical %}{{ config.SITE_URL }}{{ url_for('public.instant_wins', price=price or None) }}{% endblock %}
+{% block robots %}{% if kind %}<meta name="robots" content="noindex">{% else %}{{ super() }}{% endif %}{% endblock %}
+{% block content %}
+<div class="page-head row" style="flex-wrap:wrap;align-items:end">
+  <div><h1>Instant Wins</h1>
+  <p>Scratch, spin or open a box to see your result straight away. Every result is sealed before a game goes live — <a href="{{ url_for('public.page', page='fair-draws') }}">see how</a>.</p></div>
+  {% if waiting %}<a class="btn" href="{{ url_for('public.play', slug=waiting[0].slug) }}">You have {{ waiting|length }} play{{ 's' if waiting|length != 1 }} waiting</a>{% endif %}
+</div>
+{% if free_game %}<div style="margin-bottom:var(--s5)">{% include "_freebanner.html" %}</div>{% endif %}
+
+<nav aria-label="Filter by price">
+<div class="pricebands">
+  <a class="band" href="{{ url_for('public.instant_wins', type=kind or None) }}"{% if not price %} aria-current="page"{% endif %}><b>All</b><span>prices</span></a>
+  {% for p in prices %}<a class="band" href="{{ url_for('public.instant_wins', price=p, type=kind or None) }}"{% if price == p %} aria-current="page"{% endif %}><b>{{ p|pp }}</b><span>a play</span></a>{% endfor %}
+</div>
+</nav>
+<nav class="chips" aria-label="Filter by game type">
+  <a class="chip" href="{{ url_for('public.instant_wins', price=price) }}"{% if not kind %} aria-current="page"{% endif %}>All games</a>
+  {% for k, n, i in types %}<a class="chip" href="{{ url_for('public.instant_wins', price=price, type=k) }}"{% if kind == k %} aria-current="page"{% endif %}><span aria-hidden="true">{{ i }}&nbsp;</span>{{ n }}</a>{% endfor %}
+</nav>
+{% if cards %}
+<div class="grid">{% for it in cards %}{% include "_gamecard.html" %}{% endfor %}</div>
+{% else %}
+<div class="empty"><p>No {{ (price|pp ~ ' ') if price }}games are live right now.</p>
+  <div class="actions" style="justify-content:center">{% if price or kind %}<a class="btn" href="{{ url_for('public.instant_wins') }}">See all games</a>{% endif %}<a class="btn ghost" href="{{ url_for('public.competitions') }}">Browse competitions</a></div></div>
+{% endif %}
+<p class="small muted" style="margin-top:var(--s6)">Each game has a fixed number of plays and prizes. Cash prizes go straight to your cash balance and can be withdrawn from £5. Prizes you don't reveal are paid automatically after 24 hours.</p>
+{% endblock %}

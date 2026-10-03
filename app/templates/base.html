@@ -1,0 +1,164 @@
+{%- set ep = request.endpoint or '' -%}
+{%- set nm = config.SITE_NAME.split(' ', 1) -%}
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>{% block title %}{{ config.SITE_NAME }} — UK prize competitions, instant wins and cash prizes{% endblock %}</title>
+<meta name="description" content="{% block desc %}Win cars, tech and real cash. Provably fair prize draws, instant win games from 10p and a free entry route on every competition. UK, 18+.{% endblock %}">
+<link rel="canonical" href="{% block canonical %}{{ config.SITE_URL }}{{ request.path }}{% endblock %}">
+{% block robots %}{% if user %}<meta name="robots" content="noindex">{% endif %}{% endblock %}
+<meta name="theme-color" content="#070506">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Russo+One&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_v }}">
+<link rel="manifest" href="{{ url_for('public.manifest') }}">
+<link rel="icon" href="{{ url_for('static', filename='icon-192.png') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
+{% block og %}
+<meta property="og:site_name" content="{{ config.SITE_NAME }}">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{ self.title() }}">
+<meta property="og:description" content="{{ self.desc() }}">
+<meta property="og:image" content="{{ config.SITE_URL }}{{ url_for('static', filename='brand/banner.jpg') }}">
+<meta property="og:url" content="{{ config.SITE_URL }}{{ request.path }}">
+<meta name="twitter:card" content="summary_large_image">
+{% endblock %}
+{% block head %}{% endblock %}
+</head>
+<body class="{% block bodyclass %}{% endblock %}">
+<a class="skip" href="#main">Skip to content</a>
+{% if live_now %}<div class="strip live"><div class="wrap"><span><span class="dot" aria-hidden="true"></span>{{ live_title or "We're live!" }}</span><a href="{{ live_now }}" target="_blank" rel="noopener">Watch now<span class="sr-only"> (opens in a new tab)</span></a></div></div>{% endif %}
+{% if announcement %}<div class="strip announce"><div class="wrap">{{ announcement }}</div></div>{% endif %}
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="{{ url_for('public.home') }}" aria-label="{{ config.SITE_NAME }} — home">
+      <picture><source srcset="{{ url_for('static', filename='brand/logo-96.webp') }}?v={{ asset_v }}" type="image/webp"><img src="{{ url_for('static', filename='brand/logo-96.png') }}?v={{ asset_v }}" alt="" width="42" height="42"></picture>
+      <span class="b-full"><span class="b1">{{ nm[0] }}</span>{% if nm|length == 2 %} <span class="b2">{{ nm[1] }}</span>{% endif %}</span>
+    </a>
+    <nav class="nav" aria-label="Main">
+      {% for e, label, match in [('public.competitions', 'Competitions', ('public.competitions', 'public.competition', 'public.entry_list')),
+                                  ('public.instant_wins', 'Instant Wins', ('public.instant_wins', 'public.play')),
+                                  ('public.winners', 'Winners', ('public.winners',)),
+                                  ('public.how_it_works', 'How it works', ('public.how_it_works',))] %}
+      <a href="{{ url_for(e) }}"{% if ep in match %} aria-current="page"{% endif %}>{{ label }}</a>
+      {% endfor %}
+    </nav>
+    <div class="header-right">
+      {% if user %}
+        {% if user.is_admin %}<a class="iconbtn hide-md" href="{{ url_for('admin.dashboard') }}">Admin</a>{% endif %}
+        {% if wallet %}<a class="iconbtn walletpill hide-sm" href="{{ url_for('public.account', tab='wallet') }}" aria-label="Wallet: {{ wallet.total|gbp }} (cash {{ wallet.cash|gbp }}, credit {{ wallet.credit|gbp }})">{{ wallet.total|gbp }}</a>{% endif %}
+        <a class="iconbtn" href="{{ url_for('public.account') }}" aria-label="My account"{% if ep.startswith('public.account') %} aria-current="page"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><span class="hide-md">Account</span></a>
+        <form method="post" action="{{ url_for('public.logout') }}" class="hide-sm" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+          <button class="iconbtn logoutbtn" type="submit" aria-label="Log out">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5"/><path d="M5 12h11"/></svg><span class="hide-md">Log out</span></button></form>
+      {% else %}
+        <a class="iconbtn hide-sm" href="{{ url_for('public.login') }}">Log in</a>
+        <a class="btn small" href="{{ url_for('public.signup') }}">Join</a>
+      {% endif %}
+      <a class="iconbtn" href="{{ url_for('public.basket') }}" aria-label="Basket{% if basket_count %}, {{ basket_count }} item{{ 's' if basket_count != 1 }}{% else %}, empty{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.5L21 8H6"/><circle cx="10" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/></svg>
+        {% if basket_count %}<span class="count" aria-hidden="true">{{ basket_count }}</span>{% endif %}</a>
+      <button class="iconbtn menu-toggle" type="button" aria-controls="drawer" aria-expanded="false" aria-label="Menu" id="menubtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+    </div>
+  </div>
+  <div class="drawer" id="drawer">
+    <nav aria-label="Mobile">
+      <a href="{{ url_for('public.home') }}">Home</a>
+      <a href="{{ url_for('public.competitions') }}">Competitions</a>
+      <a href="{{ url_for('public.instant_wins') }}">Instant Wins</a>
+      <a href="{{ url_for('public.winners') }}">Winners &amp; results</a>
+      <a href="{{ url_for('public.how_it_works') }}">How it works</a>
+      <span class="group">Your account</span>
+      {% if user %}
+        <a href="{{ url_for('public.account') }}">My account{% if wallet %} · {{ wallet.total|gbp }}{% endif %}</a>
+        {% if user.is_admin %}<a href="{{ url_for('admin.dashboard') }}">Admin</a>{% endif %}
+        <form method="post" action="{{ url_for('public.logout') }}" style="margin-top:var(--s3)"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit" class="btn ghost block drawer-logout">Log out</button></form>
+      {% else %}
+        <a href="{{ url_for('public.login') }}">Log in</a>
+        <a href="{{ url_for('public.signup') }}">Create an account</a>
+      {% endif %}
+      <span class="group">Help</span>
+      <a href="{{ url_for('public.page', page='faq') }}">FAQs</a>
+      <a href="{{ url_for('public.contact') }}">Contact us</a>
+    </nav>
+  </div>
+</header>
+
+{% if user and not user.email_verified %}
+<div class="strip verify"><div class="wrap"><span>Confirm your email <b>{{ user.email }}</b> to unlock cash withdrawals and free plays.</span>
+  <form method="post" action="{{ url_for('public.resend_verification') }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn small">Resend link</button></form></div></div>
+{% endif %}
+
+<div class="toasts" id="toasts">{% for cat, msg in get_flashed_messages(with_categories=true) %}
+  <div class="toast {{ cat }}" role="{{ 'alert' if cat == 'error' else 'status' }}"><span aria-hidden="true">{{ '⚠' if cat == 'error' else '✓' }}</span><div><span class="sr-only">{{ 'Error: ' if cat == 'error' }}</span>{{ msg }}</div><button type="button" onclick="this.parentNode.remove()" aria-label="Dismiss">×</button></div>
+{% endfor %}</div>
+
+<main id="main" tabindex="-1"><div class="wrap">
+{% block content %}{% endblock %}
+</div></main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="fgrid">
+      <div>
+        <img class="footlogo" src="{{ url_for('static', filename='brand/logo-160.webp') }}?v={{ asset_v }}" alt="" width="64" height="64" loading="lazy">
+        <p class="brand"><span class="b1">{{ nm[0] }}</span>{% if nm|length == 2 %}&nbsp;<span class="b2">{{ nm[1] }}</span>{% endif %}</p>
+        <p>UK prize competitions with provably fair draws, instant win games and real cash prizes you can withdraw.</p>
+        {% set socials = config.SOCIAL.items()|selectattr(1)|list %}
+        {% if socials or config.TRUSTPILOT_URL %}<div class="social">{% for k, v in socials %}<a href="{{ v }}" target="_blank" rel="noopener">{{ k|capitalize }}</a>{% endfor %}
+          {% if config.TRUSTPILOT_URL %}<a href="{{ config.TRUSTPILOT_URL }}" target="_blank" rel="noopener">Trustpilot</a>{% endif %}</div>{% endif %}
+      </div>
+      <div><h2>Play</h2><ul>
+        <li><a href="{{ url_for('public.competitions') }}">All competitions</a></li>
+        <li><a href="{{ url_for('public.competitions', tab='ending') }}">Ending soon</a></li>
+        <li><a href="{{ url_for('public.instant_wins') }}">Instant Wins</a></li>
+        <li><a href="{{ url_for('public.winners') }}">Winners</a></li>
+        <li><a href="{{ url_for('public.winners', tab='results') }}">Draw results</a></li>
+      </ul></div>
+      <div><h2>Help</h2><ul>
+        <li><a href="{{ url_for('public.page', page='about') }}">About us</a></li>
+        <li><a href="{{ url_for('public.how_it_works') }}">How it works</a></li>
+        <li><a href="{{ url_for('public.page', page='faq') }}">FAQs</a></li>
+        <li><a href="{{ url_for('public.page', page='free-entry') }}">Free postal entry</a></li>
+        <li><a href="{{ url_for('public.page', page='fair-draws') }}">Fair draws</a></li>
+        <li><a href="{{ url_for('public.contact') }}">Contact us</a></li>
+      </ul></div>
+      <div><h2>Legal &amp; safety</h2><ul>
+        <li><a href="{{ url_for('public.page', page='terms') }}">Terms &amp; conditions</a></li>
+        <li><a href="{{ url_for('public.page', page='privacy') }}">Privacy</a></li>
+        <li><a href="{{ url_for('public.page', page='cookies') }}">Cookies</a></li>
+        <li><a href="{{ url_for('public.page', page='responsible-play') }}">Responsible play</a></li>
+        <li><a href="{{ url_for('public.page', page='complaints') }}">Complaints</a></li>
+      </ul></div>
+    </div>
+    <div class="legal"><span class="badge18" aria-label="18 plus">18+</span>
+      <p style="margin:0">UK residents aged 18+ only. No purchase necessary — <a href="{{ url_for('public.page', page='free-entry') }}">enter free by post</a>. Play responsibly: free help from <a href="https://www.gamcare.org.uk" target="_blank" rel="noopener">GamCare</a> and <a href="https://www.gambleaware.org" target="_blank" rel="noopener">GambleAware</a>.{% if config.COMPANY_DETAILS %}<br>{{ config.COMPANY_DETAILS }}{% endif %}</p></div>
+  </div>
+</footer>
+<script>
+(function(){
+  var b=document.getElementById('menubtn'),d=document.getElementById('drawer');
+  if(b)b.addEventListener('click',function(){var o=d.classList.toggle('open');b.setAttribute('aria-expanded',o)});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&d.classList.contains('open')){d.classList.remove('open');b.setAttribute('aria-expanded','false');b.focus()}});
+  function parts(s){return [Math.floor(s/86400),Math.floor(s%86400/3600),Math.floor(s%3600/60),s%60]}
+  function pad(n){return String(n).padStart(2,'0')}
+  document.querySelectorAll('[data-ends]').forEach(function(el){
+    var end=+el.dataset.ends*1000,cells=el.querySelectorAll('b');
+    (function tick(){var s=Math.max(0,Math.floor((end-Date.now())/1000)),p=parts(s);
+      if(cells.length===4)cells.forEach(function(c,i){c.textContent=pad(p[i])});
+      else el.textContent=s?((p[0]?p[0]+'d ':'')+pad(p[1])+':'+pad(p[2])+':'+pad(p[3])):'Closed';
+      if(s)setTimeout(tick,1000)})();
+  });
+  document.querySelectorAll('.toast:not(.error)').forEach(function(t){setTimeout(function(){t.classList.add('out');setTimeout(function(){t.remove()},400)},7000)});
+  window.addEventListener('pageshow',function(e){if(e.persisted)location.reload()});
+  if('serviceWorker' in navigator)navigator.serviceWorker.register('{{ url_for("public.service_worker") }}').catch(function(){});
+})();
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
