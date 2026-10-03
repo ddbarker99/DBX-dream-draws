@@ -62,6 +62,13 @@
       <div class="empty compact"><p>You don't have any entries waiting for a draw.</p><a class="btn" href="{{ url_for('public.competitions') }}">Browse competitions</a></div>{% endfor %}</div>
   </section>
 
+  {% if saved %}
+  <section class="section" aria-labelledby="sv-h">
+    <div class="section-head"><h2 id="sv-h">Saved competitions</h2></div>
+    <div class="grid">{% for it in saved[:4] %}{% if it.game %}{% include "_gamecard.html" %}{% else %}{% include "_card.html" %}{% endif %}{% endfor %}</div>
+  </section>
+  {% endif %}
+
   <section class="section" aria-labelledby="rt-h">
     <div class="section-head"><h2 id="rt-h">Recent transactions</h2><a class="btn ghost small" href="{{ url_for('public.account', tab='transactions') }}">All transactions</a></div>
     {% if orders or ledger %}
@@ -77,6 +84,18 @@
   <nav class="seg" aria-label="Filter entries">
     {% for k, label in [('active','Active'),('won','Won'),('previous','Previous')] %}<a href="{{ url_for('public.account', tab='entries', show=k) }}"{% if show == k %} aria-current="true"{% endif %}>{{ label }} <span class="count">{{ counts[k] }}</span></a>{% endfor %}
   </nav>
+  <form class="inline-form" method="get" role="search" style="max-width:480px;margin-bottom:var(--s4)">
+    <input type="hidden" name="tab" value="entries"><input type="hidden" name="show" value="{{ show }}">
+    <label class="sr-only" for="tq">Find a ticket number or competition</label>
+    <input id="tq" name="tq" value="{{ tq }}" placeholder="Find a ticket number or competition" inputmode="search">
+    <button class="btn ghost small">Find</button>{% if tq %}<a class="small" href="{{ url_for('public.account', tab='entries', show=show) }}">Clear</a>{% endif %}
+  </form>
+  {% if tq %}
+    {% set tql = tq.lower().lstrip('#') %}
+    {% set hits = [] %}{% for e in groups %}{% for t in e.tickets if (tql.isdigit() and t.number|string == tql) or (not tql.isdigit() and tql in e.title.lower()) %}{% if loop.first %}{% set _ = hits.append(e) %}{% endif %}{% endfor %}{% endfor %}
+    <p class="small muted" role="status">{% if hits %}{{ hits|length }} competition{{ 's' if hits|length != 1 }} with “{{ tq }}”:{% else %}You don't hold “{{ tq }}” in any competition.{% endif %}</p>
+    {% if hits %}<div class="panel" style="margin-bottom:var(--s4)">{% for e in hits %}{{ entry_row(e) }}{% endfor %}</div>{% endif %}
+  {% endif %}
   {% set shown = groups|selectattr('section', 'equalto', show)|list %}
   {% if shown %}
   <div class="panel">{% for e in shown %}{{ entry_row(e) }}{% endfor %}</div>
@@ -229,6 +248,28 @@
       <p class="small muted" style="margin:var(--s3) 0 0">Friends who joined with your link: <b>{{ referred }}</b></p>
     </section>
   </div>
+  <section class="section" aria-labelledby="ph-h"><h2 id="ph-h">Points history</h2>
+  {% if points_rows %}
+  <div class="panel table-scroll" tabindex="0"><table>
+    <thead><tr><th scope="col">Date</th><th scope="col">Why</th><th scope="col" class="num">Points</th><th scope="col" class="num">Worth</th></tr></thead><tbody>
+    {% for r in points_rows %}<tr><td class="muted">{{ r.created_at|uktime('%d %b %Y') }}</td><td>{{ r.reason }}{% if r.ref and r.ref.startswith('c') and r.ref[1:].isdigit() %} · <a href="{{ url_for('public.order_detail', cid=r.ref[1:]|int) }}">order</a>{% endif %}</td>
+      <td class="num {{ 'pos' if r.points > 0 else 'neg' }}">{{ '%+d'|format(r.points) }}</td><td class="num muted">{{ (r.points|abs * 100 // redeem_block)|gbp }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="hint">{{ redeem_block }} points = £1 site credit. Your {{ '{:,}'.format(u.points) }} points are worth {{ (u.points * 100 // redeem_block)|gbp }}.</p>
+  {% else %}<div class="panel"><p class="muted" style="margin:0">You'll earn points on every £1 you pay by card or from deposited funds.</p></div>{% endif %}
+  </section>
+
+  <section class="section" aria-labelledby="rh-h"><h2 id="rh-h">Your referrals</h2>
+  <p class="small muted">A referral earns you {{ config.REFERRAL_BONUS|gbp }} site credit when your friend makes their first purchase within 90 days of joining, with at least £1 paid by card or deposited funds. Referring yourself or another account of your own doesn't count.</p>
+  {% if referrals %}
+  <div class="panel table-scroll" tabindex="0"><table>
+    <thead><tr><th scope="col">Friend</th><th scope="col">Joined</th><th scope="col">Status</th></tr></thead><tbody>
+    {% for r in referrals %}<tr><td>{{ public_name(r.name) }}</td><td>{{ r.created_at|uktime('%d %b %Y') }}</td>
+      <td>{% if r.status == 'rewarded' %}<span class="pill paid">Rewarded</span>{% elif r.status == 'joined' %}<span class="pill pending">Waiting for first purchase</span>{% else %}<span class="pill cancelled">Not eligible</span> <span class="small muted">{{ r.reason }}</span>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<div class="panel"><p class="muted" style="margin:0">No referrals yet — share your link above.</p></div>{% endif %}
+  </section>
+
   <section class="section" aria-labelledby="tiers-h"><h2 id="tiers-h">How points work</h2>
   <div class="panel table-scroll" tabindex="0"><table><thead><tr><th scope="col">Tier</th><th scope="col">Reached at</th><th scope="col">Points per £1 paid by card</th></tr></thead><tbody>
     {% for name, at, mult in tiers %}<tr><td><b class="tier-{{ name }}">{{ name }}</b>{% if name == tier.name %} <span class="pill">Your tier</span>{% endif %}</td><td>{{ at }} lifetime points</td><td>{{ mult }}×</td></tr>{% endfor %}</tbody></table>

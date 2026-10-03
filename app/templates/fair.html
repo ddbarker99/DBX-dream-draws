@@ -10,7 +10,7 @@
   <li><strong>Before launch</strong> we generate a random secret seed and publish its SHA-256 hash on the competition page.</li>
   <li><strong>At the draw</strong> we take every confirmed ticket number, sort them, join them with commas and hash the list (the <em>entries hash</em>).</li>
   <li>The winning position is <code>HMAC-SHA256(seed, entries hash)</code> read as a number, modulo the number of tickets. The ticket at that position in the sorted list wins.</li>
-  <li><strong>After the draw</strong> we reveal the seed. Check its hash matches the one published at launch, open the competition's entry list from <a href="{{ url_for('public.winners', tab='results') }}">Draw results</a>, and recompute the winner yourself.</li>
+  <li><strong>After the draw</strong> we reveal the seed. Check its hash matches the one published at launch, open the competition's entry list from <a href="{{ url_for('public.results') }}">Draw results</a>, and recompute the winner yourself.</li>
 </ol>
 <h2>Instant wins</h2>
 <p>Instant-win numbers are chosen at random and sealed before a competition goes live. We publish a hash of every number and prize plus a secret salt. When the competition closes, we reveal the salt and any unclaimed numbers so you can confirm the list never changed.</p>

@@ -353,7 +353,7 @@ class Tests(Base):
         i = int(hmac.new(c["seed"].encode(), digest.encode(), hashlib.sha256).hexdigest(), 16) % len(nums)
         self.assertEqual(nums[i], self.q("SELECT number FROM tickets WHERE id=?", c["winner_ticket_id"]))
         self.assertIn(f"#{nums[i]}", self.client.get("/winners").get_data(as_text=True))
-        self.assertIn(f"#{nums[i]}", self.client.get("/winners?tab=results").get_data(as_text=True))
+        self.assertIn(f"#{nums[i]}", self.client.get("/results").get_data(as_text=True))
 
     def test_stripe_webhook_signature_and_idempotency(self):
         self.add(self.cid, 2)
@@ -384,7 +384,7 @@ class Tests(Base):
         uid = self.q("SELECT id FROM users LIMIT 1")
         s = self.slug(self.cid)
         for url in ["/", "/competitions", "/competitions?tab=instant", "/competitions?tab=ending", "/competitions?tab=tech", f"/c/{s}", f"/c/{s}/entries", "/basket",
-                    "/winners", "/winners?tab=results", "/winners?tab=live", "/how-it-works", "/contact", "/cookies", "/free-entry", "/terms", "/fair-draws", "/faq",
+                    "/winners", "/results", "/search?q=prize", "/winners?tab=live", "/how-it-works", "/contact", "/cookies", "/free-entry", "/terms", "/fair-draws", "/faq",
                     "/responsible-play", "/complaints", "/privacy", "/manifest.webmanifest", "/sw.js",
                     "/account", "/account?tab=entries", "/account?tab=wins", "/account?tab=wallet", "/account?tab=transactions", "/account?tab=points", "/account?tab=safer",
                     "/account?tab=profile", "/account?tab=entries&show=won", "/account?tab=entries&show=previous",
@@ -716,7 +716,7 @@ class OverhaulTests(Base):
 
     def test_old_urls_redirect_permanently(self):
         for old, new in [("/games", "/instant-wins"), ("/games?price=10", "/instant-wins?price=10"),
-                         ("/results", "/winners?tab=results"), ("/live", "/winners?tab=live"),
+                         ("/winners?tab=results", "/results"), ("/live", "/winners?tab=live"),
                          ("/?tab=ending", "/competitions?tab=ending"), ("/?q=abc", "/competitions?q=abc"),
                          ("/account?tab=tickets", "/account?tab=entries"), ("/account?tab=settings", "/account?tab=safer"),
                          ("/account?tab=rewards", "/account?tab=points"), ("/account?tab=orders", "/account?tab=transactions")]:
@@ -728,7 +728,7 @@ class OverhaulTests(Base):
 
     def test_unique_titles_canonical_and_noindex(self):
         titles = {}
-        for url in ["/", "/competitions", "/instant-wins", "/winners", "/winners?tab=results", "/how-it-works",
+        for url in ["/", "/competitions", "/instant-wins", "/winners", "/results", "/how-it-works",
                     "/contact", "/faq", "/terms", "/privacy", "/cookies", "/free-entry", "/fair-draws",
                     f"/c/{self.slug(self.cid)}"]:
             html = self.app.test_client().get(url).get_data(as_text=True)
@@ -1515,6 +1515,86 @@ class PlatformTests(Base):
         self.add(self.cid, 1, client=self.p)
         r = self.post("/basket/checkout", {}, client=self.p, follow_redirects=True)
         self.assertIn("temporarily unavailable", r.get_data(as_text=True))
+
+
+class CustomerFeatureTests(PlatformTests):
+    """Results archive, search, watchlist, own-ticket search, points history and referrals."""
+
+    def test_results_archive_is_permanent(self):
+        self.add(self.cid, 2, client=self.p)
+        self.checkout(client=self.p)
+        self.close()
+        self.post(f"/admin/competitions/{self.cid}/draw")
+        db = self.db()
+        db.execute("UPDATE competitions SET purging=0")    # nothing; drawn_at is locked by trigger
+        db.commit()
+        html = self.client.get("/results").get_data(as_text=True)
+        self.assertIn("Test Prize", html)
+        self.assertIn(f"#{self.q('SELECT winning_number FROM draws')}", html)
+        self.assertIn(f"/c/{self.slug(self.cid)}", self.client.get("/sitemap.xml").get_data(as_text=True))
+        page = self.client.get(f"/c/{self.slug(self.cid)}").get_data(as_text=True)
+        self.assertIn("Entry list frozen", page)
+        self.assertEqual(self.client.get("/winners?tab=results").status_code, 301)
+
+    def test_search_and_watchlist(self):
+        html = self.client.get("/search?q=test").get_data(as_text=True)
+        self.assertIn("Test Prize", html)
+        self.assertIn("Nothing matches", self.client.get("/search?q=zzzz").get_data(as_text=True))
+        self.post(f"/watch/{self.slug(self.cid)}", client=self.p)
+        self.assertIn("Saved competitions", self.p.get("/account").get_data(as_text=True))
+        db = self.db()
+        db.execute("UPDATE competitions SET ends_at=strftime('%Y-%m-%dT%H:%M:%SZ','now','+3 hours') WHERE id=?", (self.cid,))
+        db.commit()
+        self.run_jobs()
+        self.run_jobs()
+        self.assertEqual(self.q("SELECT COUNT(*) FROM notifications WHERE kind='reminder'"), 1)     # once, not every run
+        self.assertIsNone(self.q("SELECT email_status FROM notifications WHERE kind='reminder'"))   # no marketing opt-in: no email
+        self.post(f"/watch/{self.slug(self.cid)}", client=self.p)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM watchlist"), 0)
+
+    def test_find_my_ticket_and_public_list(self):
+        self.add(self.cid, numbers="7,11", client=self.p)
+        self.checkout(client=self.p)
+        html = self.p.get("/account?tab=entries&tq=11").get_data(as_text=True)
+        self.assertIn("1 competition with", html)
+        self.assertIn("hold “99”", self.p.get("/account?tab=entries&tq=99").get_data(as_text=True).replace("don&#39;t ", ""))
+        pub = self.p.get(f"/c/{self.slug(self.cid)}/entries").get_data(as_text=True)
+        self.assertIn("Yours", pub)
+        guest = self.app.test_client().get(f"/c/{self.slug(self.cid)}/entries").get_data(as_text=True)
+        self.assertNotIn("player@example.com", guest)
+        self.assertIn("Pat P.", guest)
+        self.assertNotIn("Pat Player", guest)                                           # only first name + initial
+
+    def test_points_history_adds_up(self):
+        self.add(self.cid, 4, client=self.p)              # £10 by card -> 10 points
+        self.checkout(client=self.p)
+        rows = self.db().execute("SELECT points, reason FROM points_ledger WHERE user_id=?", (self.uid,)).fetchall()
+        self.assertEqual([r[0] for r in rows], [10])
+        self.assertIn("£10.00 paid", rows[0][1])
+        self.assertEqual(self.q("SELECT SUM(points) FROM points_ledger WHERE user_id=?", self.uid), self.q("SELECT points FROM users WHERE id=?", self.uid))
+        self.assertIn("Points history", self.p.get("/account?tab=points").get_data(as_text=True))
+
+    def test_referral_rules(self):
+        code = self.q("SELECT referral_code FROM users WHERE id=?", self.uid)
+        friend = self.app.test_client()
+        friend.get(f"/r/{code}")
+        self.signup("friend@example.com", client=friend, name="Friend Person")
+        self.assertEqual(self.q("SELECT status FROM referrals"), "joined")
+        self.post(f"/admin/users/{self.q('SELECT id FROM users WHERE email=?', 'friend@example.com')}",
+                  {"action": "credit", "amount": "10", "kind": "credit", "reason": "Gift"})
+        self.add(self.cid, 1, client=friend)
+        self.checkout(client=friend, use_credit=True)       # paid entirely with credit -> not eligible
+        self.assertEqual(self.q("SELECT status FROM referrals"), "not_eligible")
+        self.assertIn("Not eligible", self.p.get("/account?tab=points").get_data(as_text=True))
+        # same phone as the referrer is never rewarded
+        db = self.db()
+        db.execute("UPDATE users SET phone='07700900111' WHERE id=?", (self.uid,))
+        db.commit()
+        twin = self.app.test_client()
+        twin.get(f"/r/{code}")
+        self.post("/signup", {"name": "Twin Person", "email": "twin@example.com", "dob": "1990-01-01", "phone": "07700900111",
+                              "password": "supersecret123", "agree": "1"}, client=twin)
+        self.assertEqual(self.q("SELECT reason FROM referrals ORDER BY id DESC"), "Same phone number as the referrer")
 
 
 class MigrationTest(unittest.TestCase):

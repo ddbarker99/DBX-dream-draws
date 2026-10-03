@@ -370,3 +370,14 @@ CREATE TABLE IF NOT EXISTS job_status (
     last_error   TEXT,
     last_changed TEXT
 );
+
+-- Referrals recorded server-side with a clear outcome.
+CREATE TABLE IF NOT EXISTS referrals (
+    id          INTEGER PRIMARY KEY,
+    referrer_id INTEGER NOT NULL REFERENCES users(id),
+    referred_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+    created_at  TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'joined',   -- joined | rewarded | not_eligible
+    reason      TEXT,
+    rewarded_at TEXT
+);

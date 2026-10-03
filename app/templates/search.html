@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{% if q %}Search: {{ q }}{% else %}Search{% endif %} · {{ config.SITE_NAME }}{% endblock %}
+{% block desc %}Search live competitions, instant win games and past results.{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block content %}
+<h1>Search</h1>
+<form class="inline-form" method="get" role="search" style="max-width:560px;margin-bottom:var(--s5)">
+  <label class="sr-only" for="sq">Search competitions, games and results</label>
+  <input id="sq" name="q" type="search" value="{{ q }}" placeholder="e.g. PS5, cash, scratch" autofocus>
+  <button class="btn">Search</button>
+</form>
+{% if q %}
+  <p class="muted" role="status">{{ n }} result{{ 's' if n != 1 }} for “{{ q }}”</p>
+  {% for key, label in [('live', 'Live competitions'), ('games', 'Instant Wins'), ('results', 'Past results')] if found[key] %}
+  <section class="section" aria-labelledby="s-{{ key }}"><h2 id="s-{{ key }}">{{ label }}</h2>
+    <div class="grid">{% for it in found[key] %}{% if it.game %}{% include "_gamecard.html" %}{% else %}{% include "_card.html" %}{% endif %}{% endfor %}</div></section>
+  {% endfor %}
+  {% if not n %}<div class="empty"><p>Nothing matches “{{ q }}”.</p><div class="actions" style="justify-content:center"><a class="btn" href="{{ url_for('public.competitions') }}">All competitions</a><a class="btn ghost" href="{{ url_for('public.instant_wins') }}">Instant Wins</a><a class="btn ghost" href="{{ url_for('public.results') }}">Results</a></div></div>{% endif %}
+{% else %}
+  <div class="actions"><a class="btn ghost" href="{{ url_for('public.competitions', tab='ending') }}">Ending soon</a><a class="btn ghost" href="{{ url_for('public.competitions', tab='new') }}">New</a><a class="btn ghost" href="{{ url_for('public.instant_wins') }}">Instant Wins</a><a class="btn ghost" href="{{ url_for('public.results') }}">Past results</a></div>
+{% endif %}
+{% endblock %}

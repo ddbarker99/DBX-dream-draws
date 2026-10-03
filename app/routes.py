@@ -207,6 +207,12 @@ def competition(slug):
         allowance = min(allowance, c["max_tickets"] - sold_count(db, c["id"]))
     draw_rec = db.execute("SELECT entry_count, drawn_at, method FROM draws WHERE competition_id=? ORDER BY id DESC LIMIT 1",
                           (c["id"],)).fetchone()
+    draw_history = db.execute("SELECT drawn_at, method, reason, winning_number, entry_count, entries_hash FROM draws "
+                              "WHERE competition_id=? ORDER BY id", (c["id"],)).fetchall()
+    snapshot = db.execute("SELECT taken_at, entry_count, paid_count, postal_count, entries_hash FROM entry_snapshots "
+                          "WHERE competition_id=? ORDER BY id DESC LIMIT 1", (c["id"],)).fetchone()
+    watching = bool(g.user and db.execute("SELECT 1 FROM watchlist WHERE user_id=? AND competition_id=?",
+                                          (g.user["id"], c["id"])).fetchone())
     share = current_app.config["SITE_URL"] + url_for("public.competition", slug=c["slug"])
     if g.user:
         share += "?ref=" + g.user["referral_code"]
@@ -219,7 +225,8 @@ def competition(slug):
                            winner_name=public_name(winner["name"]) if winner else None,
                            winner_number=winner["number"] if winner else None, others=others, tiers=tiers,
                            category=CATEGORY_NAMES.get(c["category"], "Other"), max_picks=MAX_PICKS,
-                           tiers_json=json.dumps(tiers), held=held, allowance=allowance, draw_rec=draw_rec)
+                           tiers_json=json.dumps(tiers), held=held, allowance=allowance, draw_rec=draw_rec,
+                           draw_history=draw_history, snapshot=snapshot, watching=watching)
 
 
 @bp.route("/c/<slug>/numbers")
@@ -251,15 +258,19 @@ def entry_list(slug):
         args.append(q)
     total = db.execute(f"SELECT COUNT(*) FROM ({sql})", args).fetchone()[0]
     rows = db.execute(sql + " ORDER BY t.number LIMIT 200 OFFSET ?", args + [(page - 1) * 200]).fetchall()
+    mine = {r[0] for r in db.execute("SELECT number FROM tickets WHERE competition_id=? AND user_id=? AND status='issued'",
+                                     (c["id"], g.user["id"]))} if g.user else set()
     return render_template("entries.html", c=c, rows=rows, page=page, pages=max(1, -(-total // 200)), total=total,
-                           public_name=public_name, q=q)
+                           public_name=public_name, q=q, mine=mine)
 
 
 @bp.route("/winners")
 def winners():
     db = get_db()
     tab = request.args.get("tab", "winners")
-    if tab not in ("winners", "results", "live"):
+    if tab == "results":
+        return redirect(url_for("public.results"), code=301)      # one results destination: the permanent archive
+    if tab not in ("winners", "live"):
         return redirect(url_for("public.winners"), code=301)
     ctx = {"tab": tab, "stats": site_stats(db), "public_name": public_name}
     if tab == "winners":
@@ -281,7 +292,63 @@ def winners():
 
 @bp.route("/results")
 def results():
-    return redirect(url_for("public.winners", tab="results"), code=301)
+    """Permanent archive of every completed draw: nothing finished ever disappears."""
+    db = get_db()
+    q = request.args.get("q", "").strip()[:60]
+    year = request.args.get("year", type=int)
+    page = max(1, request.args.get("page", 1, type=int))
+    sql, args = ("SELECT c.*, d.winning_number, d.entry_count, (SELECT COUNT(*) FROM draws x WHERE x.competition_id=c.id) AS n_draws "
+                 "FROM competitions c LEFT JOIN draws d ON d.id=(SELECT MAX(id) FROM draws WHERE competition_id=c.id) "
+                 "WHERE c.status='drawn' AND c.game_type=''"), []
+    if q:
+        sql += " AND c.title LIKE ?"
+        args.append(f"%{q}%")
+    if year:
+        sql += " AND substr(c.drawn_at,1,4)=?"
+        args.append(str(year))
+    total = db.execute(f"SELECT COUNT(*) FROM ({sql})", args).fetchone()[0]
+    rows = db.execute(sql + " ORDER BY c.drawn_at DESC LIMIT 30 OFFSET ?", args + [(page - 1) * 30]).fetchall()
+    items = []
+    for c in rows:
+        w = winner_details(db, c)
+        items.append({"c": c, "name": public_name(w["name"]) if w else None, "number": w["number"] if w else c["winning_number"]})
+    years = [r[0] for r in db.execute("SELECT DISTINCT substr(drawn_at,1,4) FROM competitions WHERE status='drawn' AND game_type='' "
+                                      "ORDER BY 1 DESC")]
+    return render_template("results.html", items=items, q=q, year=year, years=years, page=page,
+                           pages=max(1, -(-total // 30)), total=total)
+
+
+@bp.route("/search")
+def search():
+    db = get_db()
+    q = " ".join(request.args.get("q", "").split())[:60]
+    found = {"live": [], "games": [], "results": []}
+    if q:
+        like = f"%{q}%"
+        for c in db.execute("SELECT * FROM competitions WHERE status='live' AND free_daily=0 AND (title LIKE ? OR description LIKE ?) "
+                            "ORDER BY ends_at LIMIT 40", (like, like)).fetchall():
+            d = card_data(db, c)
+            if d["state"] in ("live", "soldout"):
+                found["games" if c["game_type"] else "live"].append(d)
+        found["results"] = [card_data(db, c) for c in db.execute(
+            "SELECT * FROM competitions WHERE status='drawn' AND game_type='' AND title LIKE ? ORDER BY drawn_at DESC LIMIT 12", (like,))]
+    return render_template("search.html", q=q, found=found, n=sum(len(v) for v in found.values()))
+
+
+@bp.route("/watch/<slug>", methods=["POST"])
+@login_required
+def watch(slug):
+    db = get_db()
+    c = db.execute("SELECT id, title FROM competitions WHERE slug=?", (slug,)).fetchone()
+    if c is None:
+        abort(404)
+    if db.execute("DELETE FROM watchlist WHERE user_id=? AND competition_id=?", (g.user["id"], c["id"])).rowcount:
+        flash(f"Removed {c['title']} from your saved competitions.")
+    else:
+        db.execute("INSERT INTO watchlist (user_id, competition_id, created_at) VALUES (?,?,?)", (g.user["id"], c["id"], iso(utcnow())))
+        flash(f"Saved. Find {c['title']} under My account" + (" — we'll remind you before it closes." if g.user["marketing"]
+              else " — we'll remind you in your notifications before it closes."))
+    return redirect(url_for("public.competition", slug=slug))
 
 
 @bp.route("/live")
@@ -1043,6 +1110,12 @@ def signup():
             session["promo"] = promo_keep
         session["pwv"] = _pw_version(db, cur.lastrowid)
         start_session(db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone())
+        if ref:
+            from .services import referral_problem
+            new_u = db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
+            why = referral_problem(db, ref["id"], new_u)
+            db.execute("INSERT OR IGNORE INTO referrals (referrer_id, referred_id, created_at, status, reason) VALUES (?,?,?,?,?)",
+                       (ref["id"], cur.lastrowid, iso(utcnow()), "not_eligible" if why else "joined", why))
         send_verification(db.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone())
         flash("Welcome! We've emailed you a link to confirm your email address.")
         return redirect(safe_next(request.args.get("next")))
@@ -1224,7 +1297,15 @@ def account():
                    min_withdrawal=MIN_WITHDRAWAL)
     if tab == "points":
         ctx.update(tiers=TIERS, redeem_block=REDEEM_BLOCK,
-                   referred=db.execute("SELECT COUNT(*) FROM users WHERE referred_by=?", (uid,)).fetchone()[0])
+                   referred=db.execute("SELECT COUNT(*) FROM users WHERE referred_by=?", (uid,)).fetchone()[0],
+                   points_rows=db.execute("SELECT * FROM points_ledger WHERE user_id=? ORDER BY id DESC LIMIT 100", (uid,)).fetchall(),
+                   referrals=db.execute("SELECT r.*, u.name FROM referrals r JOIN users u ON u.id=r.referred_id WHERE r.referrer_id=? "
+                                        "ORDER BY r.id DESC", (uid,)).fetchall(), public_name=public_name)
+    if tab in ("overview", "entries"):
+        ctx["saved"] = [card_data(db, c) for c in db.execute(
+            "SELECT c.* FROM watchlist w JOIN competitions c ON c.id=w.competition_id WHERE w.user_id=? ORDER BY c.ends_at",
+            (uid,)).fetchall()]
+        ctx["tq"] = request.args.get("tq", "").strip()[:40]
     if tab == "profile":
         ctx["sessions"] = db.execute("SELECT * FROM user_sessions WHERE user_id=? AND revoked_at IS NULL ORDER BY last_seen DESC",
                                      (uid,)).fetchall()
@@ -1468,12 +1549,12 @@ def sitemap():
     competitions and closed games drop out."""
     base = current_app.config["SITE_URL"]
     urls = [(base + url_for(e), None) for e in ("public.home", "public.competitions", "public.instant_wins",
-                                                "public.winners", "public.how_it_works", "public.contact")]
+                                                "public.winners", "public.results", "public.how_it_works", "public.contact")]
     urls += [(base + url_for("public.page", page=p), None) for p in PAGES]
     cutoff = iso(utcnow() - timedelta(days=180))
     for r in get_db().execute(
             "SELECT slug, COALESCE(drawn_at, created_at) AS mod FROM competitions WHERE free_daily=0 AND "
-            "(status='live' OR (status='drawn' AND game_type='' AND drawn_at > ?))", (cutoff,)):
+            "(status='live' OR (status='drawn' AND game_type='' AND drawn_at > ?))", ("2000-01-01",)):
         urls.append((base + url_for("public.competition", slug=r["slug"]), (r["mod"] or "")[:10]))
     body = "".join(f"<url><loc>{u}</loc>{f'<lastmod>{m}</lastmod>' if m else ''}</url>" for u, m in urls)
     return Response(f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{body}</urlset>',

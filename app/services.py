@@ -523,13 +523,8 @@ def fulfil_checkout(cid, stripe_session_id=None, amount_paid=None):
                 pay_prize(db, c["user_id"], w)
         if c["promo_id"]:
             db.execute("UPDATE promo_codes SET uses=uses+1 WHERE id=?", (c["promo_id"],))
-        award_points(db, c["user_id"], c["cash_due"] + c["deposit_used"])
-        # referral bonus on the referred user's first paid checkout
-        u = db.execute("SELECT * FROM users WHERE id=?", (c["user_id"],)).fetchone()
-        bonus = current_app.config["REFERRAL_BONUS"]
-        if u["referred_by"] and bonus and c["subtotal"] > 0 and db.execute(
-                "SELECT COUNT(*) FROM checkouts WHERE user_id=? AND status='paid'", (u["id"],)).fetchone()[0] == 1:
-            add_credit(db, u["referred_by"], bonus, f"Referral bonus — {u['name'].split()[0]} joined", f"u{u['id']}")
+        award_points(db, c["user_id"], c["cash_due"] + c["deposit_used"], f"c{cid}", f"Order #{cid}")
+        _settle_referral(db, c)
         return "paid"
 
 
@@ -1061,13 +1056,22 @@ def tier_for(lifetime):
             "pct": 100 if not nxt else round(100 * (lifetime - cur[1]) / (nxt[1] - cur[1]))}
 
 
-def award_points(db, user_id, card_pence):
+def add_points(db, user_id, pts, reason, ref=None, lifetime=True):
+    db.execute("UPDATE users SET points=points+?" + (", points_lifetime=points_lifetime+?" if lifetime and pts > 0 else "")
+               + " WHERE id=?", (pts, pts, user_id) if lifetime and pts > 0 else (pts, user_id))
+    db.execute("INSERT INTO points_ledger (user_id, points, reason, ref, created_at) VALUES (?,?,?,?,?)",
+               (user_id, pts, reason, ref, iso(utcnow())))
+
+
+def award_points(db, user_id, card_pence, ref=None, label=None):
     if card_pence <= 0:
         return 0
     u = db.execute("SELECT points_lifetime FROM users WHERE id=?", (user_id,)).fetchone()
-    pts = int(card_pence // 100 * POINTS_PER_POUND * tier_for(u["points_lifetime"])["mult"])
+    tier = tier_for(u["points_lifetime"])
+    pts = int(card_pence // 100 * POINTS_PER_POUND * tier["mult"])
     if pts:
-        db.execute("UPDATE users SET points=points+?, points_lifetime=points_lifetime+? WHERE id=?", (pts, pts, user_id))
+        add_points(db, user_id, pts, f"{label or 'Purchase'}: £{card_pence / 100:.2f} paid × {POINTS_PER_POUND} point per £1"
+                   + (f" × {tier['mult']} ({tier['name']} tier)" if tier["mult"] != 1 else ""), ref)
     return pts
 
 
@@ -1079,8 +1083,57 @@ def redeem_points(user_id, blocks):
         have = db.execute("SELECT points FROM users WHERE id=?", (user_id,)).fetchone()[0]
         if need > have:
             raise PurchaseError(f"You have {have} points.")
-        db.execute("UPDATE users SET points=points-? WHERE id=?", (need, user_id))
+        add_points(db, user_id, -need, f"Redeemed for £{blocks} site credit", None, lifetime=False)
         add_credit(db, user_id, blocks * 100, f"Redeemed {need} DBX Points", None, kind="credit")
+
+
+# ---------------- referrals ----------------
+
+REFERRAL_DAYS = 90            # the friend's first purchase must be within this many days of joining
+REFERRAL_MIN_PAID = 100       # and at least £1 of it paid by card or deposited funds (not credit alone)
+
+
+def referral_problem(db, referrer_id, user):
+    """Obvious self-referrals: same person, same phone, or signed up from the referrer's own connection."""
+    if referrer_id == user["id"]:
+        return "You can't refer yourself"
+    ref = db.execute("SELECT * FROM users WHERE id=?", (referrer_id,)).fetchone()
+    if ref is None:
+        return "Referrer not found"
+    if user["phone"] and ref["phone"] and user["phone"] == ref["phone"]:
+        return "Same phone number as the referrer"
+    return None
+
+
+def _shared_connection(db, a, b):
+    return db.execute("SELECT 1 FROM user_sessions x JOIN user_sessions y ON x.ip=y.ip WHERE x.user_id=? AND y.user_id=? "
+                      "AND x.ip IS NOT NULL AND x.ip!='' LIMIT 1", (a, b)).fetchone() is not None
+
+
+def _settle_referral(db, c):
+    """On the referred friend's first paid order, decide the referral once: rewarded or not eligible (with why)."""
+    r = db.execute("SELECT * FROM referrals WHERE referred_id=? AND status='joined'", (c["user_id"],)).fetchone()
+    if r is None:
+        return
+    u = db.execute("SELECT * FROM users WHERE id=?", (c["user_id"],)).fetchone()
+    bonus = current_app.config["REFERRAL_BONUS"]
+    why = referral_problem(db, r["referrer_id"], u)
+    if not why and parse_iso(u["created_at"]) < utcnow() - timedelta(days=REFERRAL_DAYS):
+        why = f"First purchase was more than {REFERRAL_DAYS} days after joining"
+    if not why and c["cash_due"] + c["deposit_used"] < REFERRAL_MIN_PAID:
+        why = f"First purchase didn't include £{REFERRAL_MIN_PAID / 100:.0f} paid by card or deposited funds"
+    if not why and not bonus:
+        why = "Referral rewards are switched off"
+    now = iso(utcnow())
+    if why:
+        db.execute("UPDATE referrals SET status='not_eligible', reason=? WHERE id=?", (why, r["id"]))
+        return
+    add_credit(db, r["referrer_id"], bonus, f"Referral bonus — {u['name'].split()[0]} joined and made a first purchase", f"u{u['id']}")
+    if _shared_connection(db, r["referrer_id"], u["id"]):      # households share connections — worth a look, not a refusal
+        db.execute("INSERT OR IGNORE INTO flags (kind, subject, detail, created_at) VALUES (?,?,?,?)",
+                   ("Referral from the same connection", f"user:{r['referrer_id']}",
+                    f"Referred account #{u['id']} signed in from the same IP as the referrer. Rewarded; check if it looks like one person.", now))
+    db.execute("UPDATE referrals SET status='rewarded', rewarded_at=? WHERE id=?", (now, r["id"]))
 
 
 # ---------------- cancellations ----------------

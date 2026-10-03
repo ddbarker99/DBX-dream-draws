@@ -178,6 +178,13 @@ def init_db(path):
                 conn.execute(stmt)
         for stmt in POST_TRIGGERS:
             conn.execute(stmt)
+        # Points earned before the points history existed get one opening line, so totals always add up.
+        conn.execute("INSERT INTO points_ledger (user_id, points, reason, created_at) SELECT id, points, "
+                     "'Opening balance (points earned before the history was kept)', strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+                     "FROM users WHERE points>0 AND id NOT IN (SELECT user_id FROM points_ledger)")
+        conn.execute("INSERT OR IGNORE INTO referrals (referrer_id, referred_id, created_at, status, rewarded_at) "
+                     "SELECT u.referred_by, u.id, u.created_at, CASE WHEN EXISTS (SELECT 1 FROM credit_ledger l WHERE l.ref='u' || u.id) "
+                     "THEN 'rewarded' ELSE 'joined' END, NULL FROM users u WHERE u.referred_by IS NOT NULL")
         conn.execute("UPDATE users SET admin_role=CASE admin_role WHEN 'owner' THEN 'admin' WHEN 'staff' THEN 'competitions' "
                      "ELSE admin_role END WHERE admin_role IN ('owner','staff')")
         conn.execute("UPDATE postal_entries SET status='rejected', reject_reason='Wrong answer' "

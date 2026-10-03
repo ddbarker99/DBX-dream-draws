@@ -24,6 +24,7 @@ JOBS = {
     "email_outbox": (60, "Send queued and retry failed emails"),
     "flag_rules": (900, "Look for patterns worth reviewing"),
     "health_alerts": (600, "Email staff when a health check fails"),
+    "watch_reminders": (1800, "Remind customers about saved competitions closing soon"),
     "prune": (86400, "Tidy old job history"),
 }
 _last = {}
@@ -139,6 +140,26 @@ def _alerts():
     return ("alerted: " + ", ".join(sent)) if sent else ""
 
 
+def _watch():
+    """Saved competitions closing within 24 hours: an in-account reminder for everyone, an email only for those
+    who opted in to marketing emails."""
+    from .notify import notify, send_one
+    db = get_db()
+    n = 0
+    for r in db.execute("SELECT w.user_id, c.id, c.title, c.slug, c.ends_at, u.email, u.marketing FROM watchlist w "
+                        "JOIN competitions c ON c.id=w.competition_id JOIN users u ON u.id=w.user_id WHERE c.status='live' "
+                        "AND c.ends_at>? AND c.ends_at<?", (iso(utcnow()), iso(utcnow() + timedelta(hours=24)))).fetchall():
+        link = url_for("public.competition", slug=r["slug"])
+        nid = notify(r["user_id"], "reminder", f"Closing soon: {r['title']}", "A competition you saved closes within 24 hours.",
+                     link=link, dedupe_key=f"watch:{r['id']}:{r['user_id']}", email=r["email"] if r["marketing"] else None,
+                     mail={"button": ("Take a look", current_app.config["SITE_URL"] + link), "heading": "Closing soon"})
+        if nid:
+            n += 1
+            if r["marketing"]:
+                send_one(nid)
+    return f"{n} reminder(s)" if n else ""
+
+
 def _prune():
     db = get_db()
     n = db.execute("DELETE FROM job_runs WHERE started_at<?", (iso(utcnow() - timedelta(days=90)),)).rowcount
@@ -147,7 +168,7 @@ def _prune():
 
 FUNCS = {"publish_scheduled": _publish_scheduled, "expire_checkouts": _expire_checkouts, "close_competitions": _close,
          "auto_draws": _draws, "settle_unrevealed": _settle, "email_outbox": _outbox, "flag_rules": _flags,
-         "health_alerts": _alerts, "prune": _prune}
+         "health_alerts": _alerts, "watch_reminders": _watch, "prune": _prune}
 
 
 def run_all_jobs(force=False, only=None):

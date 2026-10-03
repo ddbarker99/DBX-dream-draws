@@ -16,8 +16,8 @@
 </div>
 {% endif %}
 <nav class="tabs" aria-label="Winners sections">
-  {% for k, label in [('winners','Winners'),('results','Draw results'),('live','Live draws')] %}
-  <a href="{{ url_for('public.winners', tab=k if k != 'winners' else None) }}"{% if tab == k %} aria-current="page"{% endif %}>{{ label }}{% if k == 'live' and live_now %} <span class="pill live">Live now</span>{% endif %}</a>{% endfor %}
+  {% for k, label in [('winners','Winners'),('results','Draw results'),('live','Live draws')] if k != 'results' %}
+  <a href="{{ url_for('public.winners', tab=k if k != 'winners' else None) }}"{% if tab == k %} aria-current="page"{% endif %}>{{ label }}{% if k == 'live' and live_now %} <span class="pill live">Live now</span>{% endif %}</a>{% endfor %}<a href="{{ url_for('public.results') }}">Draw results</a>
 </nav>
 
 {% if tab == 'winners' %}

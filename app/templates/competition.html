@@ -34,6 +34,7 @@
         {% for kind, text in d.badges %}<span class="pill {{ kind }}">{{ text }}</span>{% endfor %}
       </div>
       <h1 id="comp-title">{{ c.title }}</h1>
+      {% if user and live and not c.free_daily %}<form method="post" action="{{ url_for('public.watch', slug=c.slug) }}" class="watchform"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="linkbtn small" aria-pressed="{{ 'true' if watching else 'false' }}">{{ '♥ Saved' if watching else '♡ Save for later' }}</button></form>{% endif %}
       {% if c.cash_alternative %}<p class="muted" style="margin:0 0 var(--s2)">Cash alternative: <b>{{ c.cash_alternative }}</b></p>{% endif %}
       <div class="price">{% if c.free_daily %}Free{% else %}{{ c.ticket_price|pp }} <small>per {{ unit }}</small>{% endif %}</div>
       {% if tiers %}<div class="tiers" aria-label="Multi-buy discounts">{% for q, p in tiers %}<span>{{ q }}+ {{ unit }}s: {{ p }}% off</span>{% endfor %}</div>{% endif %}
@@ -69,7 +70,7 @@
     {% if c.status == 'drawn' %}
       <div class="winner-banner" role="status">Winning ticket <b>#{{ winner_number }}</b><br>Congratulations {{ winner_name }}! <a href="{{ url_for('public.page', page='fair-draws') }}">Check this draw</a></div>
     {% elif st == 'ended' or st == 'soldout' %}
-      <div class="notice">{% if st == 'soldout' %}All {{ unit }}s have sold. {% endif %}{% if c.game_type %}This game is closed.{% else %}The draw takes place {{ c.ends_at|uktime('%a %d %b at %H:%M') }}. Results appear on this page and on <a href="{{ url_for('public.winners', tab='results') }}">Draw results</a>.{% endif %}</div>
+      <div class="notice">{% if st == 'soldout' %}All {{ unit }}s have sold. {% endif %}{% if c.game_type %}This game is closed.{% else %}The draw takes place {{ c.ends_at|uktime('%a %d %b at %H:%M') }}. Results appear on this page and on <a href="{{ url_for('public.results') }}">Draw results</a>.{% endif %}</div>
     {% elif st == 'cancelled' %}
       <div class="notice warn">This competition was cancelled and every entrant was refunded in full.</div>
     {% endif %}
@@ -198,6 +199,7 @@
           <div><dt>Draw</dt><dd>{% if c.status == 'drawn' %}Drawn {{ c.drawn_at|uktime }}{% else %}{{ c.ends_at|uktime('%a %d %b %Y, %H:%M') }} UK time — {{ 'automatically at closing time' if c.auto_draw else 'live on our socials after closing' }}{% endif %}</dd></div>
           <div><dt>Entries</dt><dd>{% if draw_rec %}{{ '{:,}'.format(draw_rec.entry_count) }} eligible entries in the draw{% else %}{{ '{:,}'.format(d.sold) }} so far, of a maximum {{ '{:,}'.format(c.max_tickets) }}{% endif %} · <a href="{{ url_for('public.entry_list', slug=c.slug) }}">see the public entry list</a></dd></div>
           {% if c.status == 'drawn' %}<div><dt>Winning ticket</dt><dd><b>#{{ winner_number }}</b> — {{ winner_name }}</dd></div>{% endif %}
+          {% if snapshot %}<div><dt>Entry list frozen</dt><dd>{{ snapshot.taken_at|uktime }} · {{ '{:,}'.format(snapshot.entry_count) }} entries ({{ snapshot.paid_count }} paid, {{ snapshot.postal_count }} free by post)</dd></div>{% endif %}
           {% if c.live_url %}<div><dt>Watch</dt><dd><a href="{{ c.live_url }}" target="_blank" rel="noopener">Live stream</a></dd></div>{% endif %}
         </dl>
         <p class="small muted">The draw goes ahead at the time shown even if not every ticket sells, and selling out doesn't bring it forward. The winner is picked from every paid and free entry using a method anyone can check — <a href="{{ url_for('public.page', page='fair-draws') }}">how our draws work</a>.</p>
@@ -207,7 +209,8 @@
             <p class="small">Draw seed hash, published before sales opened:</p>
             <div class="hash">{{ c.seed_hash }}</div>
             {% if c.status == 'drawn' %}<p class="small" style="margin-top:var(--s3)">Seed revealed after the draw:</p><div class="hash">{{ c.seed }}</div>
-            <p class="small" style="margin-top:var(--s3)">Entries hash:</p><div class="hash">{{ c.entries_hash }}</div>{% endif %}
+            <p class="small" style="margin-top:var(--s3)">Entries hash:</p><div class="hash">{{ c.entries_hash }}</div>
+            {% for d in draw_history %}<p class="small" style="margin-top:var(--s3)"><b>{{ 'Draw' if loop.first else 'Redraw ' ~ loop.index0 }}</b> — {{ d.drawn_at|uktime }}, {{ d.method }}, {{ '{:,}'.format(d.entry_count) }} eligible entries, winning ticket #{{ d.winning_number }}{% if d.reason %}. Reason for redraw: {{ d.reason }}{% endif %}</p>{% endfor %}{% endif %}
             {% if c.instant_hash %}<p class="small" style="margin-top:var(--s3)">Instant prize numbers sealed before launch:</p><div class="hash">{{ c.instant_hash }}</div>
             {% if st in ('ended','drawn','cancelled') %}<p class="small" style="margin-top:var(--s3)">Salt revealed:</p><div class="hash">{{ c.instant_salt }}</div>{% endif %}{% endif %}
           </div>

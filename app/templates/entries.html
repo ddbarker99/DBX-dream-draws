@@ -13,10 +13,10 @@
 </form>
 {% if q %}<p class="small"><a href="{{ url_for('public.entry_list', slug=c.slug) }}">Clear search</a></p>{% endif %}
 <div class="panel table-scroll" tabindex="0"><table>
-  <thead><tr><th scope="col">Ticket</th><th scope="col">Entrant</th><th scope="col">Route</th><th scope="col">Entered</th></tr></thead>
+  <thead><tr><th scope="col">Ticket</th><th scope="col">Entrant</th><th scope="col">Entered</th></tr></thead>
   <tbody>
-  {% for r in rows %}<tr><td><b>#{{ r.number }}</b></td><td>{{ public_name(r.name) }}</td><td>{{ 'Postal' if r.postal else 'Online' }}</td><td class="muted">{{ r.created_at|uktime('%d %b %H:%M') }}</td></tr>
-  {% else %}<tr><td colspan="4" class="muted">{{ 'No entry with that number.' if q else 'No entries yet.' }}</td></tr>{% endfor %}
+  {% for r in rows %}<tr{% if r.number in mine %} class="mine"{% endif %}><td><b>#{{ r.number }}</b>{% if r.number in mine %} <span class="pill paid">Yours</span>{% endif %}</td><td>{{ public_name(r.name) }}</td><td class="muted">{{ r.created_at|uktime('%d %b %H:%M') }}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">{{ 'No entry with that number.' if q else 'No entries yet.' }}</td></tr>{% endfor %}
   </tbody>
 </table></div>
 {% if pages > 1 %}<nav class="actions" style="margin-top:var(--s4)" aria-label="Pages">

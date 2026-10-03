@@ -62,6 +62,8 @@
         <a class="iconbtn hide-sm" href="{{ url_for('public.login') }}">Log in</a>
         <a class="btn small" href="{{ url_for('public.signup') }}">Join</a>
       {% endif %}
+      <a class="iconbtn hide-sm" href="{{ url_for('public.search') }}" aria-label="Search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></a>
       <a class="iconbtn" href="{{ url_for('public.basket') }}" aria-label="Basket{% if basket_count %}, {{ basket_count }} item{{ 's' if basket_count != 1 }}{% else %}, empty{% endif %}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.5L21 8H6"/><circle cx="10" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/></svg>
         {% if basket_count %}<span class="count" aria-hidden="true">{{ basket_count }}</span>{% endif %}</a>
@@ -72,6 +74,7 @@
   <div class="drawer" id="drawer">
     <nav aria-label="Mobile">
       {% for href, label, on in main_nav %}<a href="{{ href }}"{% if on %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+      <a href="{{ url_for('public.search') }}">Search</a>
       <span class="group">Your account</span>
       {% if user %}
         <a href="{{ url_for('public.account') }}">My account</a>
@@ -121,7 +124,7 @@
         <li><a href="{{ url_for('public.instant_wins') }}">Instant Wins</a></li>
         <li><a href="{{ url_for('public.page', page='free-entry') }}">Free entry</a></li>
         <li><a href="{{ url_for('public.winners') }}">Winners</a></li>
-        <li><a href="{{ url_for('public.winners', tab='results') }}">Draw results</a></li>
+        <li><a href="{{ url_for('public.results') }}">Draw results</a></li>
       </ul></div>
       <div><h2>Help</h2><ul>
         <li><a href="{{ url_for('public.how_it_works') }}">How it works</a></li>
