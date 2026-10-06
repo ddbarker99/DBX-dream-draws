@@ -617,3 +617,60 @@ class RaceRegressionAudit(AuditBase):
         self.assertEqual(self.bal("deposit"), 0)
         self.assertTrue(all(c[2].startswith("deposit-refund:") for c in calls))
         _ = payments
+
+
+class PrizeTableAudit(AuditBase):
+    def test_every_style_hits_its_targets_for_every_game_size(self):
+        """QA-PRZ-01 | Instant wins | Quick-fill prizes | Every style pays close to its target, keeps its odds, uses nice amounts and never pays less than double the stake"""
+        from app import prizes
+        sizes = [(10, 200), (10, 5000), (20, 10000), (40, 3000), (50, 3000), (99, 1500), (100, 100), (100, 2000), (250, 3000),
+                 (500, 1000), (1000, 500), (200, 50000)]
+        for style, (_, payout, odds, *_rest) in prizes.STYLES.items():
+            for price, plays in sizes:
+                p = prizes.FREE_NOTIONAL_PRICE if style == "free" else price
+                t = prizes.build(p, plays, style)
+                n, value, pay, one_in = prizes.summary(p, plays, t)
+                ctx = (style, price, plays, t)
+                self.assertTrue(n >= 2 and n <= plays * 0.5, ctx)
+                low = 0.85 if p * plays >= 10000 else 0.7                            # tiny budgets round to whole prizes
+                self.assertTrue(payout * low <= pay <= payout * 1.02, ctx)               # never pays more than planned
+                if plays >= 1000:
+                    self.assertTrue(odds * 0.7 <= one_in <= odds * 1.35, ctx)
+                values = [r[1] for r in t]
+                self.assertEqual(values, sorted(values, reverse=True), ctx)
+                self.assertEqual(len(values), len(set(values)), ctx)
+                self.assertTrue(all(v in prizes.NICE for v in values), ctx)
+                self.assertTrue(all(v >= min(2 * p, prizes.NICE[0]) or v >= 10 for v in values), ctx)
+                self.assertTrue(min(values) >= 2 * p or min(values) == prizes._ceil(max(2 * p, 10)), ctx)
+                self.assertEqual(t[0][3], "cash", ctx)                                      # the headline prize is always cash
+        # random games vary but stay inside sensible bounds
+        from app.admin import random_prize_table
+        for _ in range(30):
+            t = random_prize_table(50, 3000)
+            pay = sum(v * q for _, v, q in t) / (50 * 3000)
+            self.assertTrue(0.38 <= pay <= 0.6, pay)
+
+    def test_quick_fill_endpoint_and_auto_fill(self):
+        """QA-PRZ-02 | Admin | Quick fill | The create form's quick-fill returns a table sized to the price and plays; Auto-fill uses the chosen style"""
+        r = self.client.get("/admin/games/prize-table?style=jackpot&price=1&plays=2000").get_json()
+        self.assertEqual(r["style"], "jackpot")
+        self.assertTrue(0.38 <= r["payout"] <= 0.46)
+        self.assertEqual(r["rows"][0]["type"], "cash")
+        self.assertEqual(self.client.get("/admin/games/prize-table?price=abc&plays=x").status_code, 400)
+        self.assertEqual(self.p.get("/admin/games/prize-table?price=1&plays=100").status_code, 404)      # customers can't
+        free = self.client.get("/admin/games/prize-table?style=free&plays=20000").get_json()
+        self.assertTrue(any(x["type"] == "credit" for x in free["rows"]))
+        draft = self.make_comp("Auto game", publish=False, max_tickets=2000, price="1")
+        db = self.db()
+        db.execute("UPDATE competitions SET game_type='spin' WHERE id=?", (draft,))
+        db.commit()
+        self.post(f"/admin/competitions/{draft}/instant", {"random_table": "1", "style": "winners"})
+        n, total = self.db().execute("SELECT COUNT(*), SUM(value) FROM instant_prizes WHERE competition_id=?", (draft,)).fetchone()
+        self.assertTrue(0.46 <= total / (100 * 2000) <= 0.56, total)
+        self.assertTrue(2000 / n <= 6.5, n)
+        page = self.client.get(f"/admin/competitions/{draft}").get_data(as_text=True)
+        self.assertIn("Lots of winners", page)
+        form = self.client.get("/admin/competitions/new?kind=game").get_data(as_text=True)
+        for label in ("Balanced", "Lots of winners", "Big jackpot", "Cash + site credit"):
+            self.assertIn(label, form)
+        self.assertIn("Instant prizes — standard", self.client.get("/admin/competitions/new?kind=draw").get_data(as_text=True))

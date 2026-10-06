@@ -82,7 +82,12 @@
   {% set types = form.getlist('prize_type') if form.getlist is defined else [] %}
   <h2 class="formh">{% if kind == 'draw' %}Instant prizes <span class="dim" style="font:400 14px var(--font);text-transform:none">(optional — won straight away on certain ticket numbers)</span>{% else %}Prizes{% endif %}</h2>
   <p class="small muted" style="margin-top:0">{% if kind == 'draw' %}The main prize is the one described above. Add any instant prizes here, or leave this empty.{% else %}What players can win. The winning plays are picked at random and sealed when you save.{% endif %}
-    Start from a set: {% for key, label in (([('starter','Small cash set'),('credit','Credit & cash mix')] if kind == 'draw' else [('ladder','Cash ladder'),('credit','Credit & cash mix'),('big','One big prize + small wins')])) %}<button type="button" class="linkbtn small" data-preset="{{ key }}">{{ label }}</button>{{ ' · ' if not loop.last }}{% endfor %}</p>
+    </p>
+  <div class="prizestyles" role="group" aria-label="Fill in a ready-made prize table">
+    <span class="small"><b>Quick fill</b> — sized to the {{ 'price and total tickets' if kind == 'draw' else ('total plays' if kind == 'free' else 'price and total plays') }} above:</span>
+    {% for key in prize_styles_for[kind] %}<button type="button" class="btn ghost small" data-style="{{ key }}" title="{{ prize_styles[key][5] }}">{{ prize_styles[key][0] }}</button>{% endfor %}
+  </div>
+  <p class="small muted" id="styleabout" aria-live="polite" style="margin:var(--s2) 0 0"></p>
   <div class="table-scroll"><table class="prizerows" id="prizerows">
     <thead><tr><th scope="col">How many</th><th scope="col">Prize name</th><th scope="col">Value each (£)</th><th scope="col">Type</th><th scope="col"><span class="sr-only">Remove</span></th></tr></thead>
     <tbody>
@@ -91,7 +96,7 @@
       <td data-label="How many"><input name="prize_qty" type="number" min="1" inputmode="numeric" value="{{ qtys[i] if i < qtys|length else '' }}" placeholder="1" aria-label="How many"></td>
       <td data-label="Prize"><input name="prize_name" value="{{ names[i] if i < names|length else '' }}" placeholder="{{ ['£10 Cash','£2 Site Credit','AirPods Pro'][i % 3] }}" aria-label="Prize name"></td>
       <td data-label="£ each"><input name="prize_each" type="number" min="0" step="0.01" inputmode="decimal" value="{{ vals[i] if i < vals|length else '' }}" placeholder="{{ ['10','2','229'][i % 3] }}" aria-label="Value each in pounds"></td>
-      <td data-label="Type"><select name="prize_type" aria-label="Type">{% for t, label in [('cash','Cash (withdrawable)'),('credit','Site credit'),('physical','Item we send')] %}<option value="{{ t }}" {{ 'selected' if (types[i] if i < types|length else ['cash','credit','physical'][i % 3]) == t }}>{{ label }}</option>{% endfor %}</select></td>
+      <td data-label="Type"><select name="prize_type" aria-label="Type">{% for t, label in [('cash','Cash'),('credit','Site credit'),('physical','Item we send')] %}<option value="{{ t }}" {{ 'selected' if (types[i] if i < types|length else ['cash','credit','physical'][i % 3]) == t }}>{{ label }}</option>{% endfor %}</select></td>
       <td><button type="button" class="linkbtn small" data-remove aria-label="Remove this prize">✕</button></td></tr>{% endfor %}
     </tbody></table></div>
   <p style="margin:var(--s2) 0"><button type="button" class="btn ghost small" id="addprize">+ Add another prize</button></p>
@@ -112,11 +117,6 @@
   var body=document.querySelector('#prizerows tbody');if(!body)return;
   var UNIT={{ (unit ~ 's')|tojson }};
   var tpl=body.rows[0].cloneNode(true);
-  var presets={
-    starter:[[1,'£50 Cash',50,'cash'],[5,'£10 Cash',10,'cash'],[10,'£5 Cash',5,'cash']],
-    credit:[[2,'£25 Cash',25,'cash'],[10,'£5 Site Credit',5,'credit'],[25,'£1 Site Credit',1,'credit']],
-    ladder:[[1,'£100 Cash',100,'cash'],[5,'£20 Cash',20,'cash'],[20,'£5 Cash',5,'cash'],[50,'£1 Cash',1,'cash']],
-    big:[[1,'£500 Cash',500,'cash'],[10,'£10 Cash',10,'cash'],[50,'£1 Site Credit',1,'credit']]};
   function addRow(v){var r=tpl.cloneNode(true);r.querySelectorAll('input').forEach(function(i){i.value=''});
     if(v){var f=r.querySelectorAll('input,select');f[0].value=v[0];f[1].value=v[1];f[2].value=v[2];f[3].value=v[3];}
     body.appendChild(r);return r}
@@ -135,10 +135,19 @@
   document.getElementById('addprize').addEventListener('click',function(){addRow().querySelector('input[name=prize_name]').focus();sum()});
   body.addEventListener('click',function(e){if(e.target.closest('[data-remove]')){var r=e.target.closest('tr');
     if(body.rows.length>1)r.remove();else r.querySelectorAll('input').forEach(function(i){i.value=''});sum()}});
-  document.querySelectorAll('[data-preset]').forEach(function(b){b.addEventListener('click',function(){
+  var KIND={{ kind|tojson }};
+  document.querySelectorAll('[data-style]').forEach(function(b){b.addEventListener('click',function(){
+    var price=(document.getElementById('ticket_price')||{}).value||'', plays=(document.getElementById('max_tickets')||{}).value||'';
+    var about=document.getElementById('styleabout');
+    if(!plays||(KIND!=='free'&&!price)){about.textContent='Enter the price and total '+UNIT+' first, then choose a quick fill.';return}
     var hasData=[].some.call(body.querySelectorAll('input[name=prize_name]'),function(i){return i.value.trim()});
     if(hasData&&!confirm('Replace the prizes you have entered?'))return;
-    body.innerHTML='';presets[b.dataset.preset].forEach(addRow);sum()})});
+    fetch({{ url_for('admin.prize_table_suggest')|tojson }}+'?style='+b.dataset.style+'&price='+encodeURIComponent(price)+'&plays='+encodeURIComponent(plays),
+          {credentials:'same-origin'}).then(function(r){return r.json()}).then(function(d){
+      if(d.error){about.textContent=d.error;return}
+      body.innerHTML='';d.rows.forEach(function(x){addRow([x.qty,x.name,x.each,x.type])});
+      about.textContent=d.label+': '+d.about+' Edit any line — nothing is saved until you press Save.';sum()})
+    .catch(function(){about.textContent='Couldn\'t load that prize table — check your connection and try again.'})})});
   document.getElementById('compform').addEventListener('input',sum);sum();
 })();
 </script>

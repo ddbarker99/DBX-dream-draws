@@ -152,6 +152,11 @@ def _save_image(file):
     return name
 
 
+def _prize_ctx():
+    from . import prizes
+    return {"prize_styles": prizes.STYLES, "prize_styles_for": prizes.STYLES_FOR}
+
+
 def _parse_form(f, locked):
     data = {k: f.get(k, "").strip() for k in
             ("title", "description", "cash_alternative", "question", "answer_a", "answer_b", "answer_c", "correct",
@@ -297,7 +302,7 @@ def new_competition():
             data["image"] = _save_image(request.files.get("image")) or request.form.get("keep_image") or None
         except ValueError as e:
             flash(str(e), "error")
-            return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=None, form=request.form, locked=False, categories=CATEGORIES, game_types=GAME_TYPES)
+            return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=None, form=request.form, locked=False, categories=CATEGORIES, game_types=GAME_TYPES, **_prize_ctx())
         db = get_db()
         slug = base = slugify(data["title"])
         n = 2
@@ -334,7 +339,7 @@ def new_competition():
         form = _form_from(_comp(copy))
         form["title"] = form["title"] + " (copy)"
         form["keep_image"] = form.get("image")
-    return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=None, form=form, locked=False, categories=CATEGORIES, game_types=GAME_TYPES)
+    return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=None, form=form, locked=False, categories=CATEGORIES, game_types=GAME_TYPES, **_prize_ctx())
 
 
 @bp.route("/competitions/<int:cid>/edit", methods=["GET", "POST"])
@@ -355,10 +360,10 @@ def edit_competition(cid):
                 data["image"] = img
         except ValueError as e:
             flash(str(e), "error")
-            return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=c, form=request.form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
+            return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=c, form=request.form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES, **_prize_ctx())
         if c["status"] == "live" and data["ends_at"] != c["ends_at"] and data["ends_at"] <= iso(utcnow()):
             flash("A live competition's closing time can't be moved into the past.", "error")
-            return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=c, form=request.form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES)
+            return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=c, form=request.form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES, **_prize_ctx())
         changed = {k: (c[k], v) for k, v in data.items() if k in c.keys() and c[k] != v and k != "description"}
         db.execute(f"UPDATE competitions SET {','.join(k + '=?' for k in data)} WHERE id=?", [*data.values(), cid])
         from .services import save_comp_terms
@@ -371,7 +376,7 @@ def edit_competition(cid):
     form = _form_from(c)
     ct = comp_terms_current(db, cid)
     form["comp_terms"] = ct["body"] if ct else ""
-    return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=c, form=form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES, terms_version=ct["version"] if ct else 0)
+    return render_template("admin/edit.html", default_question_mode=get_setting("default_question_mode", "multiple_choice"), c=c, form=form, locked=locked, categories=CATEGORIES, game_types=GAME_TYPES, terms_version=ct["version"] if ct else 0, **_prize_ctx())
 
 
 @bp.route("/competitions/<int:cid>/status", methods=["POST"])
@@ -556,7 +561,7 @@ def entries(cid):
         checklist, checklist_kind = launch_checks(db, c), "launch"
     elif c["status"] == "live" and not c["game_type"] and c["ends_at"] <= iso(utcnow()):
         checklist, checklist_kind = draw_checks(db, c), "draw"
-    return render_template("admin/entries.html", c=c, sold=sold, held=held, state=comp_state(c, sold), rows=rows,
+    return render_template("admin/entries.html", **_prize_ctx(), c=c, sold=sold, held=held, state=comp_state(c, sold), rows=rows,
                            checklist=checklist, checklist_kind=checklist_kind,
                            winner=winner_details(db, c), postal_rejected=postal_rejected, revenue=revenue,
                            prizes=prizes, board=instant_board(db, cid, reveal=True), gi=game_info(db, c),
@@ -587,9 +592,17 @@ def instant(cid):
             _add_prize_table(cid, rows)
             flash(f"Added {sum(r[0] for r in rows)} prizes — numbers picked at random and sealed.")
         elif f.get("random_table"):
+            from . import prizes as prize_builder
             c = _comp(cid)
-            _add_prize_table(cid, [(q, n, v, prize_kind_for(n)) for n, v, q in random_prize_table(c["ticket_price"] or 10, c["max_tickets"])])
-            flash("Added a balanced random prize table. Check it below — remove any line and add your own if you like.")
+            style = f.get("style") if f.get("style") in prize_builder.STYLES else ("balanced" if c["game_type"] else "draw")
+            price = c["ticket_price"] or prize_builder.FREE_NOTIONAL_PRICE
+            if c["free_daily"]:
+                style = "free"
+            table = prize_builder.build(price, c["max_tickets"], style)
+            _add_prize_table(cid, [(q, n, v, kind) for n, v, q, kind in table])
+            n, value, pay, odds = prize_builder.summary(price, c["max_tickets"], table)
+            flash(f"Added {n} prizes ({prize_builder.STYLES[style][0]}): £{value / 100:,.0f} in total, "
+                  f"{pay:.0%} of the maximum takings, about 1 win in every {odds:.0f}. Remove any line and add your own if you like.")
         else:
             title = f.get("title", "").strip()
             if not title:
@@ -824,20 +837,14 @@ def export(cid):
 
 # ---------------- starter instant-win games ----------------
 
-# (title, game type, price p, plays, max per person, [(prize name, value £, how many)])
-# All prizes are real cash paid to the player's cash balance (withdrawable). Return-to-player is roughly 45–50%. Edit freely before publishing.
+# (title, game type, price p, plays, max per person, prize style from app/prizes.py). Prizes are built to fit each game's
+# price and size (all real cash, withdrawable). Edit freely before publishing.
 STARTER_GAMES = [
-    ("10p Penny Scratch", "scratch", 10, 5000, 500,
-     [("£50 Cash", 50, 1), ("£20 Cash", 20, 2), ("£10 Cash", 10, 5), ("£2 Cash", 2, 20), ("50p Cash", 0.5, 60),
-      ("20p Cash", 0.2, 200)]),
-    ("40p Spin & Win", "spin", 40, 3000, 300,
-     [("£100 Cash", 100, 1), ("£25 Cash", 25, 3), ("£10 Cash", 10, 10), ("£2 Cash", 2, 40), ("£1 Cash", 1, 150)]),
-    ("50p Mystery Box", "box", 50, 3000, 300,
-     [("£150 Cash", 150, 1), ("£25 Cash", 25, 4), ("£10 Cash", 10, 15), ("£2 Cash", 2, 60), ("£1 Cash", 1, 200)]),
-    ("£1 Golden Scratch", "scratch", 100, 2000, 200,
-     [("£250 Cash", 250, 1), ("£50 Cash", 50, 5), ("£10 Cash", 10, 20), ("£2 Cash", 2, 100)]),
-    ("£5 High Roller Spin", "spin", 500, 1000, 100,
-     [("£1,000 Cash", 1000, 1), ("£250 Cash", 250, 2), ("£50 Cash", 50, 10), ("£10 Cash", 10, 40)]),
+    ("10p Penny Scratch", "scratch", 10, 5000, 500, "winners"),
+    ("40p Spin & Win", "spin", 40, 3000, 300, "balanced"),
+    ("50p Mystery Box", "box", 50, 3000, 300, "balanced"),
+    ("£1 Golden Scratch", "scratch", 100, 2000, 200, "balanced"),
+    ("£5 High Roller Spin", "spin", 500, 1000, 100, "jackpot"),
 ]
 STARTER_QUESTIONS = [
     ("How many days are there in a week?", "5", "7", "10", "b"),
@@ -870,28 +877,12 @@ def prize_kind_for(name):
     return "credit" if "credit" in name.lower() else "cash"
 
 
-def random_prize_table(price, plays):
-    """Random prize table paying back roughly 30–50% if the game sells out, with a win roughly every
-    8–25 plays (lots of small wins, a few big ones). Values in pence."""
-    takings = price * plays
-    pool = takings * _rng.uniform(0.42, 0.55)
-    small = min(v for v in NICE if v >= max(2 * price, 20))            # the frequent "win your money back x2" prize
-    win_rate = _rng.uniform(1 / 25, 1 / 8)
-    n_small = max(1, min(int(plays * win_rate), int(pool * 0.45 / small)))
-    left = pool - n_small * small
-    top = max([v for v in NICE if v <= left * _rng.uniform(0.25, 0.45)] or [small])
-    table, left = [(top, 1)], left - top
-    middle = [v for v in NICE if small < v < top]
-    for v in sorted(_rng.sample(middle, min(len(middle), _rng.randint(2, 3))), reverse=True):
-        qty = int(left * _rng.uniform(0.35, 0.55) / v)
-        if qty >= 1:
-            table.append((v, qty))
-            left -= v * qty
-    table.append((small, n_small))
-    merged = {}
-    for v, q in table:
-        merged[v] = merged.get(v, 0) + q
-    return [(_label(v), v, q) for v, q in sorted(merged.items(), reverse=True)]
+def random_prize_table(price, plays, style=None):
+    """A prize table sized to the game (app/prizes.py): a random style with small variations unless one is given.
+    Returns [(name, value_pence, quantity)]."""
+    from . import prizes
+    st = style or _rng.choice(["balanced", "balanced", "winners", "jackpot"])
+    return [(name, v, q) for name, v, q, _ in prizes.build(price, plays, st, jitter=style is None)]
 
 
 def _create_game(db, title, kind, price, plays, per_user, prizes, days, publish, qi):
@@ -927,6 +918,27 @@ def _announce_games(made):
     discord(f"⚡ **New instant win games are live!**\n{lines}\n{base}{url_for('public.instant_wins')}")
 
 
+@bp.route("/games/prize-table")
+@require("comps")
+def prize_table_suggest():
+    """A ready-made prize table for the create form's quick-fill buttons, sized to the price and plays typed in."""
+    from flask import jsonify
+    from . import prizes as prize_builder
+    style = request.args.get("style") if request.args.get("style") in prize_builder.STYLES else prize_builder.DEFAULT_STYLE
+    try:
+        price = max(1, min(100000, round(float(request.args.get("price") or 0) * 100))) if style != "free" \
+            else prize_builder.FREE_NOTIONAL_PRICE
+        plays = max(1, min(1000000, int(request.args.get("plays", "1000"))))
+    except ValueError:
+        return jsonify({"error": "Enter a price and total plays first."}), 400
+    table = prize_builder.build(price, plays, style)
+    n, value, pay, odds = prize_builder.summary(price, plays, table)
+    return jsonify({"style": style, "label": prize_builder.STYLES[style][0], "about": prize_builder.STYLES[style][5],
+                    "rows": [{"qty": q, "name": name, "each": f"{v / 100:.2f}".rstrip("0").rstrip("."), "type": kind}
+                             for name, v, q, kind in table],
+                    "prizes": n, "value": value, "payout": round(pay, 3), "odds": round(odds, 1)})
+
+
 @bp.route("/games/starter", methods=["POST"])
 @require("comps")
 def starter_games():
@@ -934,9 +946,10 @@ def starter_games():
     publish = request.form.get("draft") != "1"          # live straight away unless "keep as drafts" ticked
     days = max(1, min(365, request.form.get("days", 30, type=int)))
     made = []
-    for i, (title, kind, price, plays, per_user, prizes) in enumerate(STARTER_GAMES):
-        cid, slug = _create_game(db, title, kind, price, plays, per_user,
-                                 [(n, round(v * 100), k) for n, v, k in prizes], days, publish, i)
+    from . import prizes as prize_builder
+    for i, (title, kind, price, plays, per_user, style) in enumerate(STARTER_GAMES):
+        table = [(n, v, q) for n, v, q, _ in prize_builder.build(price, plays, style)]
+        cid, slug = _create_game(db, title, kind, price, plays, per_user, table, days, publish, i)
         made.append((title, current_app.config["SITE_URL"] + url_for("public.competition", slug=slug)))
     if publish:
         _announce_games(made)

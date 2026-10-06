@@ -447,7 +447,9 @@ class GameTests(Base):
         rows = self.db().execute("SELECT * FROM competitions WHERE game_type!='' ORDER BY ticket_price").fetchall()
         self.assertEqual([r["ticket_price"] for r in rows], [10, 40, 50, 100, 500])
         self.assertTrue(all(r["status"] == "live" and r["instant_hash"] for r in rows))
-        self.assertEqual(self.q("SELECT COUNT(*) FROM instant_prizes WHERE competition_id=?", rows[0]["id"]), 288)
+        from app import prizes
+        self.assertEqual(self.q("SELECT COUNT(*) FROM instant_prizes WHERE competition_id=?", rows[0]["id"]),
+                         sum(r[2] for r in prizes.build(10, 5000, "winners")))
         for url in ["/instant-wins", "/instant-wins?price=10", "/instant-wins?type=spin", "/"] + [f"/c/{r['slug']}" for r in rows]:
             self.assertEqual(self.client.get(url).status_code, 200, url)
         self.assertIn("10p", self.client.get("/instant-wins").get_data(as_text=True))

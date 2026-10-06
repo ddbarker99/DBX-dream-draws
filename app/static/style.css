@@ -788,3 +788,4 @@ dl.facts>dt{padding-top:10px;color:var(--text-2);font-size:var(--fs-sm)}
 main input,main select,main textarea{max-width:100%}
 .inline-form>*{min-width:0}
 .two>*,.three>*{min-width:0}
+.prizestyles{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:var(--s2) 0}

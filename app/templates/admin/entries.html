@@ -107,13 +107,14 @@
       <button class="btn small" style="margin-top:10px">Add these prizes</button>
     </form>
   </details>
-  {% if c.game_type %}
-  <form method="post" action="{{ url_for('admin.instant', cid=c.id) }}" class="actions" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+  {% set kind = 'free' if c.free_daily else ('game' if c.game_type else 'draw') %}
+  <form method="post" action="{{ url_for('admin.instant', cid=c.id) }}" class="actions" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px;flex-wrap:wrap">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
-    <span class="small muted">Not sure what to offer? Fill it with a balanced prize table (about 40–55% paid back, a win every 8–25 plays):</span>
+    <span class="small muted">Not sure what to offer? Fill it with a prize table sized to this {{ 'game' if c.game_type else 'competition' }}'s price and {{ '{:,}'.format(c.max_tickets) }} {{ 'plays' if c.game_type else 'tickets' }}:</span>
+    <label class="sr-only" for="af-style">Prize style</label>
+    <select id="af-style" name="style">{% for key in prize_styles_for[kind] %}<option value="{{ key }}">{{ prize_styles[key][0] }} — {{ prize_styles[key][5] }}</option>{% endfor %}</select>
     <button class="btn ghost small" name="random_table" value="1">Auto-fill prizes</button>
   </form>
-  {% endif %}
   {% else %}<p class="tiny muted">Locked — tickets exist.</p>{% endif %}
   {% set unsent = prizes|selectattr('ticket_id')|rejectattr('fulfilled')|list %}
   {% if unsent %}<h3 style="margin-top:16px">To send</h3>
